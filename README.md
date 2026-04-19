@@ -80,6 +80,15 @@ Three principles guide the pattern:
 
 These live in `CLAUDE.md` under "Role: orchestrator" and carry through every instance.
 
+## Going deeper
+
+After setup, the `howto/` folder has four practical guides:
+
+- [`howto/01-skills.md`](howto/01-skills.md) — add, invoke, write, retire skills
+- [`howto/02-agents-and-hr.md`](howto/02-agents-and-hr.md) — hire, use, retire agents via HR
+- [`howto/03-customization.md`](howto/03-customization.md) — customize identity, owner profile, context, communication style
+- [`howto/04-memory-and-integrations.md`](howto/04-memory-and-integrations.md) — memory db internals and how to integrate external tools (Basecamp, Google Calendar, reminders)
+
 ## Status
 
 Initial release — version 0.1.0.
