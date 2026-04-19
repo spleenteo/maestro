@@ -2,7 +2,7 @@
 
 A bootstrap template to scaffold your own personal orchestrator — a Claude Code project that acts as a single interface to a team of agents and skills.
 
-The pattern is proven on two instances: **Alfred** (personal life orchestrator) and **Pam** (DatoCMS work orchestrator). This repo distills the pattern into a reusable, owner-agnostic template, written in English, configurable through an interactive first-launch setup.
+The template distills a reusable pattern, written in English and owner-agnostic, configured through an interactive first-launch setup.
 
 ## What you get
 
@@ -18,9 +18,9 @@ After cloning and running setup, you have an orchestrator that:
 ## What it doesn't do
 
 - No personal data, no hardcoded names, no integrations out of the box
-- No Obsidian lock-in — it's filesystem-agnostic
+- No vault-specific lock-in — it's filesystem-agnostic
 - No domain-specific skills (finance, music, CRM, etc.) — you add those over time
-- No slacky, no calendar, no email — you configure integrations via preferences
+- No task-manager, calendar, or email integrations — you configure what you need via preferences
 
 ## Install
 
@@ -38,17 +38,17 @@ On first launch, the orchestrator should notice that `private/preferences.md` do
 /setup
 ```
 
-Either way, the `setup` skill asks you a short set of questions:
+Either way, the `setup` skill asks you a short set of questions, starting with your preferred language — from that point on the whole setup runs in that language. In order:
 
-1. **Name of your orchestrator** — what it should call itself
-2. **Inspiration** — a character or archetype (real or fictional) that captures the personality you want; the skill proposes 3–5 adjectives based on it, which you accept or tweak
-3. **Your nick** — how the orchestrator should refer to you
-4. **Your full name and role** — for context
-5. **Default language** — how the orchestrator talks to you by default
-6. **File territories** — three absolute paths for `logbook`, `til`, `documents` (you can skip any; they can live anywhere, not necessarily in Obsidian)
-7. **Integrations** (optional) — Basecamp account/project, MCPs
+1. **Default language** — how the orchestrator talks to you by default (asked in English)
+2. **Name of your orchestrator** — what it should call itself
+3. **Inspiration** — a character or archetype (real or fictional) that captures the personality you want; the skill proposes 3–5 adjectives based on it, which you accept or tweak
+4. **Your nick** — how the orchestrator should refer to you
+5. **Your full name and role** — for context
+6. **File territories** — three absolute paths for `logbook`, `til`, `documents` (you can skip any; they can live anywhere)
+7. **Integrations** (optional) — Basecamp, MCPs, or any other external service you want the orchestrator to be aware of
 
-The setup writes `private/preferences.md` and initializes `private/memories.db`. Then it self-disables (moves to `.claude/skills/.disabled/setup/`) so it doesn't rerun. You're operational.
+The setup writes `private/preferences.md` and copies `memories.db.template` into `private/memories.db`. Then it self-disables (moves to `.claude/skills/.disabled/setup/`) so it doesn't rerun. You're operational.
 
 ## The orchestrator pattern
 
@@ -57,11 +57,12 @@ Every instance built from this template has:
 - **`CLAUDE.md`** — the brain. Defines the orchestrator role, routing, delegation, memory behavior, frontmatter discipline. Generic, not owner-specific.
 - **`private/preferences.md`** — identity + owner profile + customizations, loaded at every session start. Gitignored.
 - **`private/memories.db`** — SQLite log of memories, tasks, ideas. Gitignored.
+- **`memories.db.template`** — empty SQLite seed with the schema, copied into `private/` by the setup skill.
 - **`.claude/roster.yaml`** — registry of active craft agents (empty at install).
 - **`.claude/agents/hr.md`** — the HR agent, recruiter and manager of craft agents.
 - **`.claude/skills/setup/`** — first-launch configuration (self-disables).
 - **`.claude/skills/logbook/`** — writes a daily logbook note in your configured `logbook_path`.
-- **`.gitignore`** — covers `private/`, `workspace/`, and local settings.
+- **`.gitignore`** — covers `private/`, workspace artifacts, and local settings.
 
 Everything else grows organically as you use the orchestrator:
 
@@ -81,9 +82,7 @@ These live in `CLAUDE.md` under "Role: orchestrator" and carry through every ins
 
 ## Status
 
-- Alfred (personal) — built, operational
-- Pam (DatoCMS) — built, operational
-- Template (this repo) — initial release, version 0.1.0
+Initial release — version 0.1.0.
 
 ## License
 
