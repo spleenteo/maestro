@@ -109,6 +109,36 @@ Symlinks are better than git submodules in several cases:
 
 If you *do* want the reference to be shareable with others cloning the orchestrator repo, use a git submodule instead. Symlinks are local to your machine.
 
+### Make the symlinked app discoverable — ship a pointer skill
+
+A symlink in `apps/` alone is **invisible** to the orchestrator. It might read `apps/blog/CLAUDE.md` only if you explicitly send it there; otherwise it has no reason to suspect that project is relevant to a given request.
+
+The fix: add a thin **pointer skill** at `.claude/skills/<app-name>/SKILL.md`. The body can be nearly empty — what matters is the `description` in the frontmatter, which is what the orchestrator reads at session start to decide whether an incoming request matches.
+
+Example `.claude/skills/blog/SKILL.md`:
+
+```markdown
+---
+name: blog
+description: Personal blog project. Use when the user mentions posts, drafts, publishing, editorial calendar, or SEO for the blog. The actual project lives in `apps/blog/` (symlinked).
+---
+
+# Blog — pointer
+
+The blog project is symlinked at `apps/blog/`. Its own `CLAUDE.md` is the source of truth for conventions, tools, and internal routing.
+
+For any non-trivial work (drafting a post, scaffolding, deploying), prefer a dedicated Claude Code session inside the app — see the orchestrator's `CLAUDE.md` → "Validation before touching a sub-app".
+```
+
+The skill itself does almost nothing. What matters is that when the owner says *"can you draft a new post?"*, the orchestrator sees `description: ... Use when the user mentions posts, drafts, publishing...` and knows to engage with `apps/blog/`. Without this pointer, the orchestrator may miss the match entirely and respond generically.
+
+Rules for a good pointer skill:
+
+- **All trigger phrases in the description, not in the body.** Descriptions are indexed at session start; bodies are loaded only on invocation. Be generous with keywords in the description (synonyms, jargon, edge cases).
+- **One pointer per app.** Don't bundle multiple apps under one skill — triggers get vague and matches become unreliable.
+- **Body stays minimal.** A couple of sentences pointing to `apps/<name>/CLAUDE.md` and reminding the owner about the "dedicated session" rule is enough.
+- **Ship the pointer alongside the symlink.** Whenever you add a symlink in `apps/`, add the pointer skill in the same step — otherwise the orchestrator loses track of the app until you remember.
+
 ## Symlinking third-party skills or agents
 
 The same trick works for skills and agents. A skill you maintain in a shared repo can be pulled into multiple orchestrators via symlink:
