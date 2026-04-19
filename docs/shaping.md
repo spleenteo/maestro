@@ -6,6 +6,8 @@ description: Shaping doc for the Maestro bootstrap repo — a reusable template 
 
 # Maestro — Shaping
 
+> **Status: ✅ shipped.** Shape A was selected, detailed, and implemented. The template is live at [github.com/spleenteo/maestro](https://github.com/spleenteo/maestro) and passed its first end-to-end test (first-launch setup, q&a, preferences + db written, logbook + TIL generated, self-disable, `/guide` fallback tested). See the "Post-build — what actually shipped" section at the bottom for diffs from the plan.
+
 Bootstrap repo to scaffold new orchestrators in a consistent way, distilling the lessons from two reference instances — one for personal life, one for a work domain.
 
 ## Context
@@ -21,17 +23,19 @@ Key corrections observed while building the reference instances:
 
 ## Requirements (R)
 
+All must-haves delivered. Status column reflects the final, post-build state.
+
 | ID | Requirement | Status |
 |----|-------------|--------|
-| R0 | Provide a reusable bootstrap repo that scaffolds a new orchestrator matching the proven pattern (structure, CLAUDE.md, HR, roster, memories, logbook) | Core goal |
-| R1 🟡 | All template files are in English. Each instance sets its own default language for communication in preferences; the orchestrator honors it at runtime | Must-have |
-| R2 | No hardcoded personal info (owner, vault paths, Basecamp, adjectives) — all parameterized via preferences | Must-have |
-| R3 🟡 | All customizations live in `private/preferences.md` (not in CLAUDE.md). Preferences is the single source of identity + owner + language + vault + integrations, and is loaded at every session start | Must-have |
-| R4 🟡 | The memory database is named `memories.db` (agnostic, not owner-bound). Ships as template-owned skill, not as external submodule | Must-have |
-| R5 | Owner-specific data (preferences, db) lives in `private/` (gitignored) | Must-have |
-| R6 🟡 | First-launch **interactive setup**: running Claude Code in a freshly cloned repo triggers a skill that asks the owner Q&A (orchestrator name, inspiration, owner nick/name, language, vault path, logbook folder, integrations) and fills preferences + initializes db | Must-have |
-| R7 🟡 | The template ships a minimal, generic skill set: HR agent, memories, logbook, obsidian (with configurable territory), frontmatter/search discipline. Does NOT ship any instance-specific integrations (those stay in each instance) | Must-have |
-| R8 🟡 | Public repo. The two reference instances stay as frozen forks; future playbook will backport improvements to them | Leaning yes |
+| R0 | Provide a reusable bootstrap repo that scaffolds a new orchestrator matching the proven pattern (structure, CLAUDE.md, HR, roster, memories, logbook) | ✅ Done |
+| R1 | All template files are in English. Each instance sets its own default language for communication in preferences; the orchestrator honors it at runtime | ✅ Done |
+| R2 | No hardcoded personal info (owner, vault paths, Basecamp, adjectives) — all parameterized via preferences | ✅ Done |
+| R3 | All customizations live in `private/preferences.md` (not in CLAUDE.md). Preferences is the single source of identity + owner + language + vault + integrations, and is loaded at every session start | ✅ Done |
+| R4 | The memory database is named `memories.db` (agnostic, not owner-bound). **Shipped inline in CLAUDE.md** (not as a skill, see post-build notes) | ✅ Done |
+| R5 | Owner-specific data (preferences, db) lives in `private/` (gitignored) | ✅ Done |
+| R6 | First-launch **interactive setup**: running Claude Code in a freshly cloned repo triggers a skill that asks the owner Q&A and fills preferences + initializes db | ✅ Done |
+| R7 | The template ships a minimal, generic skill set. Does NOT ship any instance-specific integrations | ✅ Done (shipped: `setup`, `logbook`, `add-external-app`, `guide`; agent: `hr`) |
+| R8 | Public repo. The two reference instances stay as frozen forks; future playbook will backport improvements to them | ✅ Done (public at github.com/spleenteo/maestro); backport playbook pending |
 
 ## Shapes
 
@@ -114,7 +118,7 @@ No automation. Owner clones, reads a checklist in README, manually edits prefere
 - C fails R6: manual, no interactive Q&A.
 - A passes all: interactive, centralized, reusable.
 
-**Shape A is the recommended direction.**
+**Shape A is the recommended direction.** ✅ Selected and shipped.
 
 ## Decisions taken on Shape A
 
@@ -171,6 +175,41 @@ maestro/
 ## Next steps
 
 1. ✅ Shape A finalized with the owner's answers
-2. Build the repo structure file-by-file
-3. Initialize git, first commit
-4. Test: clone into a scratch location, run setup, verify preferences + db are generated
+2. ✅ Build the repo structure file-by-file
+3. ✅ Initialize git, first commit
+4. ✅ Test: clone into a scratch location, run setup, verify preferences + db are generated
+5. ✅ Rename project `spleenteo-orchestrator` → `maestro`
+6. ✅ Publish to GitHub (public) — [github.com/spleenteo/maestro](https://github.com/spleenteo/maestro)
+
+### Still open
+
+- Write the backport playbook to bring the two reference instances up to the new standard.
+- Future: a `/remove-external-app` skill (symmetric to `add-external-app`) if the need to deregister apps comes up often.
+
+## Post-build — what actually shipped
+
+The build produced a few deliberate deviations from the original Shape A plan. Recorded here so the shape stays honest about what was built.
+
+### Changed from the plan
+
+- **Memory lives inline in `CLAUDE.md`, not in a dedicated skill.** Shape A1.5/A4.1 called for a `.claude/skills/memories/` skill; during the build we decided memory is the engine of the orchestrator and must always be in context. Schema, proactive triggers, SQL commands, and report queries live directly in `CLAUDE.md` → `## Memory`. No skill to invoke, no submodule.
+- **No `obsidian` skill.** Shape A1.7/A4.3 proposed a shipped `obsidian` skill with configurable territory. In the build we realized file territories are path-agnostic — the orchestrator doesn't need to know Obsidian from any other folder. Dropped. Path rules live inline in `CLAUDE.md` → "File territories".
+- **Setup consolidated the three path questions into one.** Shape A2.2 implied asking logbook/til/documents separately. Final setup has a single compound question with three options: `internal` (creates `myVault/` inside the repo), `external` (absolute paths), `skip`. Total questions dropped from 13 to 10.
+- **Setup asks the language first, then switches.** Shape A didn't specify this — it emerged during the build as the right UX: asking subsequent questions in a language the owner didn't pick felt wrong.
+
+### Added beyond the plan
+
+- **`add-external-app` meta-skill.** Not in the original shape. Added after realizing symlinking an app manually into `apps/` leaves the orchestrator blind — a pointer skill is needed, and generating it by hand is friction. The skill asks 5 questions (path, name, description, triggers, access) and performs: symlink creation, pointer skill generation, CLAUDE.md apps-table edit, memory log.
+- **Per-app access level (`read-only` / `read-write`).** Added to the pointer skill frontmatter and enforced in `CLAUDE.md` → "Validation before touching a sub-app". Stops accidental writes to apps that should stay untouched via the orchestrator.
+- **`guide` skill** (originally named `help`, renamed to avoid clashing with Claude Code's built-in `/help` command). Reads `CLAUDE.md` and `howto/*` to answer owner questions with grounded responses.
+- **First logbook entry + first TIL at setup time.** Not in the plan — emerged as "prove the pipeline works" and "show the owner what these files look like". The setup now writes real content (day-zero log, how-to-work-with-this-orchestrator TIL) before handing control back.
+- **Cleanup of template files after setup.** `preferences.example.md` and `memories.db.template` are removed after first successful run (they're in git history if ever needed). Avoids confusion of seeing the template artifacts sitting next to real personal data.
+- **`howto/` guides.** Five practical how-tos (skills, agents+HR, customization, memory+integrations, backup+sync+symlinks). Not planned; written after the build to give owners a path to go deeper.
+- **"Preferences evolution" section in CLAUDE.md.** Explicit rules for when the orchestrator is allowed to propose updates to preferences over time (durable patterns only, never topic transitions — those are the memory db's job). Addresses the risk of over-invasive auto-refinement.
+- **"Announce every write" rule elevated to a first-class policy** in `CLAUDE.md` → `## Memory`. Silent DB writes erode trust; the announcement is the contract.
+- **Frontmatter discipline made project-wide.** Every markdown file (howtos, README, shaping, generated logbook and TIL) carries `tags:` and `description:` in frontmatter. Enables `rg`-based retrieval without reading bodies.
+
+### Tone decisions
+
+- All template files are **English-only**. The owner's instance switches to their default language after setup, and subsequent writes (logbook, TIL, memory messages from the orchestrator) follow that.
+- The repo is **public** with topic tags (`claude-code`, `orchestrator`, `template`, `personal-assistant`, `bootstrap`, `skills`, `agents`).
