@@ -138,6 +138,12 @@ Log the setup itself as the first entry in the memory database, so the log begin
 sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type) VALUES (date('now'), 'Orchestrator setup completed', 'First launch configured via setup skill. Identity and preferences recorded.', 'setup,bootstrap,meta', 'memory');"
 ```
 
+Announce it to the owner, same format as any other memory write (see `CLAUDE.md` → `## Memory` → "Announce every write"):
+
+```
+📝 saved: "Orchestrator setup completed" [setup,bootstrap,meta] (memory)
+```
+
 ## Introduce yourself
 
 End with a single sentence in character, in the owner's chosen language. For example:

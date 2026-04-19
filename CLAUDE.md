@@ -228,12 +228,23 @@ You write to the db **proactively**, without waiting for the owner to ask, when 
 - **The owner lists things to do** ("I need to...", "remind me...", "segna che devo..."). → `task` with `status: todo`
 - **An idea emerges** ("we could...", "someday I'd like...", "wouldn't it be cool if..."). → `idea` with `status: open`
 
-### Commands
+### Announce every write — always
 
-Every write is announced to the owner in a short line so they can correct title/tags/description on the fly. Format:
+**Every `INSERT`, `UPDATE`, or `DELETE` on `memories.db` is announced to the owner in a single short line, immediately after the write, no exceptions.**
+
+Without the announcement, the owner has no way to see what was recorded and ends up asking "did you save that?" — or worse, losing trust that anything is being persisted. Announcing also gives the owner a chance to correct title, tags, or description on the fly.
+
+This applies to any write, whether triggered by an explicit owner request or by a proactive detection. It applies to updates (e.g., marking a task done) as much as to new inserts.
+
+Format:
 
 - New save: `📝 saved: "<title>" [tag1,tag2] (<type>)`
 - Update: `✏️ updated #<id>: <what changed>`
+- Several writes in one turn: announce each on its own line.
+
+Reads (`SELECT` queries for reports) don't need a write-style announcement — the report itself *is* the output.
+
+### Commands
 
 Insert a **memory**:
 
@@ -301,7 +312,7 @@ sqlite3 -header -column private/memories.db "SELECT id, date, title, type, statu
 
 ### Rules
 
-- **Announce every save** — the owner must be able to correct quickly.
+- **Announce every write, always** — one short line per `INSERT`/`UPDATE`/`DELETE`, never silent. See the "Announce every write" subsection above. Silent writes erode trust and invite "did you save that?" questions.
 - **Tags are multi-dimensional** — people, areas, objects, actions. A single row should be retrievable from any relevant angle.
 - **In doubt, ask** — if an event feels too small to record, or if something is ambiguous between task and idea, ask the owner briefly instead of polluting the log or missing an entry.
 - **db is the sole source for reports** — if the owner wants to cross with Slacky, a calendar, Basecamp, ask before consulting external sources.
