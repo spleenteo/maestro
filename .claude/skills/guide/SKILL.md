@@ -1,11 +1,13 @@
 ---
-name: help
-description: Answer the owner's questions about this orchestrator — how it works, what features exist, how to do something specific. Reads CLAUDE.md and the guides in howto/ to give grounded answers. Use when the owner types /help, or says things like "I'm lost", "what can you do", "how do I", "how does this work", "remind me how to...", or similar confusion signals.
+name: guide
+description: Answer the owner's questions about this orchestrator — how it works, what features exist, how to do something specific. Reads CLAUDE.md and the guides in howto/ to give grounded answers. Use when the owner types /guide, or says things like "I'm lost", "what can you do", "how do I", "how does this work", "remind me how to...", or similar confusion signals. Note: /help is a Claude Code built-in command and won't reach this skill — only /guide does.
 ---
 
-# Help
+# Guide
 
 This skill is the owner's way in when they're confused or exploring. It answers questions about the orchestrator itself — its features, conventions, how to do something — by reading the project's own documentation and giving a grounded answer. It never invents; if an answer isn't in the docs, it says so.
+
+The skill is named `guide` rather than `help` because `/help` is a reserved built-in command in Claude Code and would never reach a user skill.
 
 ## Where the answers come from
 
@@ -27,7 +29,7 @@ Use `rg` to scan frontmatter and section headings before reading bodies in full.
 
 ### Step 1 — Detect the topic
 
-When invoked, either the owner asked a specific question (*"how do I hire an agent?"*) or a generic one (*"/help"*, *"I'm lost"*).
+When invoked, either the owner asked a specific question (*"how do I hire an agent?"*) or a generic one (*"/guide"*, *"I'm lost"*).
 
 - **Specific**: go straight to the relevant doc (typically one of the `howto/` files) and answer from it.
 - **Generic**: present the short menu below, in the owner's default language.

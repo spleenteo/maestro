@@ -50,7 +50,7 @@ Either way, the `setup` skill asks you a short set of questions, starting with y
 
 The setup writes `private/preferences.md`, copies `memories.db.template` into `private/memories.db`, writes a first logbook entry and a first TIL (if you chose territories), deletes the two template files at the repo root (`preferences.example.md` and `memories.db.template` — they've done their job and would only cause confusion; they remain in git history if ever needed), and self-disables (moves itself to `.claude/skills/.disabled/setup/`) so it doesn't rerun. You're operational.
 
-Any time you feel lost later, type `/help` — the orchestrator will read its own docs and answer.
+Any time you feel lost later, type `/guide` — the orchestrator will read its own docs and answer. (`/help` is a Claude Code built-in command and won't reach this skill.)
 
 ## The orchestrator pattern
 

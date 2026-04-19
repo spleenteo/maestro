@@ -260,7 +260,7 @@ Files you can open to verify everything is in place:
 - Logbook:     <logbook_path>/YYYY-MM-DD-day-zero.md
 - TIL:         <til_path>/YYYY-MM-DD-how-to-work-with-jarvis.md
 
-If you ever need orientation, just type /help.
+If you ever need orientation, just type /guide.
 ```
 
 Omit the logbook/TIL lines if those territories were skipped. Translate the label and intro into the owner's language.

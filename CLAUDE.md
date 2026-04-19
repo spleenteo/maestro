@@ -71,7 +71,7 @@ Shipped with the template:
 - **`setup`** — interactive first-launch configuration. Self-disables after first successful run.
 - **`logbook`** — writes a daily logbook note to `logbook_path` from preferences.
 - **`add-external-app`** — registers an external project as a sub-app: creates the symlink in `apps/`, generates a pointer skill with trigger keywords, and updates the "Available apps" table in `CLAUDE.md`.
-- **`help`** — answers the owner's questions about the orchestrator by reading `CLAUDE.md` and `howto/`. Triggered by `/help`, "I'm lost", "how do I", or similar confusion signals.
+- **`guide`** — answers the owner's questions about the orchestrator by reading `CLAUDE.md` and `howto/`. Triggered by `/guide`, "I'm lost", "how do I", or similar confusion signals. (Not `/help` — that's a Claude Code built-in.)
 
 Additional skills can be installed by the owner or hired as agents by HR over time.
 
