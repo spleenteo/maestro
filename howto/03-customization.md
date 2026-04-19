@@ -88,6 +88,14 @@ Where the orchestrator is authorized to write:
 
 Paths can be any filesystem location. Remove a line to disable that territory.
 
+**Internal vs external.** At setup time you chose between three modes:
+
+- **internal** — the orchestrator created `./myVault/{logbook,til,documents}/` inside the repo and filled the three paths accordingly. `myVault/` is gitignored, so notes stay private.
+- **external** — you gave absolute paths to folders outside the repo (typical for Obsidian vaults or cloud-synced directories).
+- **skip** — no territories, no markdown writes until you fill at least one path here.
+
+You can switch modes anytime. To migrate from internal to external, move the content from `./myVault/<sub>/` to your target folder and update the path here. To migrate from external to internal, do the reverse and adjust these paths to `<repo>/myVault/<sub>/`.
+
 ### 6. Integrations
 
 External services:

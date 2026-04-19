@@ -1,5 +1,6 @@
 # Owner data — never committed
 private/
+myVault/
 
 # Workspace artifacts are ephemeral, but keep the folder structure
 workspace/handoff/*

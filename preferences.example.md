@@ -64,6 +64,8 @@ Absolute paths where the orchestrator is authorized to write markdown files. Any
 
 These can point anywhere — Obsidian vault folders, plain filesystem directories, cloud-synced folders. The orchestrator doesn't care about the tech; it just respects the boundaries.
 
+**Don't want external folders?** Point them at `./myVault/{logbook,til,documents}/` inside the repo (the setup skill does this automatically if you pick "internal" mode). `myVault/` is gitignored, so nothing leaks.
+
 ---
 
 ## Integrations

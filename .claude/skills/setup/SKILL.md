@@ -16,11 +16,11 @@ The orchestrator's `CLAUDE.md` instructs it to invoke this skill at session star
 
 If this skill is invoked, **stop all other work** and drive the setup interactively until completion.
 
-## Setup flow — 12 questions, one at a time
+## Setup flow — 10 questions, one at a time
 
-Ask **one question per turn** (not in groups). Prefix each question with its progress indicator, e.g. `3/12`. After each answer, move to the next. Don't dump a checklist, don't batch.
+Ask **one question per turn** (not in groups). Prefix each question with its progress indicator, e.g. `3/10`. After each answer, move to the next. Don't dump a checklist, don't batch.
 
-### Question 1/12 — Language
+### Question 1/10 — Language
 
 Asked in English, before anything else:
 
@@ -28,61 +28,77 @@ Asked in English, before anything else:
 
 From the owner's next turn onward, **conduct the rest of the setup — and every future interaction — in the language they named**. Translate the following prompts into the chosen language; the English wordings here are illustrative.
 
-### Question 2/12 — Orchestrator's name
+### Question 2/10 — Orchestrator's name
 
-> `2/12` — What should I call myself?
+> `2/10` — What should I call myself?
 
-### Question 3/12 — Inspiration
+### Question 3/10 — Inspiration
 
-> `3/12` — Is there a character, archetype, or role that captures the personality you want from me? (e.g., a calm butler, a sharp analyst, a patient librarian, a quiet mentor.) Based on what you say, I'll propose 3–5 adjectives.
+> `3/10` — Is there a character, archetype, or role that captures the personality you want from me? (e.g., a calm butler, a sharp analyst, a patient librarian, a quiet mentor.) Based on what you say, I'll propose 3–5 adjectives.
 
 After the answer: propose 3–5 adjectives in the owner's language (e.g., "a calm butler" → calm, discreet, paternal, proactive, patient). Wait for confirmation or edits. Record the final list.
 
-### Question 4/12 — Owner's nick
+### Question 4/10 — Owner's nick
 
-> `4/12` — How do you want me to call you in chat?
+> `4/10` — How do you want me to call you in chat?
 
-### Question 5/12 — Owner's full name
+### Question 5/10 — Owner's full name
 
-> `5/12` — What's your full name? (I'll use it rarely — it's for context.)
+> `5/10` — What's your full name? (I'll use it rarely — it's for context.)
 
-### Question 6/12 — Owner's role
+### Question 6/10 — Owner's role
 
-> `6/12` — What's your role, or what do you do? A short description is fine.
+> `6/10` — What's your role, or what do you do? A short description is fine.
 
-### Question 7/12 — Context of operation
+### Question 7/10 — Context of operation
 
-> `7/12` — What kind of context do we operate in? (Personal life, work, an association, a side project, a mix…) If you want, tell me briefly *where* I'll be helping you: the setting, the day-to-day, what kind of problems come up.
+> `7/10` — What kind of context do we operate in? (Personal life, work, an association, a side project, a mix…) If you want, tell me briefly *where* I'll be helping you: the setting, the day-to-day, what kind of problems come up.
 
-### Question 8/12 — Why you need an assistant
+### Question 8/10 — Why you need an assistant
 
-> `8/12` — Why do you need an assistant? What problem, pain, or goal pushed you to set me up?
+> `8/10` — Why do you need an assistant? What problem, pain, or goal pushed you to set me up?
 
 This helps the orchestrator prioritize what matters. Keep the answer, even if short.
 
-### Question 9/12 — People you work with
+### Question 9/10 — People you work with
 
-> `9/12` — Are there people I should know about? (Team, collaborators, family, clients — whoever is relevant to the work we'll do together. Just names and one line each is enough. Or skip if you work solo.)
+> `9/10` — Are there people I should know about? (Team, collaborators, family, clients — whoever is relevant to the work we'll do together. Just names and one line each is enough. Or skip if you work solo.)
 
-### Question 10/12 — Logbook path
+### Question 10/10 — File territories (one compound question)
 
-> `10/12` — Where should I save your daily logbook? Give me an absolute path. It can be any folder: an Obsidian vault subfolder, a plain directory, anywhere. Leave blank if you don't want a logbook.
+This is the last question, and it branches based on the owner's preference for where their notes live.
 
-Validate: check the directory exists. If not, offer to create it.
+> `10/10` — Where should I save your notes? Three options:
+>
+> - **internal** — keep everything inside this repo, in `./myVault/{logbook,til,documents}/`. Simplest start, nothing external to configure. You can migrate to external paths later by editing preferences. The `myVault/` folder is gitignored, so nothing leaks into the repository.
+> - **external** — you have an Obsidian vault or other folders you want me to use. I'll ask for the absolute paths of the three territories (logbook, TIL, documents).
+> - **skip** — no territories right now. I won't write any markdown files until you set at least one path in preferences later.
 
-### Question 11/12 — TIL path
+Handle the answer:
 
-> `11/12` — Where should I save 'Today I Learned' notes? Absolute path, or blank to skip.
+**If `internal`**:
 
-Same validation.
+1. Create the three folders inside the repo root:
+   ```bash
+   mkdir -p myVault/logbook myVault/til myVault/documents
+   ```
+2. Compute absolute paths from the repo location (where the setup skill is running). Save them to preferences:
+   - `logbook_path: <repo-abs-path>/myVault/logbook`
+   - `til_path: <repo-abs-path>/myVault/til`
+   - `documents_path: <repo-abs-path>/myVault/documents`
+3. Confirm in one line: *"Got it — notes will live in `myVault/` inside this repo (gitignored, so they stay private)."*
 
-### Question 12/12 — Documents path
+**If `external`**: ask the owner three quick follow-up prompts (same turn, not three numbered questions):
 
-> `12/12` — Where should I save longer reference documents? Absolute path, or blank to skip.
+> Absolute path for logbook? (blank to skip)
+> Absolute path for TIL? (blank to skip)
+> Absolute path for documents? (blank to skip)
 
-Same validation.
+For each non-blank path, validate the directory exists and offer to create it if it doesn't. Save what was given (empty for skipped).
 
-### After the 12 questions — offer to add more context
+**If `skip`**: record all three as empty in preferences. Remind the owner they can set paths anytime by editing `private/preferences.md`.
+
+### After the 10 questions — offer to add more context
 
 Before writing, tell the owner:
 
@@ -252,7 +268,7 @@ Then hand control back.
 ## Rules
 
 - **Language first** — the very first question is always "what language should I use?" (asked in English). From the next turn on, everything is in the owner's chosen language.
-- **One question per turn, always** — never bundle. Always show the progress indicator (`N/12`) so the owner knows where they are.
+- **One question per turn, always** — never bundle. Always show the progress indicator (`N/10`) so the owner knows where they are.
 - **Propose defaults** — especially for adjectives (from the inspiration).
 - **Accept brevity, skip optional fields** — the owner may leave territories or people empty. Don't insist.
 - **Validate paths** — for `logbook_path`, `til_path`, `documents_path`, check the directory exists and offer to create it before recording the value.
