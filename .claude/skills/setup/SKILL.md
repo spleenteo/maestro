@@ -111,6 +111,14 @@ Copy the seed database:
 cp memories.db.template private/memories.db
 ```
 
+## Clean up template files
+
+Both `preferences.example.md` and `memories.db.template` at the repo root have served their purpose. Remove them now — they only create confusion in an already-initialized instance, and they remain in git history if the owner ever needs them back:
+
+```bash
+/bin/rm preferences.example.md memories.db.template
+```
+
 ## Self-disable
 
 Move this skill folder to `.claude/skills/.disabled/setup/` so it doesn't re-trigger on later launches:

@@ -48,7 +48,7 @@ Either way, the `setup` skill asks you a short set of questions, starting with y
 6. **File territories** — three absolute paths for `logbook`, `til`, `documents` (you can skip any; they can live anywhere)
 7. **Integrations** (optional) — Basecamp, MCPs, or any other external service you want the orchestrator to be aware of
 
-The setup writes `private/preferences.md` and copies `memories.db.template` into `private/memories.db`. Then it self-disables (moves to `.claude/skills/.disabled/setup/`) so it doesn't rerun. You're operational.
+The setup writes `private/preferences.md`, copies `memories.db.template` into `private/memories.db`, deletes the two template files at the repo root (`preferences.example.md` and `memories.db.template` — they've done their job and would only cause confusion; they remain in git history if ever needed), and self-disables (moves itself to `.claude/skills/.disabled/setup/`) so it doesn't rerun. You're operational.
 
 ## The orchestrator pattern
 
