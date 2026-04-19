@@ -75,22 +75,13 @@ mkdir -p private
 
 ### Step 5 — Initialize `private/memories.db`
 
-Create the SQLite database with the schema defined in the orchestrator's `CLAUDE.md` (the `## Memory` section):
+The repo ships `memories.db.template` at the root — an empty SQLite file with the schema already in place. Copy it into `private/`:
 
 ```bash
-sqlite3 private/memories.db "CREATE TABLE log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  date TEXT NOT NULL,
-  title TEXT NOT NULL,
-  description TEXT,
-  tags TEXT,
-  type TEXT NOT NULL CHECK(type IN ('memory','task','idea')),
-  status TEXT,
-  due_date TEXT,
-  completed_date TEXT,
-  priority TEXT DEFAULT 'normal'
-);"
+cp memories.db.template private/memories.db
 ```
+
+That's it — no SQL to run. The schema is documented in the orchestrator's `CLAUDE.md` (`## Memory` section) for reference when writing queries.
 
 ### Step 6 — Self-disable
 

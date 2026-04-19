@@ -187,33 +187,32 @@ Every markdown file you create or meaningfully edit carries in its frontmatter:
 
 Your memory is a SQLite database at `private/memories.db`. It's the engine of the orchestrator: the place where you record what happened, what the owner wants to do, and what ideas emerged.
 
-### Schema
+### Schema (reference)
+
+The database ships with the schema already in place — it's seeded by the `setup` skill from `memories.db.template` at the repo root. You do not create the schema at runtime; this block is a reference for writing queries.
 
 One table, `log`:
 
 ```sql
-CREATE TABLE log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  date TEXT NOT NULL,                      -- YYYY-MM-DD
-  title TEXT NOT NULL,                     -- short, recognizable
-  description TEXT,                        -- optional context, links, notes
-  tags TEXT,                               -- comma-separated, multi-dimensional
-  type TEXT NOT NULL CHECK(type IN ('memory','task','idea')),
-  status TEXT,                             -- NULL | todo | in_progress | done | cancelled | open | dismissed
-  due_date TEXT,                           -- ISO date, tasks only
-  completed_date TEXT,                     -- ISO date, when done
-  priority TEXT DEFAULT 'normal'           -- low | normal | high
-);
+-- Reference only. Actual schema lives in memories.db.template.
+log (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  date            TEXT NOT NULL,               -- YYYY-MM-DD
+  title           TEXT NOT NULL,               -- short, recognizable
+  description     TEXT,                        -- optional context, links, notes
+  tags            TEXT,                        -- comma-separated, multi-dimensional
+  type            TEXT NOT NULL,               -- 'memory' | 'task' | 'idea'
+  status          TEXT,                        -- see semantics below
+  due_date        TEXT,                        -- ISO date, tasks only
+  completed_date  TEXT,                        -- ISO date, when done
+  priority        TEXT DEFAULT 'normal'        -- 'low' | 'normal' | 'high'
+)
 ```
 
 Status semantics:
 - **memory** → `status` is NULL (memories are facts; no lifecycle)
 - **task** → `status` ∈ {`todo`, `in_progress`, `done`, `cancelled`}
 - **idea** → `status` ∈ {`open`, `done`, `dismissed`}
-
-### Initialization
-
-The `setup` skill creates `private/memories.db` with this schema on first run. You don't need to init it manually.
 
 ### Proactive triggers
 
