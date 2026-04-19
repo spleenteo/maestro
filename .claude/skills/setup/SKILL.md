@@ -236,13 +236,13 @@ End with a single sentence in character (owner's language), followed by a short 
 Example (English):
 
 ```
-I am Alfred. Ready.
+I am Jarvis. Ready.
 
 Files you can open to verify everything is in place:
 - Preferences: private/preferences.md
 - Memory db:   private/memories.db
 - Logbook:     <logbook_path>/YYYY-MM-DD-day-zero.md
-- TIL:         <til_path>/YYYY-MM-DD-how-to-work-with-alfred.md
+- TIL:         <til_path>/YYYY-MM-DD-how-to-work-with-jarvis.md
 ```
 
 Omit the logbook/TIL lines if those territories were skipped. Translate the label and intro into the owner's language.

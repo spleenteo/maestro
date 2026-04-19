@@ -20,7 +20,7 @@ Defines how the orchestrator presents itself:
 ```markdown
 ## Identity
 
-- Name: Alfred
+- Name: Jarvis
 - Inspired by: "a calm butler, patient and discreet"
 - Adjectives: paternal, calm, discreet, proactive, gentle
 ```
@@ -34,10 +34,10 @@ Who you are to the orchestrator:
 ```markdown
 ## Owner — basics
 
-- Nick: Matteo
-- Full name: Matteo Papadopoulos
-- Role: Partner Program Manager
-- Default language: italian
+- Nick: Jane
+- Full name: Jane Doe
+- Role: Account Manager
+- Default language: english
 ```
 
 Change language here and the orchestrator switches at next session (current session continues in the old language unless you ask).
@@ -49,13 +49,13 @@ Change language here and the orchestrator switches at next session (current sess
 ```markdown
 ## Context of operation
 
-- Setting: work — Partner Program Manager at DatoCMS. I handle agency relationships, solution consulting, and occasional conflict mediation.
-- Why you need an assistant: juggling 40+ active agency conversations, tracking commitments, remembering context across weeks.
+- Setting: work — Account Manager at ACME. I handle partner relationships, solution consulting, and occasional conflict mediation.
+- Why you need an assistant: juggling 40+ active partner conversations, tracking commitments, remembering context across weeks.
 - Main objectives:
   - Keep every partner conversation warm and on-track
   - Flag risk early (churn signals, missed commitments)
   - Draft diplomatic messages on short notice
-- Constraints and rhythms: 9–18 Mon–Fri, no weekends, Europe/Rome timezone. Mondays are reserved for planning.
+- Constraints and rhythms: 9–18 Mon–Fri, no weekends. Mondays are reserved for planning.
 ```
 
 Expand freely. This is what the orchestrator uses to prioritize and tailor its help.
@@ -67,9 +67,9 @@ People who matter in your work:
 ```markdown
 ## People
 
-- Stefano Verna (steffoz): CEO/CTO, escalation for technical or strategic decisions
-- Matjack: General Manager, primary sparring partner on product/partner strategy
-- Faber: lead dev, technical point for MCP and infrastructure questions
+- A. Smith (CEO): escalation for technical or strategic decisions
+- B. Jones (GM): primary sparring partner on product/partner strategy
+- C. Brown (Lead Dev): technical point for infrastructure and integrations
 ```
 
 The orchestrator proposes additions when it notices someone recurring in conversation.
@@ -97,7 +97,7 @@ External services:
 
 - Basecamp: account 1234567, project 9876543
 - MCP servers: slacky, gmail, gcal
-- Other: Pipedrive CRM, Front (shared inboxes)
+- Other: a CRM, a shared inbox tool
 ```
 
 Integrations declared here are things the orchestrator knows *about*. Actual wiring (MCP setup, OAuth) happens in Claude Code's config, not here.

@@ -1,18 +1,18 @@
 ---
 shaping: true
 tags: [shaping, orchestrator, bootstrap, template, spleenteo]
-description: Shaping doc for the spleenteo-orchestrator bootstrap repo — a reusable template to scaffold new orchestrator projects following the pattern proven on Alfred (Majordomo) and Pam (DatoCMS).
+description: Shaping doc for the spleenteo-orchestrator bootstrap repo — a reusable template to scaffold new orchestrator projects, distilled from two reference instances (one personal, one work).
 ---
 
 # Spleenteo Orchestrator — Shaping
 
-Bootstrap repo to scaffold new orchestrators in a consistent way, distilling the lessons from Alfred and Pam.
+Bootstrap repo to scaffold new orchestrators in a consistent way, distilling the lessons from two reference instances — one for personal life, one for a work domain.
 
 ## Context
 
-Matteo has two orchestrators in production (Alfred for personal life, Pam for DatoCMS) and has built a playbook by hand. Creating the next one from scratch is error-prone and repetitive. He wants a **template repo** that encodes the conventions: structure, files, skills, HR agent, memory pattern, logbook.
+The pattern was developed across two reference instances (one personal, one for a work domain), and a by-hand playbook was kept. Creating the next orchestrator from scratch is error-prone and repetitive, hence a **template repo** that encodes the conventions: structure, files, skills, HR agent, memory pattern, logbook.
 
-Key corrections observed while building Alfred and Pam:
+Key corrections observed while building the reference instances:
 
 - Files must be in **English** (template targets reuse; Italian is owner-specific)
 - The **owner's name** must not be hardcoded anywhere — parameterized
@@ -30,8 +30,8 @@ Key corrections observed while building Alfred and Pam:
 | R4 🟡 | The memory database is named `memories.db` (agnostic, not owner-bound). Ships as template-owned skill, not as external submodule | Must-have |
 | R5 | Owner-specific data (preferences, db) lives in `private/` (gitignored) | Must-have |
 | R6 🟡 | First-launch **interactive setup**: running Claude Code in a freshly cloned repo triggers a skill that asks the owner Q&A (orchestrator name, inspiration, owner nick/name, language, vault path, logbook folder, integrations) and fills preferences + initializes db | Must-have |
-| R7 🟡 | The template ships a minimal, generic skill set: HR agent, memories, logbook, obsidian (with configurable territory), frontmatter/search discipline. Does NOT ship slacky (personal to Alfred) | Must-have |
-| R8 🟡 | Public repo. Alfred and Pam stay as frozen forks; future playbook will backport improvements to them | Leaning yes |
+| R7 🟡 | The template ships a minimal, generic skill set: HR agent, memories, logbook, obsidian (with configurable territory), frontmatter/search discipline. Does NOT ship any instance-specific integrations (those stay in each instance) | Must-have |
+| R8 🟡 | Public repo. The two reference instances stay as frozen forks; future playbook will backport improvements to them | Leaning yes |
 
 ## Shapes
 
@@ -68,9 +68,9 @@ The owner clones the repo, opens Claude Code in it, and a **Setup skill** trigge
 | A4.3 | Obsidian skill: territory = `obsidian.territory_root` from preferences, off-limits folders configurable, default permission rules (no recursive reads, TIL and logbook pre-authorized) |
 | A4.4 | Frontmatter & search discipline: no separate skill, lives in CLAUDE.md. Rules: every file gets `tags:` and `description:`; `rg` on frontmatter first, read body only for survivors |
 | **A5** | **HR agent** |
-| A5.1 | Same pattern as Alfred/Pam: recruiter + onboarding + offboarding. English. Manages `.claude/roster.yaml` and `.claude/agents/<name>.md` |
+| A5.1 | Same pattern used by the reference instances: recruiter + onboarding + offboarding. English. Manages `.claude/roster.yaml` and `.claude/agents/<name>.md` |
 | **A6** | **No domain skills** |
-| A6.1 | No slacky, no conti, no datocms. Those are instance-specific and installed/symlinked later by the owner |
+| A6.1 | No instance-specific skills (whether personal domains or work integrations). Those are installed/symlinked later by the owner |
 
 ### B: Static template with placeholder tokens + bash setup script
 
@@ -110,7 +110,7 @@ No automation. Owner clones, reads a checklist in README, manually edits prefere
 
 **Notes:**
 - B fails R3: the `{{token}}` search-replace bakes values into files at setup time, so the source of truth ends up scattered across the repo rather than consolidated in preferences. Changes later (e.g., owner renames themselves) require re-running setup.
-- B fails R6: a bash script is prompt-driven, but not conversational nor using Claude Code. Matteo explicitly liked the "Claude asks you questions" flavor.
+- B fails R6: a bash script is prompt-driven, but not conversational nor using Claude Code. The owner explicitly preferred the "Claude asks you questions" flavor.
 - C fails R6: manual, no interactive Q&A.
 - A passes all: interactive, centralized, reusable.
 
@@ -119,7 +119,7 @@ No automation. Owner clones, reads a checklist in README, manually edits prefere
 ## Decisions taken on Shape A
 
 1. **Setup skill's self-disable**: move to `.claude/skills/.disabled/setup/` after successful first-run, preserving traceability and allowing re-run if needed.
-2. **Memories live in CLAUDE.md, not as a skill.** Matteo's view: memory is the engine of the orchestrator, not an optional capability. Embedding it in CLAUDE.md guarantees it's always in context at session start, with full schema + triggers + SQL commands inline. No external submodule, no separate skill to invoke.
+2. **Memories live in CLAUDE.md, not as a skill.** The adopted view: memory is the engine of the orchestrator, not an optional capability. Embedding it in CLAUDE.md guarantees it's always in context at session start, with full schema + triggers + SQL commands inline. No external submodule, no separate skill to invoke.
 3. **File territories are path-agnostic.** The orchestrator doesn't need to know "Obsidian" — it just needs three configurable paths in preferences: `logbook_path`, `til_path`, `documents_path`. The owner can point them to Obsidian folders, plain filesystem folders, anywhere. Obsidian-specific rules (tree command, off-limits conventions) drop out of the template. No dedicated `obsidian/` skill is shipped.
 4. **Frontmatter discipline placement**: deferred. Default: stays in CLAUDE.md as policy. We may reopen if the orchestrator or other agents benefit from addressing it as a skill. Not a blocker.
 5. **README structure**: short intro about what the repo is, then install steps (clone → open Claude Code in repo → answer setup questions → done), then a brief tour of the pattern for curious readers.
@@ -170,7 +170,7 @@ spleenteo-orchestrator/
 
 ## Next steps
 
-1. ✅ Shape A finalized with Matteo's answers
+1. ✅ Shape A finalized with the owner's answers
 2. Build the repo structure file-by-file
 3. Initialize git, first commit
 4. Test: clone into a scratch location, run setup, verify preferences + db are generated

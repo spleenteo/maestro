@@ -86,12 +86,12 @@ In the roster, an agent can have an `alias` (a human name):
 
 ```yaml
 - name: appliances
-  alias: Amerigo
+  alias: Max
   installed_at: 2026-04-18
   version: 1.0.0
 ```
 
-You can refer to the agent by alias in conversation (*"ask Amerigo what's up with the dryer"*). The orchestrator resolves to the technical `name` when invoking the Task tool. When the orchestrator mentions the agent back to you, it uses the alias.
+You can refer to the agent by alias in conversation (*"ask Max what's up with the dryer"*). The orchestrator resolves to the technical `name` when invoking the Task tool. When the orchestrator mentions the agent back to you, it uses the alias.
 
 ## Agent structure — what lives in `<name>.md`
 
