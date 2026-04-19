@@ -48,7 +48,9 @@ Either way, the `setup` skill asks you a short set of questions, starting with y
 6. **File territories** — where markdown notes should live. Three options: **internal** (notes in `./myVault/{logbook,til,documents}/` inside the repo, gitignored), **external** (absolute paths to folders outside the repo, e.g. an Obsidian vault), or **skip** (no territories for now)
 7. **Integrations** (optional) — Basecamp, MCPs, or any other external service you want the orchestrator to be aware of
 
-The setup writes `private/preferences.md`, copies `memories.db.template` into `private/memories.db`, deletes the two template files at the repo root (`preferences.example.md` and `memories.db.template` — they've done their job and would only cause confusion; they remain in git history if ever needed), and self-disables (moves itself to `.claude/skills/.disabled/setup/`) so it doesn't rerun. You're operational.
+The setup writes `private/preferences.md`, copies `memories.db.template` into `private/memories.db`, writes a first logbook entry and a first TIL (if you chose territories), deletes the two template files at the repo root (`preferences.example.md` and `memories.db.template` — they've done their job and would only cause confusion; they remain in git history if ever needed), and self-disables (moves itself to `.claude/skills/.disabled/setup/`) so it doesn't rerun. You're operational.
+
+Any time you feel lost later, type `/help` — the orchestrator will read its own docs and answer.
 
 ## The orchestrator pattern
 
