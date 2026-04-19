@@ -1,10 +1,10 @@
 ---
 shaping: true
-tags: [shaping, orchestrator, bootstrap, template, spleenteo]
-description: Shaping doc for the spleenteo-orchestrator bootstrap repo — a reusable template to scaffold new orchestrator projects, distilled from two reference instances (one personal, one work).
+tags: [shaping, orchestrator, bootstrap, template, maestro]
+description: Shaping doc for the Maestro bootstrap repo — a reusable template to scaffold new orchestrator projects, distilled from two reference instances (one personal, one work).
 ---
 
-# Spleenteo Orchestrator — Shaping
+# Maestro — Shaping
 
 Bootstrap repo to scaffold new orchestrators in a consistent way, distilling the lessons from two reference instances — one for personal life, one for a work domain.
 
@@ -144,7 +144,7 @@ Empty roster at install time. No pre-installed craft agents.
 ## Structure to build
 
 ```
-spleenteo-orchestrator/
+maestro/
 ├── CLAUDE.md                        ← orchestrator template (English)
 ├── README.md                        ← intro + install flow
 ├── preferences.example.md           ← reference for the preferences file

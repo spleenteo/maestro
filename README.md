@@ -1,8 +1,8 @@
-# Spleenteo Orchestrator
+# Maestro
 
 A bootstrap template to scaffold your own personal orchestrator — a Claude Code project that acts as a single interface to a team of agents and skills.
 
-The template distills a reusable pattern, written in English and owner-agnostic, configured through an interactive first-launch setup.
+Like a conductor, *maestro* doesn't play the instruments. It coordinates the ones that do. The template distills a reusable pattern, written in English and owner-agnostic, configured through an interactive first-launch setup.
 
 ## What you get
 
@@ -27,7 +27,7 @@ After cloning and running setup, you have an orchestrator that:
 You need a working installation of [Claude Code](https://claude.com/claude-code).
 
 ```bash
-git clone https://github.com/<your-fork>/spleenteo-orchestrator.git my-orchestrator
+git clone https://github.com/<your-fork>/maestro.git my-orchestrator
 cd my-orchestrator
 claude
 ```
