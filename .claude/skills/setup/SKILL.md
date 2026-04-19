@@ -111,6 +111,105 @@ Copy the seed database:
 cp memories.db.template private/memories.db
 ```
 
+## First memory log
+
+Log the setup itself as the first entry in the memory database, so the log begins with a record of its own birth:
+
+```bash
+sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type) VALUES (date('now'), 'Orchestrator setup completed', 'First launch configured via setup skill. Identity and preferences recorded.', 'setup,bootstrap,meta', 'memory');"
+```
+
+Announce it:
+
+```
+📝 saved: "Orchestrator setup completed" [setup,bootstrap,meta] (memory)
+```
+
+## First logbook entry (if `logbook_path` is set)
+
+Write a "day zero" logbook note at `<logbook_path>/YYYY-MM-DD-day-zero.md`. Two purposes:
+
+1. Prove the pipeline works — the owner sees a real file created at the path they declared.
+2. Show what a logbook note looks like, in their language, following the frontmatter discipline.
+
+Voice: the **owner's first person** (per the `logbook` skill convention). Language: the owner's default language. Frontmatter must include `tags:` (multi-dimensional) and `description:` (one line).
+
+Template (translate into the owner's language):
+
+```markdown
+---
+tags: [installation, setup, day-zero, <orchestrator-slug>, meta]
+description: Day zero — <Orchestrator-Name> was installed and configured for the first time.
+---
+
+## <date in owner's language — e.g. "19 April 2026" or "19 Aprile 2026">
+
+# Day zero with <Orchestrator-Name>
+
+Today I set up <Orchestrator-Name> as my orchestrator. The setup skill walked me through a short series of questions about my identity, role, context, the people around me, and where I want files to be written for me.
+
+<Orchestrator-Name> is now configured to talk to me in <language>, with three authorized file territories:
+
+- Logbook at `<logbook_path>` — this note is the first one.
+- TIL at `<til_path>`. <!-- omit line if til_path is empty -->
+- Documents at `<documents_path>`. <!-- omit line if documents_path is empty -->
+
+The memory database is ready and the first entry is the installation itself. From here on <Orchestrator-Name> proactively logs what we do, and I pick up at the next session.
+```
+
+Announce:
+
+```
+📖 logbook entry created: <absolute path>
+```
+
+Skip this step silently if `logbook_path` was left empty in preferences.
+
+## First TIL entry (if `til_path` is set)
+
+Write an orientation TIL note at `<til_path>/YYYY-MM-DD-how-to-work-with-<orchestrator-slug>.md`. Purpose: leave the owner a short reference they can revisit about how the orchestrator is organized.
+
+Voice: owner's first person. Language: owner's default.
+
+Template (translate into the owner's language):
+
+```markdown
+---
+tags: [til, <orchestrator-slug>, meta, onboarding, claude-code]
+description: How to work with <Orchestrator-Name> — where preferences, memory, logbook and TIL live, and how to reset.
+---
+
+## <date>
+
+# How to work with <Orchestrator-Name>
+
+Three things worth remembering now that <Orchestrator-Name> is set up.
+
+### Preferences can be edited anytime
+
+`private/preferences.md` is mine. I can open it and edit whenever I want — add people, change the default language, refine what I need. <Orchestrator-Name> reads it at every session start.
+
+<Orchestrator-Name> also proposes additions over time, based on durable patterns it notices (a colleague mentioned often, a preference revealed). It never silently overwrites — only adds with a one-line notice, and asks for confirmation on modifications.
+
+### Memory, logbook, TIL — three different places
+
+- **Memory** (`private/memories.db`) — proactive log of events, tasks, ideas. Every write is announced.
+- **Logbook** (`<logbook_path>`) — daily synthesis, written on demand ("recap of today").
+- **TIL** (`<til_path>`) — discrete lessons like this one.
+
+### .disabled/
+
+Retired skills live in `.claude/skills/.disabled/`. The `setup` skill itself moved there after completing. If I ever want to reconfigure from scratch, I can move it back to `.claude/skills/setup/` and flip `setup_completed: false` in preferences.
+```
+
+Announce:
+
+```
+💡 TIL created: <absolute path>
+```
+
+Skip silently if `til_path` is empty.
+
 ## Clean up template files
 
 Both `preferences.example.md` and `memories.db.template` at the repo root have served their purpose. Remove them now — they only create confusion in an already-initialized instance, and they remain in git history if the owner ever needs them back:
@@ -130,28 +229,25 @@ mv .claude/skills/setup .claude/skills/.disabled/setup
 
 The file is preserved. The owner can restore it by moving it back if they want to reconfigure.
 
-## First memory log
+## Introduce yourself (with a recap of created files)
 
-Log the setup itself as the first entry in the memory database, so the log begins with a record of its own birth:
+End with a single sentence in character (owner's language), followed by a short list of the files that were created so the owner can open them and verify:
 
-```bash
-sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type) VALUES (date('now'), 'Orchestrator setup completed', 'First launch configured via setup skill. Identity and preferences recorded.', 'setup,bootstrap,meta', 'memory');"
-```
-
-Announce it to the owner, same format as any other memory write (see `CLAUDE.md` → `## Memory` → "Announce every write"):
+Example (English):
 
 ```
-📝 saved: "Orchestrator setup completed" [setup,bootstrap,meta] (memory)
+I am Alfred. Ready.
+
+Files you can open to verify everything is in place:
+- Preferences: private/preferences.md
+- Memory db:   private/memories.db
+- Logbook:     <logbook_path>/YYYY-MM-DD-day-zero.md
+- TIL:         <til_path>/YYYY-MM-DD-how-to-work-with-alfred.md
 ```
 
-## Introduce yourself
+Omit the logbook/TIL lines if those territories were skipped. Translate the label and intro into the owner's language.
 
-End with a single sentence in character, in the owner's chosen language. For example:
-
-- English: *"I am Alfred. Ready."*
-- Italian: *"Sono Alfred. Pronto."*
-
-Then hand control back to the owner.
+Then hand control back.
 
 ## Rules
 
@@ -163,3 +259,5 @@ Then hand control back to the owner.
 - **Never speak as "orchestrator"** — that term stays in CLAUDE.md. In chat, you use the chosen name.
 - **Never invent data** — if a field isn't provided, leave it empty in preferences.
 - **Keep the setup light** — deeper context (objectives, rhythms, communication style, team details, integrations) is for the owner to fill in later by editing `preferences.md`. Don't try to extract everything at setup.
+- **Write the first logbook and TIL before self-disabling** — these are real, useful content, not dummy files. They double as proof that the pipeline works and as the owner's first orientation.
+- **Announce every write** — every db insert and every markdown file creation gets its one-line announcement. The owner should see what happened at each step.
