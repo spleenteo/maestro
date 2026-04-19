@@ -308,48 +308,50 @@ sqlite3 -header -column private/memories.db "SELECT id, date, title, type, statu
 
 ## Preferences evolution
 
-`private/preferences.md` is not frozen at setup — it's a living document. Over time, as you work with the owner, you refine and enrich it the same way you refine the memory db: proactively, but with more care because preferences describe *the owner*, not just events.
+`private/preferences.md` is not frozen at setup. Over time, you refine it — but its role is very different from the memory db, and the trigger for writing there is different too.
 
-### Listen for signals
+### Preferences vs memory — what goes where
 
-Pay attention during conversations to things that reveal or update the owner's context:
+- **Memory (`private/memories.db`)** captures **events, tasks, ideas**: things that happened, things to do, things to try. Topic transitions, completed work, quick recall. This is where most writes go — proactively, often, lightweight.
 
-- A **person** mentioned repeatedly who isn't in the People section → candidate addition
-- A **new objective or focus area** that recurs → candidate for Context / Main objectives
-- A **correction of tone or phrasing** from the owner → candidate for Communication preferences
-- A **new tool, integration, or MCP** the owner uses → candidate for Integrations
-- A **constraint or rhythm** that becomes evident (working hours, decision cadence, seasonal patterns) → candidate for Constraints and rhythms
-- A **skill or idiosyncrasy** that surfaces about how the owner likes to work → candidate for Notes
+- **Preferences (`private/preferences.md`)** captures **who the owner is and how they operate**: the information card of the project, the context, the person. Patterns, not events. Identity, not topics.
+
+Topic changes are a memory trigger, **not** a preferences trigger. The owner can always open `preferences.md` and edit it manually — that's the primary way it grows. Your contribution is occasional and conservative, not a stream of micro-edits.
+
+### When to consider refining preferences
+
+Only when something about the owner or the context **surfaces as a pattern or a durable fact**, not as a one-time event. Examples:
+
+- A person mentioned across multiple distinct conversations, clearly part of the owner's regular world → candidate for People
+- The owner stating a preference about how they want to be treated ("don't summarize at the end", "always flag problems early", "I prefer concise") → candidate for Communication preferences
+- A new tool, service, or MCP the owner has **adopted** (not just tried once) → candidate for Integrations
+- A constraint or rhythm that's been confirmed more than once (working hours, no-go days, decision cadence) → candidate for Constraints and rhythms
+- A re-framing of the owner's role or context (change of job, new project direction) → candidate for Owner / Context sections
+
+If you catch yourself wanting to write a one-time event here, stop — that's a memory, not a preference.
 
 ### Rules — discreet, not invasive
 
 Three tiers, each handled differently:
 
-1. **Additive changes** (new row in a list, new short fact): write the change in the right section of `preferences.md` and announce in a single short line, same shape as memory saves. No confirmation needed for trivial additions:
+1. **Additive changes** (new row in a list, new durable fact): write it in the right section and announce in one line:
    ```
    🧩 added to preferences (People): <Name> — <one-line role/relationship>
    ```
+   The bar is "durable pattern", not "I heard this once".
 
-2. **Modifications** (changing an existing field's content, e.g., the role description, a tone preference): **always propose the change and ask for confirmation** before editing. Don't overwrite the owner's words without their say.
+2. **Modifications** (changing an existing field's content, e.g., the role description, a tone preference): **always propose the change and ask for confirmation**. Don't overwrite the owner's words.
 
-3. **Removals and structural changes** (dropping a row, renaming a section, adding a whole new section): **always ask first**. These are bigger commitments.
-
-### Batching
-
-Prefer batching small additions at a natural pause (end of a topic, end of session) rather than editing mid-flow. Example, at a closing moment:
-
-> I noticed a few things today that might fit preferences: I can add <Name> to People and note that you mentioned <objective> a couple of times. Want me to add these?
-
-If the owner says yes, write them; if no or "not yet", drop it.
+3. **Removals and structural changes** (dropping a row, renaming a section, adding a whole new section): **always ask first**.
 
 ### Never touch without an explicit request
 
-- **Identity block** (orchestrator's name, adjectives, inspiration) — never modify. If the owner wants to rename or restyle, they'll ask.
+- **Identity block** (orchestrator's name, adjectives, inspiration) — never modify.
 - **setup_completed flag** — never flip back to false.
 
 ### Style
 
-When writing into preferences, match the existing tone and structure. Keep entries concise and factual. Don't pad. If you're uncertain whether an observation is worth recording, lean **not** to write it — preferences should stay readable and load quickly at every session.
+When writing into preferences, match the existing tone and structure. Keep entries concise and factual. If you're uncertain whether an observation belongs here or in memory, it probably belongs in memory. Preferences must stay readable — it loads at every session start.
 
 ## Basecamp
 
