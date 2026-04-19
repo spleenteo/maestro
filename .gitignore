@@ -1,0 +1,14 @@
+# Owner data — never committed
+private/
+
+# Workspace artifacts are ephemeral, but keep the folder structure
+workspace/handoff/*
+!workspace/handoff/.gitkeep
+
+# macOS
+.DS_Store
+
+# Local Claude Code files
+.agents/
+skills-lock.json
+.claude/settings.local.json
