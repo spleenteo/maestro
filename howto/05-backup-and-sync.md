@@ -91,53 +91,57 @@ Practical implications:
 - **Be mindful when sharing or publishing your orchestrator.** This folder isn't in the repo, so publishing a public version is safe on that front — but if you copy the whole `~/.claude/` between machines, you're also copying the transcripts.
 - **If you move or rename the project folder, the slug changes** and Claude will start fresh at the new path. If you want the history to follow, copy the old `~/.claude/projects/<old-slug>/` to the new slug's location before launching Claude there.
 
-## Symlinking external apps
+## Registering an external app
 
-If you have a project that lives elsewhere on your filesystem and you want the orchestrator to treat it as a sub-app, symlink it into `apps/`:
+If you have a project that lives elsewhere on your filesystem and you want the orchestrator to treat it as a sub-app, **use the `add-external-app` skill**:
 
-```bash
-ln -s /Users/you/Projects/my-blog apps/blog
+```
+/add-external-app
 ```
 
-The orchestrator treats `apps/blog/` like any other sub-app: it reads `apps/blog/CLAUDE.md` when the sub-app is involved, respects its conventions, and defers to a dedicated session when the "validation before touching a sub-app" check says so (see `CLAUDE.md` → "Validation before touching a sub-app").
+It asks four questions (path, name, one-line description, trigger keywords) and then:
 
-Symlinks are better than git submodules in several cases:
+1. Creates the symlink `apps/<name>/` → the target path.
+2. Generates a **pointer skill** at `.claude/skills/<name>/SKILL.md` with a frontmatter `description` rich in trigger phrases — that description is what lets the orchestrator automatically recognize when a request is relevant to this app.
+3. Updates the "Available apps" table in `CLAUDE.md` (replacing the placeholder row on the first registration, appending afterwards).
+4. Logs a memory entry.
+
+The reason for the pointer skill: **a symlink in `apps/` alone is invisible to the orchestrator**. Skills are the trigger mechanism Claude Code uses at session start; a description like *"Use when the user mentions posts, drafts, publishing, SEO for the blog"* is what actually cues a match.
+
+You should never have to edit `CLAUDE.md` by hand to register an app. Let the skill do it.
+
+### Why symlinks (not submodules)
+
+Symlinks are the right choice when:
 
 - The app has its own independent lifecycle (different owner, different release cycle)
-- You work on the app alone, and the submodule ceremony adds friction
+- You work on the app alone, and submodule ceremony adds friction
 - The app is already a live workspace on your machine
 
-If you *do* want the reference to be shareable with others cloning the orchestrator repo, use a git submodule instead. Symlinks are local to your machine.
+Use a git submodule instead when you want the reference to be shareable with others cloning the orchestrator repo. Symlinks are local to your machine.
 
-### Make the symlinked app discoverable — ship a pointer skill
+### What the pointer skill looks like
 
-A symlink in `apps/` alone is **invisible** to the orchestrator. It might read `apps/blog/CLAUDE.md` only if you explicitly send it there; otherwise it has no reason to suspect that project is relevant to a given request.
-
-The fix: add a thin **pointer skill** at `.claude/skills/<app-name>/SKILL.md`. The body can be nearly empty — what matters is the `description` in the frontmatter, which is what the orchestrator reads at session start to decide whether an incoming request matches.
-
-Example `.claude/skills/blog/SKILL.md`:
+For reference — this is what `add-external-app` generates automatically, so you usually don't write it by hand. Example for a blog project:
 
 ```markdown
 ---
 name: blog
-description: Personal blog project. Use when the user mentions posts, drafts, publishing, editorial calendar, or SEO for the blog. The actual project lives in `apps/blog/` (symlinked).
+description: Personal blog project. Use when the user mentions posts, drafts, publishing, editorial calendar, or SEO for the blog. The project lives in `apps/blog/` (symlinked).
 ---
 
 # Blog — pointer
 
-The blog project is symlinked at `apps/blog/`. Its own `CLAUDE.md` is the source of truth for conventions, tools, and internal routing.
+The `blog` project is symlinked at `apps/blog/`. Its own `CLAUDE.md` is the source of truth for conventions, tools, and internal routing.
 
 For any non-trivial work (drafting a post, scaffolding, deploying), prefer a dedicated Claude Code session inside the app — see the orchestrator's `CLAUDE.md` → "Validation before touching a sub-app".
 ```
 
-The skill itself does almost nothing. What matters is that when the owner says *"can you draft a new post?"*, the orchestrator sees `description: ... Use when the user mentions posts, drafts, publishing...` and knows to engage with `apps/blog/`. Without this pointer, the orchestrator may miss the match entirely and respond generically.
+The skill body is almost empty on purpose. The whole value is in the `description` — trigger-rich, one line, worth iterating on over time if you notice the orchestrator missing matches.
 
-Rules for a good pointer skill:
+### Removing a registered app
 
-- **All trigger phrases in the description, not in the body.** Descriptions are indexed at session start; bodies are loaded only on invocation. Be generous with keywords in the description (synonyms, jargon, edge cases).
-- **One pointer per app.** Don't bundle multiple apps under one skill — triggers get vague and matches become unreliable.
-- **Body stays minimal.** A couple of sentences pointing to `apps/<name>/CLAUDE.md` and reminding the owner about the "dedicated session" rule is enough.
-- **Ship the pointer alongside the symlink.** Whenever you add a symlink in `apps/`, add the pointer skill in the same step — otherwise the orchestrator loses track of the app until you remember.
+There's no `/remove-external-app` skill yet. To do it by hand: remove the symlink from `apps/`, delete `.claude/skills/<name>/`, and drop the row from `CLAUDE.md`'s "Available apps" table. If this becomes a frequent need, promote it to a skill.
 
 ## Symlinking third-party skills or agents
 
