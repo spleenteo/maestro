@@ -22,17 +22,17 @@ Invoke it when the owner says something like:
 
 ## Q&A flow
 
-Ask one question per turn, in the owner's default language (from preferences). Show progress as `N/4`.
+Ask one question per turn, in the owner's default language (from preferences). Show progress as `N/5`.
 
-### Question 1/4 — Path
+### Question 1/5 — Path
 
-> `1/4` — Where does the project live on disk? Give me the absolute path (or a `~`-relative path).
+> `1/5` — Where does the project live on disk? Give me the absolute path (or a `~`-relative path).
 
 Validate: the path must exist and be a directory. If it's a file or doesn't exist, stop and ask again.
 
-### Question 2/4 — Name
+### Question 2/5 — Name
 
-> `2/4` — What name should I use for this app? I'll use it for the symlink (`apps/<name>/`) and for the pointer skill. Keep it short, lowercase, kebab-case (e.g. `blog`, `portfolio`, `acme-dashboard`).
+> `2/5` — What name should I use for this app? I'll use it for the symlink (`apps/<name>/`) and for the pointer skill. Keep it short, lowercase, kebab-case (e.g. `blog`, `portfolio`, `acme-dashboard`).
 
 Validate:
 
@@ -40,17 +40,28 @@ Validate:
 - Not already used in `apps/` or `.claude/skills/` — if it is, explain the clash and ask for a different name
 - Not a reserved name like `setup`, `logbook`, `add-external-app`, `hr`, `data`, `.disabled`
 
-### Question 3/4 — One-line description
+### Question 3/5 — One-line description
 
-> `3/4` — In one sentence, what is this app about? (It'll show up in `CLAUDE.md`'s apps table and in the pointer skill description.)
+> `3/5` — In one sentence, what is this app about? (It'll show up in `CLAUDE.md`'s apps table and in the pointer skill description.)
 
 Example: *"Personal blog built with Astro, Markdown-first content pipeline."*
 
-### Question 4/4 — Trigger phrases
+### Question 4/5 — Trigger phrases
 
-> `4/4` — What kinds of things should make me think of this app? Give me a few keywords or short phrases the orchestrator should use as triggers. (E.g. for a blog: "posts, drafts, publishing, editorial calendar, SEO". For a CRM: "contacts, deals, pipeline, outreach".)
+> `4/5` — What kinds of things should make me think of this app? Give me a few keywords or short phrases the orchestrator should use as triggers. (E.g. for a blog: "posts, drafts, publishing, editorial calendar, SEO". For a CRM: "contacts, deals, pipeline, outreach".)
 
 Collect a comma-separated list. Keep it generous — false positives are cheap, missed matches are expensive.
+
+### Question 5/5 — Access: read-only or read-write
+
+> `5/5` — Should I be able to **write** into this app through the symlink, or is it **read-only** for me?
+>
+> - **read-only** (safer default): I can read files inside to gather context, but I won't modify anything there. For edits, you'll open a dedicated Claude Code session inside the app.
+> - **read-write**: I can edit files inside the app directly, respecting the usual "Validation before touching a sub-app" check for larger work.
+
+Accept only `read-only` or `read-write`. If the owner is unsure, recommend `read-only` as the safer default; they can change it later by editing the pointer skill's frontmatter.
+
+The choice is saved in the pointer skill's frontmatter as `access: <value>` and stated explicitly in the body. The orchestrator reads it before any write inside `apps/<name>/` (see `CLAUDE.md` → "Validation before touching a sub-app").
 
 ## Confirmation
 
@@ -81,22 +92,28 @@ Announce:
 
 ### Step 2 — Create the pointer skill
 
-Write `.claude/skills/<name>/SKILL.md` with this content (substitute `<name>`, `<description>`, `<triggers>`):
+Write `.claude/skills/<name>/SKILL.md` with this content (substitute `<name>`, `<description>`, `<triggers>`, `<access>`):
 
 ```markdown
 ---
 name: <name>
 description: <one-line description>. Use when the user mentions <triggers>. The project itself lives in `apps/<name>/` (symlinked).
+access: <read-only | read-write>
 ---
 
 # <Name> — pointer
 
 The `<name>` project is symlinked at `apps/<name>/`. Its own `CLAUDE.md` (if present) is the source of truth for conventions, tools, and internal routing inside the app.
 
+**Access: <read-only | read-write>.** <one of the two sentences below>
+
+- For read-only: *The orchestrator must not modify files inside this app through the symlink. Reads are allowed for context; any edit requires the owner to open a dedicated Claude Code session inside the app.*
+- For read-write: *The orchestrator may edit files inside this app, respecting the "Validation before touching a sub-app" check in the root `CLAUDE.md`.*
+
 For any non-trivial work (scaffolding, long iteration, git operations on the app's remote), prefer a dedicated Claude Code session inside the app — see the orchestrator's `CLAUDE.md` → "Validation before touching a sub-app".
 ```
 
-(Capitalize `<Name>` in the H1 for readability, e.g. `Blog`, `Acme-dashboard`. Use sentence-case on the description.)
+(Capitalize `<Name>` in the H1 for readability, e.g. `Blog`, `Acme-dashboard`. Use sentence-case on the description. Pick the matching sentence for the Access paragraph based on the owner's answer.)
 
 Announce:
 
@@ -108,11 +125,13 @@ Announce:
 
 The template ships with a placeholder row `| — | — | No app connected yet |`. On first registration, **replace** that placeholder with the real row. On subsequent registrations, **append** a row.
 
-Target row format:
+Target row format (the `Access` column lets the owner and the orchestrator see permissions at a glance):
 
 ```
-| <name> | `apps/<name>` | <one-line description> |
+| <name> | `apps/<name>` | <one-line description> | <read-only | read-write> |
 ```
+
+The template ships with a 4-column apps table (Alias, Path, Purpose, Access) and a placeholder row. On first registration, **replace** the placeholder; on subsequent registrations, **append**.
 
 Use the `Edit` tool, not shell, to make a precise string replacement inside `CLAUDE.md`.
 

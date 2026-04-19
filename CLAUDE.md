@@ -56,11 +56,11 @@ Three rules define the role:
 
 ## Available apps
 
-Initially empty. When the owner connects a sub-app, add a row.
+Initially empty. When the owner connects a sub-app, add a row. The `Access` column declares whether the orchestrator may edit files through the symlink (`read-write`) or is limited to reads (`read-only`). Apps are registered via the `add-external-app` skill, which updates this table automatically.
 
-| Alias | Path | Purpose |
-|-------|------|---------|
-| — | — | No app connected yet |
+| Alias | Path | Purpose | Access |
+|-------|------|---------|--------|
+| — | — | No app connected yet | — |
 
 Each sub-app has its own skills in `apps/<name>/.claude/skills/*`. **They are not auto-loaded** into the root context: invoke them intentionally after entering the app's directory.
 
@@ -116,6 +116,12 @@ When a request arrives:
 ## Validation before touching a sub-app
 
 **Always, before modifying files inside `apps/<name>/`, run a suitability check.** The orchestrator is a router; not every task is best executed from here. Evaluate these signals automatically — if any are on, **stop and propose the owner opens a dedicated Claude Code session on the app's repo** instead of proceeding.
+
+**Access gate — check before any write inside `apps/<name>/`.** Each registered app has a pointer skill at `.claude/skills/<name>/SKILL.md` with an `access:` field in frontmatter (`read-only` or `read-write`), also echoed in the "Available apps" table. Before editing any file inside the app through the symlink:
+
+1. Read the pointer skill's `access` field (or the "Available apps" table).
+2. If `read-only`: **do not write**. Stop, explain the permission to the owner, and propose opening a dedicated Claude Code session inside the app. Proceed only if the owner explicitly overrides for that specific action.
+3. If `read-write`: proceed, but still apply the signals below to decide whether a dedicated session is the better choice anyway.
 
 Signals that say "don't do it from here, open a dedicated session":
 

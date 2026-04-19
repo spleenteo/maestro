@@ -99,7 +99,7 @@ If you have a project that lives elsewhere on your filesystem and you want the o
 /add-external-app
 ```
 
-It asks four questions (path, name, one-line description, trigger keywords) and then:
+It asks five questions (path, name, one-line description, trigger keywords, and access: read-only or read-write) and then:
 
 1. Creates the symlink `apps/<name>/` → the target path.
 2. Generates a **pointer skill** at `.claude/skills/<name>/SKILL.md` with a frontmatter `description` rich in trigger phrases — that description is what lets the orchestrator automatically recognize when a request is relevant to this app.
@@ -128,14 +128,19 @@ For reference — this is what `add-external-app` generates automatically, so yo
 ---
 name: blog
 description: Personal blog project. Use when the user mentions posts, drafts, publishing, editorial calendar, or SEO for the blog. The project lives in `apps/blog/` (symlinked).
+access: read-only
 ---
 
 # Blog — pointer
 
 The `blog` project is symlinked at `apps/blog/`. Its own `CLAUDE.md` is the source of truth for conventions, tools, and internal routing.
 
+**Access: read-only.** The orchestrator must not modify files inside this app through the symlink. Reads are allowed for context; any edit requires the owner to open a dedicated Claude Code session inside the app.
+
 For any non-trivial work (drafting a post, scaffolding, deploying), prefer a dedicated Claude Code session inside the app — see the orchestrator's `CLAUDE.md` → "Validation before touching a sub-app".
 ```
+
+The `access` field is the switch: `read-only` is the safer default (the orchestrator can't accidentally change files in the app through the symlink), `read-write` lets it edit freely. You can flip it later by editing this file.
 
 The skill body is almost empty on purpose. The whole value is in the `description` — trigger-rich, one line, worth iterating on over time if you notice the orchestrator missing matches.
 
