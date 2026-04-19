@@ -88,6 +88,7 @@ After setup, the `howto/` folder has four practical guides:
 - [`howto/02-agents-and-hr.md`](howto/02-agents-and-hr.md) — hire, use, retire agents via HR
 - [`howto/03-customization.md`](howto/03-customization.md) — customize identity, owner profile, context, communication style
 - [`howto/04-memory-and-integrations.md`](howto/04-memory-and-integrations.md) — memory db internals and how to integrate external tools (Basecamp, Google Calendar, reminders)
+- [`howto/05-backup-and-sync.md`](howto/05-backup-and-sync.md) — privacy, `.gitignore`, cloud-drive sync, symlinks to external apps/skills/agents
 
 ## Status
 
