@@ -32,7 +32,13 @@ cd my-orchestrator
 claude
 ```
 
-On first launch, the orchestrator notices that `private/preferences.md` doesn't exist and triggers the `setup` skill. The skill asks you a short set of questions:
+On first launch, the orchestrator should notice that `private/preferences.md` doesn't exist and trigger the `setup` skill automatically. If it doesn't (Claude Code sometimes waits for an explicit signal), just type:
+
+```
+/setup
+```
+
+Either way, the `setup` skill asks you a short set of questions:
 
 1. **Name of your orchestrator** — what it should call itself
 2. **Inspiration** — a character or archetype (real or fictional) that captures the personality you want; the skill proposes 3–5 adjectives based on it, which you accept or tweak
