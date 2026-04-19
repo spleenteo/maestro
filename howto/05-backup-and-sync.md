@@ -68,6 +68,29 @@ Since `private/` is not in git, it needs its own backup. Pick one (or combine):
 
 Restore procedure, in all cases: clone the main repo, put `private/` back where it was, launch Claude Code.
 
+## Claude's own project memory (outside the repo)
+
+Even with `private/` locked down, **Claude Code maintains its own per-project data** in a folder on your machine, outside your repo:
+
+```
+~/.claude/projects/<slugified-project-path>/
+```
+
+The slug is derived from the absolute path of the project, with slashes replaced by dashes. For an orchestrator at `/Users/you/Sites/me/my-orchestrator/`, the folder is:
+
+```
+~/.claude/projects/-Users-you-Sites-me-my-orchestrator/
+```
+
+Inside it Claude keeps session transcripts, an auto-memory system (`memory/MEMORY.md` plus individual memory files), and other state. You don't control what goes there — Claude writes to it as a natural side-effect of running. Even if you're meticulous about not committing personal info, notes Claude took during a session live here too, and they can be just as sensitive as `memories.db` or `preferences.md`.
+
+Practical implications:
+
+- **Treat `~/.claude/projects/<slug>/` as part of "your orchestrator's lived history".** If you want to be able to restore everything — including what Claude learned across sessions — include this folder in your backup strategy.
+- **Back it up alongside `private/`.** Time Machine and most cloud drives will pick it up from `~/.claude/` automatically; chezmoi can track it like any other dotfile path if you want encrypted history.
+- **Be mindful when sharing or publishing your orchestrator.** This folder isn't in the repo, so publishing a public version is safe on that front — but if you copy the whole `~/.claude/` between machines, you're also copying the transcripts.
+- **If you move or rename the project folder, the slug changes** and Claude will start fresh at the new path. If you want the history to follow, copy the old `~/.claude/projects/<old-slug>/` to the new slug's location before launching Claude there.
+
 ## Symlinking external apps
 
 If you have a project that lives elsewhere on your filesystem and you want the orchestrator to treat it as a sub-app, symlink it into `apps/`:
@@ -120,9 +143,9 @@ A production-ready setup that balances privacy, portability, and sanity:
 - `~/Sites/me/my-orchestrator/private/` — a symlink to `~/iCloud Drive/orchestrators/my-orchestrator/private/`, synced across your machines
 - `~/Sites/me/my-orchestrator/apps/*` — symlinks to other project folders on the machine
 - `~/Sites/me/my-orchestrator/.claude/skills/<shared-skill>` — symlink to a shared `claude-skills/` repo for anything reused across orchestrators
-- Time Machine + the cloud drive provide two independent backup layers for `private/`
+- Time Machine + the cloud drive provide two independent backup layers for `private/` and for `~/.claude/projects/<slug>/`
 
-You don't have to start here. Start simple — a plain repo with `private/` inside, backed up by Time Machine — and add sync/symlinks as your setup grows.
+You don't have to start here. Start simple — a plain repo with `private/` inside, backed up by Time Machine (which also catches `~/.claude/` by default) — and add sync/symlinks as your setup grows.
 
 ## Red flags to watch for
 
