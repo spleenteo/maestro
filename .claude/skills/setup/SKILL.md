@@ -5,7 +5,7 @@ description: Interactive first-launch setup for a new orchestrator instance. Ask
 
 # Setup
 
-This skill runs **only once** per instance, at first launch. Its job is to collect the customizations the orchestrator needs and put the project in a working state.
+This skill runs **only once** per instance, at first launch. Its job is to collect the essentials the orchestrator needs to be operational, and put the project in a working state. Richer context (team, objectives, work rhythms, integrations) is meant to be added later by editing `private/preferences.md` directly — the setup doesn't try to capture everything upfront.
 
 ## When this skill runs
 
@@ -16,92 +16,113 @@ The orchestrator's `CLAUDE.md` instructs it to invoke this skill at session star
 
 If this skill is invoked, **stop all other work** and drive the setup interactively until completion.
 
-## Setup flow
+## Setup flow — 12 questions, one at a time
 
-### Step 1 — Ask the language first, then switch to it
+Ask **one question per turn** (not in groups). Prefix each question with its progress indicator, e.g. `3/12`. After each answer, move to the next. Don't dump a checklist, don't batch.
 
-Before anything else, ask the owner the language question in English:
+### Question 1/12 — Language
 
-> This is the first time I'm running. Before we start: **what language should I use to talk to you?** (e.g., English, Italian, Spanish. I'll switch naturally when context demands, e.g., technical terms or international contacts.)
+Asked in English, before anything else:
 
-Wait for the answer. From the owner's **very next turn onward, conduct the entire rest of the setup — and every future interaction — in the language they named**. Don't ask again, don't keep mixing English unless they explicitly want it.
+> This is the first time I'm running. Before we start: **what language should I use to talk to you?** (e.g., English, Italian, Spanish, French…)
 
-### Step 2 — Greet and explain the flow (in the chosen language)
+From the owner's next turn onward, **conduct the rest of the setup — and every future interaction — in the language they named**. Translate the following prompts into the chosen language; the English wordings here are illustrative.
 
-Now, in the owner's chosen language, introduce the setup:
+### Question 2/12 — Orchestrator's name
 
-> This is the first time I'm running. I'll ask you a few short questions to set up my identity and how I'll work with you. It takes about two minutes. Ready?
+> `2/12` — What should I call myself?
 
-Wait for confirmation. If the owner wants to skip or postpone, tell them the setup will re-trigger at the next launch (or that they can run `/setup` manually) and exit gracefully.
+### Question 3/12 — Inspiration
 
-### Step 3 — Ask the remaining questions (in the chosen language)
+> `3/12` — Is there a character, archetype, or role that captures the personality you want from me? (e.g., a calm butler, a sharp analyst, a patient librarian, a quiet mentor.) Based on what you say, I'll propose 3–5 adjectives.
 
-Ask them one at a time, or in small logical groups. Adapt to the flow of the conversation. Don't dump a checklist. Translate the prompts below into the owner's chosen language — the wordings here are illustrative.
+After the answer: propose 3–5 adjectives in the owner's language (e.g., "a calm butler" → calm, discreet, paternal, proactive, patient). Wait for confirmation or edits. Record the final list.
 
-**Identity (the orchestrator):**
+### Question 4/12 — Owner's nick
 
-1. **Name** — "What should I call myself?"
-2. **Inspiration** — "Is there a character, archetype, or role that captures the personality you want from me? (e.g., a calm butler, a sharp analyst, a patient librarian.) I'll propose 3–5 adjectives based on it — you can accept, tweak, or ignore."
-3. **Adjectives** — based on the inspiration, propose 3–5 adjectives (e.g., "Alfred Pennyworth" → paternal, calm, discreet, proactive, gentle). Let the owner adjust. Keep adjectives in the owner's chosen language.
+> `4/12` — How do you want me to call you in chat?
 
-**Owner:**
+### Question 5/12 — Owner's full name
 
-4. **Nick** — "How do you want me to call you in chat?"
-5. **Full name** — "What's your full name (for context, I'll use it rarely)?"
-6. **Role** — "What do you do? A short description is fine."
+> `5/12` — What's your full name? (I'll use it rarely — it's for context.)
 
-**File territories** — the three paths where the orchestrator is authorized to write markdown:
+### Question 6/12 — Owner's role
 
-7. **Logbook path** — "Where should I save your daily logbook? Give me an absolute path. It can be any folder: an Obsidian vault subfolder, a plain directory, wherever. Leave blank if you don't want a logbook."
-8. **TIL path** — "Where should I save 'Today I Learned' notes? Absolute path, or blank to skip."
-9. **Documents path** — "Where should I save longer reference documents? Absolute path, or blank to skip."
+> `6/12` — What's your role, or what do you do? A short description is fine.
 
-**Integrations (optional):**
+### Question 7/12 — Context of operation
 
-10. **Basecamp** — "Do you use Basecamp? If yes, what's the authorized account id and project id? (Otherwise say no.)"
-11. **MCPs** — "Any MCP servers I should know about? (Otherwise we'll add them later.)"
+> `7/12` — What kind of context do we operate in? (Personal life, work, an association, a side project, a mix…) If you want, tell me briefly *where* I'll be helping you: the setting, the day-to-day, what kind of problems come up.
 
-**Notes:**
+### Question 8/12 — Why you need an assistant
 
-12. **Anything else** — "Is there anything about how you work that I should remember? Preferred communication style, things to avoid, work rhythms — anything free-form."
+> `8/12` — Why do you need an assistant? What problem, pain, or goal pushed you to set me up?
 
-### Step 4 — Confirm the summary
+This helps the orchestrator prioritize what matters. Keep the answer, even if short.
+
+### Question 9/12 — People you work with
+
+> `9/12` — Are there people I should know about? (Team, collaborators, family, clients — whoever is relevant to the work we'll do together. Just names and one line each is enough. Or skip if you work solo.)
+
+### Question 10/12 — Logbook path
+
+> `10/12` — Where should I save your daily logbook? Give me an absolute path. It can be any folder: an Obsidian vault subfolder, a plain directory, anywhere. Leave blank if you don't want a logbook.
+
+Validate: check the directory exists. If not, offer to create it.
+
+### Question 11/12 — TIL path
+
+> `11/12` — Where should I save 'Today I Learned' notes? Absolute path, or blank to skip.
+
+Same validation.
+
+### Question 12/12 — Documents path
+
+> `12/12` — Where should I save longer reference documents? Absolute path, or blank to skip.
+
+Same validation.
+
+### After the 12 questions — offer to add more context
+
+Before writing, tell the owner:
+
+> Those are the essentials. Other context — objectives, work rhythms, communication style, integrations like Basecamp or MCP servers — you can add later by editing `private/preferences.md` directly. Want to add anything else right now, or shall I save what we have?
+
+If the owner wants to add something, accept it as free-form text and save it to the "Notes" section of preferences. Otherwise, proceed.
+
+## Summary and confirmation
 
 Recap what was collected, grouped by section. Offer a chance to correct any field before writing.
 
-### Step 5 — Write `private/preferences.md`
+## Writing `private/preferences.md`
 
-Create the `private/` directory if it doesn't exist. Write `preferences.md` using the structure of `preferences.example.md` at the repo root, substituting the collected values.
-
-Set `setup_completed: true` in the frontmatter.
+Create the `private/` directory if it doesn't exist. Write `preferences.md` using the structure of `preferences.example.md` at the repo root, substituting the collected values. Set `setup_completed: true` in the frontmatter.
 
 ```bash
 mkdir -p private
 # Then use the Write tool to create private/preferences.md
 ```
 
-### Step 6 — Initialize `private/memories.db`
+## Initializing `private/memories.db`
 
-The repo ships `memories.db.template` at the root — an empty SQLite file with the schema already in place. Copy it into `private/`:
+Copy the seed database:
 
 ```bash
 cp memories.db.template private/memories.db
 ```
 
-That's it — no SQL to run. The schema is documented in the orchestrator's `CLAUDE.md` (`## Memory` section) for reference when writing queries.
+## Self-disable
 
-### Step 7 — Self-disable
-
-Move this skill folder to `.claude/skills/.disabled/setup/` so it doesn't re-trigger:
+Move this skill folder to `.claude/skills/.disabled/setup/` so it doesn't re-trigger on later launches:
 
 ```bash
 mkdir -p .claude/skills/.disabled
 mv .claude/skills/setup .claude/skills/.disabled/setup
 ```
 
-This preserves the skill file (you can re-run it by moving it back, if the owner ever wants to reconfigure).
+The file is preserved. The owner can restore it by moving it back if they want to reconfigure.
 
-### Step 8 — First memory log
+## First memory log
 
 Log the setup itself as the first entry in the memory database, so the log begins with a record of its own birth:
 
@@ -109,20 +130,22 @@ Log the setup itself as the first entry in the memory database, so the log begin
 sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type) VALUES (date('now'), 'Orchestrator setup completed', 'First launch configured via setup skill. Identity and preferences recorded.', 'setup,bootstrap,meta', 'memory');"
 ```
 
-### Step 9 — Introduce yourself
+## Introduce yourself
 
-End with a single sentence in character:
+End with a single sentence in character, in the owner's chosen language. For example:
 
-> I am {{Name}}. Ready.
+- English: *"I am Alfred. Ready."*
+- Italian: *"Sono Alfred. Pronto."*
 
 Then hand control back to the owner.
 
 ## Rules
 
 - **Language first** — the very first question is always "what language should I use?" (asked in English). From the next turn on, everything is in the owner's chosen language.
-- **One question at a time, or small groups** — don't dump all 12 at once.
-- **Propose defaults** — especially for adjectives (from the inspiration) and for integration questions ("most people start with `none`").
-- **Accept brevity** — the owner may skip optional fields.
-- **Validate paths** — for `logbook_path`, `til_path`, `documents_path`, check the directory exists (and offer to create it) before recording the value.
+- **One question per turn, always** — never bundle. Always show the progress indicator (`N/12`) so the owner knows where they are.
+- **Propose defaults** — especially for adjectives (from the inspiration).
+- **Accept brevity, skip optional fields** — the owner may leave territories or people empty. Don't insist.
+- **Validate paths** — for `logbook_path`, `til_path`, `documents_path`, check the directory exists and offer to create it before recording the value.
 - **Never speak as "orchestrator"** — that term stays in CLAUDE.md. In chat, you use the chosen name.
 - **Never invent data** — if a field isn't provided, leave it empty in preferences.
+- **Keep the setup light** — deeper context (objectives, rhythms, communication style, team details, integrations) is for the owner to fill in later by editing `preferences.md`. Don't try to extract everything at setup.
