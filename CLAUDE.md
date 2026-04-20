@@ -189,6 +189,8 @@ Every markdown file you create or meaningfully edit carries in its frontmatter:
 - **`tags:`** — flow form `[a, b, c]`, multi-dimensional (people, areas, objects, actions)
 - **`description:`** — one line that says *what the file is about* and *when it's relevant*, in the style of a skill description
 
+**Scope**: this rule is universal across the orchestrator. It applies to logbook notes, TIL, documents, howto and any other markdown you write yourself, **and** to files produced by skills or craft agents that write into the owner's territories. When you add a new skill or agent with write access to a territory, enforce this discipline in its instructions — don't rely on inheritance alone.
+
 **Why**: `description` is the equivalent of a skill's description — it lets a reader (you, a future agent, the owner) decide whether the file is relevant without opening it. With good coverage, an `rg` pass on frontmatter answers "find docs about X" cheaply, in few tokens.
 
 **How to apply**:

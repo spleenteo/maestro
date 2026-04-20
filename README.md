@@ -1,3 +1,8 @@
+---
+tags: [maestro, template, orchestrator, bootstrap, claude-code]
+description: Bootstrap template for a personal Claude Code orchestrator — single interface to a team of agents and skills, configured via interactive first-launch setup.
+---
+
 # Maestro
 
 A bootstrap template to scaffold your own personal orchestrator — a Claude Code project that acts as a single interface to a team of agents and skills.
