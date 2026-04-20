@@ -1,6 +1,6 @@
 ---
 name: add-external-app
-description: Register an external project as a sub-app of this orchestrator. Creates a symlink in `apps/<name>/`, generates a pointer skill at `.claude/skills/<name>/` with a discoverable description, and updates the "Available apps" table in `CLAUDE.md`. Use when the owner asks to add, register, link, hook up, connect, or integrate an external app/project/repo.
+description: Register an external project as a sub-app of this orchestrator. Creates a symlink in `apps/<name>/`, generates a pointer skill at `.claude/skills/<name>/` with a discoverable description, optionally attaches a notes territory in the owner's vault, and updates the "Available apps" table in `CLAUDE.md`. Use when the owner asks to add, register, link, hook up, connect, or integrate an external app/project/repo.
 ---
 
 # Add external app
@@ -22,17 +22,17 @@ Invoke it when the owner says something like:
 
 ## Q&A flow
 
-Ask one question per turn, in the owner's default language (from preferences). Show progress as `N/5`.
+Ask one question per turn, in the owner's default language (from preferences). Show progress as `N/6`.
 
-### Question 1/5 — Path
+### Question 1/6 — Path
 
-> `1/5` — Where does the project live on disk? Give me the absolute path (or a `~`-relative path).
+> `1/6` — Where does the project live on disk? Give me the absolute path (or a `~`-relative path).
 
 Validate: the path must exist and be a directory. If it's a file or doesn't exist, stop and ask again.
 
-### Question 2/5 — Name
+### Question 2/6 — Name
 
-> `2/5` — What name should I use for this app? I'll use it for the symlink (`apps/<name>/`) and for the pointer skill. Keep it short, lowercase, kebab-case (e.g. `blog`, `portfolio`, `acme-dashboard`).
+> `2/6` — What name should I use for this app? I'll use it for the symlink (`apps/<name>/`) and for the pointer skill. Keep it short, lowercase, kebab-case (e.g. `blog`, `portfolio`, `acme-dashboard`).
 
 Validate:
 
@@ -40,21 +40,21 @@ Validate:
 - Not already used in `apps/` or `.claude/skills/` — if it is, explain the clash and ask for a different name
 - Not a reserved name like `setup`, `logbook`, `add-external-app`, `hr`, `data`, `.disabled`
 
-### Question 3/5 — One-line description
+### Question 3/6 — One-line description
 
-> `3/5` — In one sentence, what is this app about? (It'll show up in `CLAUDE.md`'s apps table and in the pointer skill description.)
+> `3/6` — In one sentence, what is this app about? (It'll show up in `CLAUDE.md`'s apps table and in the pointer skill description.)
 
 Example: *"Personal blog built with Astro, Markdown-first content pipeline."*
 
-### Question 4/5 — Trigger phrases
+### Question 4/6 — Trigger phrases
 
-> `4/5` — What kinds of things should make me think of this app? Give me a few keywords or short phrases the orchestrator should use as triggers. (E.g. for a blog: "posts, drafts, publishing, editorial calendar, SEO". For a CRM: "contacts, deals, pipeline, outreach".)
+> `4/6` — What kinds of things should make me think of this app? Give me a few keywords or short phrases the orchestrator should use as triggers. (E.g. for a blog: "posts, drafts, publishing, editorial calendar, SEO". For a CRM: "contacts, deals, pipeline, outreach".)
 
 Collect a comma-separated list. Keep it generous — false positives are cheap, missed matches are expensive.
 
-### Question 5/5 — Access: read-only or read-write
+### Question 5/6 — Access: read-only or read-write
 
-> `5/5` — Should I be able to **write** into this app through the symlink, or is it **read-only** for me?
+> `5/6` — Should I be able to **write** into this app through the symlink, or is it **read-only** for me?
 >
 > - **read-only** (safer default): I can read files inside to gather context, but I won't modify anything there. For edits, you'll open a dedicated Claude Code session inside the app.
 > - **read-write**: I can edit files inside the app directly, respecting the usual "Validation before touching a sub-app" check for larger work.
@@ -63,16 +63,35 @@ Accept only `read-only` or `read-write`. If the owner is unsure, recommend `read
 
 The choice is saved in the pointer skill's frontmatter as `access: <value>` and stated explicitly in the body. The orchestrator reads it before any write inside `apps/<name>/` (see `CLAUDE.md` → "Validation before touching a sub-app").
 
+### Question 6/6 — Notes territory (independent from access)
+
+> `6/6` — Is there a directory in your vault where I should write notes, drafts, or reference material **about** this app? Give me an absolute path (or `~`-relative). Leave blank if you don't want a dedicated spot.
+>
+> Tip: pick a subfolder of one of your declared territories (`logbook_path`, `til_path`, `documents_path`) so the standard frontmatter discipline applies naturally. E.g. `<documents_path>/projects/<name>/`.
+
+This question is **independent from the `access` answer above**: `access` governs writes *inside* the symlinked project, while `notes_dir` governs where you write notes *about* the project, in the owner's own territories. A read-only app can perfectly well have a notes territory in the vault — that's in fact a common setup (no edits to third-party code, but plenty of notes the owner wants to keep).
+
+Validate:
+
+- **Blank** → no notes territory for this app. Skip the `notes_dir:` frontmatter key and the "Notes territory" paragraph in the pointer skill body.
+- **Provided** → resolve `~` to the owner's home. Must be an **absolute** path. Existence is not required — the directory may be created later.
+- If the path falls **outside** the three declared territories (`logbook_path`, `til_path`, `documents_path` from preferences), warn the owner explicitly: *"this will declare a new write territory dedicated to this app — ok?"* and require a yes before accepting.
+
+If a path is provided, save it into the pointer skill frontmatter as `notes_dir: <absolute-path>`, and include the "Notes territory" paragraph in the body (see Step 2).
+
 ## Confirmation
 
-Recap the four answers and ask for confirmation before acting. Example:
+Recap the answers and ask for confirmation before acting. Example:
 
 > I'll create:
 > - Symlink: `apps/blog/` → `/Users/you/Sites/me/my-blog`
-> - Pointer skill: `.claude/skills/blog/SKILL.md` with the description and triggers above
+> - Pointer skill: `.claude/skills/blog/SKILL.md` with the description and triggers above (access: `read-only`)
+> - Notes territory: `/Users/you/.../Projects/Blog/` (I'll write notes about this app there, with standard frontmatter)
 > - A new row in `CLAUDE.md` → "Available apps" table
 >
 > Proceed?
+
+Omit the "Notes territory" line if the owner left Q6 blank.
 
 ## Actions
 
@@ -92,13 +111,14 @@ Announce:
 
 ### Step 2 — Create the pointer skill
 
-Write `.claude/skills/<name>/SKILL.md` with this content (substitute `<name>`, `<description>`, `<triggers>`, `<access>`):
+Write `.claude/skills/<name>/SKILL.md` with this content (substitute `<name>`, `<description>`, `<triggers>`, `<access>`, and — only if provided at Q6 — `<notes_dir>`):
 
 ```markdown
 ---
 name: <name>
 description: <one-line description>. Use when the user mentions <triggers>. The project itself lives in `apps/<name>/` (symlinked).
 access: <read-only | read-write>
+notes_dir: <absolute-path>   # OMIT THIS LINE ENTIRELY if Q6 was blank
 ---
 
 # <Name> — pointer
@@ -110,10 +130,20 @@ The `<name>` project is symlinked at `apps/<name>/`. Its own `CLAUDE.md` (if pre
 - For read-only: *The orchestrator must not modify files inside this app through the symlink. Reads are allowed for context; any edit requires the owner to open a dedicated Claude Code session inside the app.*
 - For read-write: *The orchestrator may edit files inside this app, respecting the "Validation before touching a sub-app" check in the root `CLAUDE.md`.*
 
+## Notes territory
+
+<INCLUDE THIS WHOLE SECTION ONLY IF notes_dir IS SET; OMIT OTHERWISE>
+
+Notes, drafts, and reference material *about* this app are written at `<notes_dir>`. This is separate from the app's own files (which live under `apps/<name>/`) and is governed by the owner's standard territory rules.
+
+Every markdown file created or meaningfully edited in that directory must carry the standard frontmatter — `tags: [a, b, c]` (multi-dimensional) and `description: one-line` — per the root `CLAUDE.md` → "Frontmatter and search discipline". Don't skip it, and don't assume inheritance: restate the discipline whenever a new write goes in.
+
+---
+
 For any non-trivial work (scaffolding, long iteration, git operations on the app's remote), prefer a dedicated Claude Code session inside the app — see the orchestrator's `CLAUDE.md` → "Validation before touching a sub-app".
 ```
 
-(Capitalize `<Name>` in the H1 for readability, e.g. `Blog`, `Acme-dashboard`. Use sentence-case on the description. Pick the matching sentence for the Access paragraph based on the owner's answer.)
+(Capitalize `<Name>` in the H1 for readability, e.g. `Blog`, `Acme-dashboard`. Use sentence-case on the description. Pick the matching sentence for the Access paragraph based on the owner's answer. Include or omit the `notes_dir:` frontmatter line and the entire "Notes territory" section as a unit — they travel together.)
 
 Announce:
 
@@ -143,13 +173,19 @@ Announce:
 
 ### Step 4 — Final summary
 
-Tell the owner the three files that changed and the paths to open if they want to verify:
+Tell the owner the files that changed and the paths to open if they want to verify:
 
 ```
 Done. You can verify:
 - apps/<name> → <absolute-path>
 - .claude/skills/<name>/SKILL.md
 - CLAUDE.md → "Available apps" section
+```
+
+If a `notes_dir` was set, add one more line:
+
+```
+- Notes territory: <notes_dir>  (I'll write notes about this app here)
 ```
 
 If the app has its own `CLAUDE.md` inside (`<absolute-path>/CLAUDE.md`), add:
@@ -176,9 +212,10 @@ Announce:
 
 ## Rules
 
-- **One question per turn**, always with the `N/4` progress indicator.
-- **Validate every input** before moving on (path exists, name is valid/unused, description isn't empty, triggers isn't empty).
+- **One question per turn**, always with the `N/6` progress indicator.
+- **Validate every input** before moving on (path exists, name is valid/unused, description isn't empty, triggers isn't empty, access is one of the two values, notes_dir is blank or a valid absolute path).
+- **`access` and `notes_dir` are independent axes** — don't gate Q6 on the answer to Q5. A read-only app can have a notes territory; a read-write app can have no notes territory. Ask both regardless.
 - **Announce every write** — symlink, file, CLAUDE.md edit, memory insert. One line each.
 - **Never run this skill without owner confirmation** at the summary step.
 - **If any action fails mid-flow, roll back** what's been done (rm symlink, rm skill folder, revert CLAUDE.md) and report clearly.
-- **Never touch the owner's actual project** (the target of the symlink). This skill only adds references to it from the orchestrator side.
+- **Never touch the owner's actual project** (the target of the symlink). This skill only adds references to it from the orchestrator side. The one write territory this skill produces in the owner's vault is the `notes_dir` — and that's only reached via the pointer skill at write time, not by this skill itself.
