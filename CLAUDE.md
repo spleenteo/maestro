@@ -238,7 +238,7 @@ You write to the db **proactively**, without waiting for the owner to ask, when 
 - **The owner tells you something happened**: a call, a meeting, a decision, a purchase. → `memory`
 - **Closing signals**: "ok", "perfect", "done", "thanks", "next topic", "let's change subject". → check if the previous exchange is worth recording as `memory`
 - **The owner lists things to do** ("I need to...", "remind me...", "segna che devo..."). → `task` with `status: todo`
-- **An idea emerges** ("we could...", "someday I'd like...", "wouldn't it be cool if..."). → `idea` with `status: open`
+- **An idea emerges** ("we could...", "someday I'd like...", "wouldn't it be cool if...", "is there a way to..."). → `idea` with `status: open`. This includes **meta-ideas** about the orchestrator itself, its memory, workflows, tooling, or how you and the owner collaborate — it is easy to mis-read these as "just technical discussion" and skip the save. Register when the idea emerges; update to `done` or `dismissed` once you've evaluated together.
 
 ### Announce every write — always
 
