@@ -14,5 +14,6 @@ Practical guides for extending and customizing your orchestrator after setup. Re
 | [03 — Customization](03-customization.md) | Customize identity, owner profile, context, territories, integrations, communication style |
 | [04 — Memory and integrations](04-memory-and-integrations.md) | How the memory db works, how to query and extend it, how to integrate external tools (Basecamp, Google Calendar, reminders) |
 | [05 — Backup and sync](05-backup-and-sync.md) | What to keep out of git, how to sync across machines via a cloud drive, how to use symlinks for external apps, skills, and agents |
+| [06 — Configure Cal](06-configure-cal.md) | Configure the `scheduler` agent (Cal): add data channels (task trackers, calendars), write routines, understand the seven `question_types` |
 
 Each guide stands on its own. Frontmatter on each file includes tags and a one-line description — consistent with the orchestrator's own frontmatter discipline.

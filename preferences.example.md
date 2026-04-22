@@ -12,6 +12,15 @@ The `setup` skill fills in the **essentials** at first launch (identity, nick, r
 
 ---
 
+## Project
+
+The top-level scope this orchestrator is for. Shapes what "context" means in the rest of the file.
+
+- **project_name**: <raw name — e.g. "Personal life", "Acme startup", "Novel draft">
+- **project_slug**: <filesystem-safe slug derived from project_name — e.g. `personal-life`, `acme-startup`, `novel-draft`. Used as the default folder name for the internal vault.>
+
+---
+
 ## Identity (the orchestrator)
 
 Who the orchestrator is and how it speaks.
@@ -30,15 +39,18 @@ The essentials the orchestrator should know at every turn.
 - **Full name**: <your full name, for context — used rarely>
 - **Role**: <what you do, short description>
 - **Default language**: <e.g. english, italian, spanish; switched only when context demands>
+- **timezone**: <optional — IANA name, e.g. `Europe/Rome`, `America/New_York`. Used by agents that reason about "today"/"this week" (like Cal). Omit to fall back to the system timezone.>
 
 ---
 
 ## Context of operation
 
-*This section is important.* The orchestrator is far more helpful when it understands the world you move in. Expand this freely over time.
+*This section is important.* The orchestrator is far more helpful when it understands the world you move in. Setup captures a free-form paragraph here; expand over time with structure as it becomes useful.
 
-- **Setting**: <personal life, work, an association, a side project, a mix — in one or two sentences, what is the context in which we operate?>
-- **Why you need an assistant**: <what pain, goal, or repeated friction led you to set this up? What would a good day look like with the orchestrator's help?>
+<the paragraph the orchestrator collected at setup — what the context looks like day to day and what you expect from an AI assistant>
+
+*Expand as useful:*
+
 - **Main objectives**: <the 2–5 things that, if accomplished this quarter or this year, would make you feel the orchestrator is earning its place>
 - **Constraints and rhythms**: <when do you work? when do you decidedly NOT work? seasonal patterns? recurring commitments? time zones?>
 
@@ -56,15 +68,18 @@ Who you interact with regularly. Names + one line of context each. The orchestra
 
 ## File territories
 
-Absolute paths where the orchestrator is authorized to write markdown files. Any or all may be set. Leave empty (or remove the line) for territories you don't want.
+The orchestrator's library is organized around a single **vault root** (`vault_path`) with three subfolder keys for the territories where markdown files are written. The vault root is declared here **once**; everything else (CLAUDE.md, agents, skills) references the keys — never the value.
 
-- **logbook_path**: <absolute path for daily logbook notes>
-- **til_path**: <absolute path for "Today I Learned" notes>
-- **documents_path**: <absolute path for longer reference documents>
+- **vault_path**: <absolute path to the vault root — the umbrella folder>
+- **logbook_path**: <absolute path for daily logbook notes — default: `<vault_path>/logbook`>
+- **til_path**: <absolute path for "Today I Learned" notes — default: `<vault_path>/til`>
+- **documents_path**: <absolute path for longer reference documents — default: `<vault_path>/documents`>
 
-These can point anywhere — Obsidian vault folders, plain filesystem directories, cloud-synced folders. The orchestrator doesn't care about the tech; it just respects the boundaries.
+Subfolder keys default to subfolders of `vault_path` but can point anywhere on disk — any of them may live outside the vault if you want a non-standard layout. Leave a key empty (or remove the line) for territories you don't want.
 
-**Don't want external folders?** Point them at `./myVault/{logbook,til,documents}/` inside the repo (the setup skill does this automatically if you pick "internal" mode). `myVault/` is gitignored, so nothing leaks.
+Paths can target anything — Obsidian vaults, plain filesystem folders, cloud-synced folders. The orchestrator respects the boundaries regardless of the tech.
+
+**Don't want external folders?** The setup skill's "internal" mode sets `vault_path` to `./<project_slug>/` inside the repo (derived from your project name and appended to `.gitignore` automatically). No leaks, no external config.
 
 ---
 

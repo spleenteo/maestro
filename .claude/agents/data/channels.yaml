@@ -1,0 +1,163 @@
+# Channels config — input for the `scheduler` agent (Cal)
+#
+# Declares the data channels Cal queries and the `question_types` it
+# answers. Read at every invocation: a change here takes effect without
+# re-installing the agent.
+#
+# Matrix default ships with only `memories_db` active. Everything else is
+# commented — a placeholder that shows the shape for common cases. See
+# `howto/06-configure-cal.md` for how to activate channels and what each
+# access shape (tool / skill / mcp / config_refs) means.
+#
+# To add a channel:
+#   1. Add an entry under `channels:` with purpose, access, item_types.
+#   2. Add the channel's name under the `channels:` list of every
+#      `question_type` that should use it.
+
+version: 1
+
+channels:
+
+  memories_db:
+    purpose: >
+      The orchestrator's memory log — tasks, memories, and ideas recorded
+      proactively during conversations. Always present in every matrix
+      instance. Read for every `question_type`.
+    access:
+      tool: sqlite3
+      path: private/memories.db
+      table: log
+    item_types:
+      - name: task
+        states: [todo, in_progress, done, cancelled]
+        fields: [title, description, tags, due_date, completed_date, priority]
+      - name: memory
+        states: [null]  # facts, no lifecycle
+        fields: [title, description, tags]
+      - name: idea
+        states: [open, done, dismissed]
+        fields: [title, description, tags]
+    temporal_field: date
+    notes: >
+      Useful filters: type='task' AND status IN ('todo','in_progress') for
+      prospectives; (type='memory' AND date=X) OR (type='task' AND
+      completed_date=X) for retrospectives.
+
+  # --- Examples (commented, inert) ---------------------------------------
+  #
+  # Uncomment and adapt whichever applies. Activation also requires adding
+  # the channel's name to the relevant `question_types.*.channels` lists
+  # below.
+  #
+  # card_table_watch:
+  #   purpose: >
+  #     Watch a specific card table in an external task tracker (Basecamp,
+  #     Trello, Linear, …). Cards and their dated steps filtered by owner.
+  #   access:
+  #     skill: <skill-name>               # e.g. `basecamp`, installed separately
+  #     config_refs: [bucket_id, card_table_id, owner_user_id]
+  #     # Config lives in the tool's own file (e.g. .basecamp/config.json).
+  #     # Cal reads IDs from there — never hardcoded.
+  #   item_types:
+  #     - name: card
+  #       fields: [title, assignees, content, due_on]
+  #       assignable: true
+  #     - name: step
+  #       parent: card
+  #       fields: [title, due_on, status, assignee]
+  #   temporal_field: due_on
+  #   notes: >
+  #     Filter by assignees containing <owner_user_id>. For retrospectives:
+  #     items with status=completed in the window.
+  #
+  # calendar_events:
+  #   purpose: >
+  #     Calendar events (meetings, calls, blocks) from a calendar MCP.
+  #   access:
+  #     mcp: <mcp-tool-name>              # e.g. mcp__provider__list_events
+  #     calendar: primary
+  #     exclude_types: [outOfOffice, workingLocation, birthday]
+  #   item_types:
+  #     - name: event
+  #       fields: [summary, start, end, attendees, location, description]
+  #   temporal_field: start
+  #   notes: >
+  #     For retrospectives, exclude events after `now`. Timezone resolved
+  #     at runtime from preferences.md `timezone` key (fallback: system TZ).
+
+
+# `question_types` — the grammar of questions Cal answers.
+# Each declares which channels to query, how to group the output, and
+# whether to include routines from `private/routines.yaml`.
+#
+# The matrix ships all seven routed through `memories_db` only; as you
+# activate more channels, add their names to the relevant lists.
+
+question_types:
+
+  prospective_today:
+    description: '"What do I need to do today?" / "What''s on my plate today?"'
+    output: conversational
+    grouping: by_area
+    include_routines: true
+    channels:
+      - memories_db
+      # - card_table_watch
+      # - calendar_events
+
+  prospective_week:
+    description: '"What''s on for this week?" / "What do I need to do this week?"'
+    output: conversational
+    grouping: by_area
+    include_routines: true
+    channels:
+      - memories_db
+      # - card_table_watch
+      # - calendar_events
+
+  retrospective_today:
+    description: '"What did I do today?"'
+    output: conversational
+    grouping: chronological
+    include_routines: false
+    channels:
+      - memories_db
+      # - card_table_watch
+      # - calendar_events
+
+  retrospective_week:
+    description: '"What did I do this week?"'
+    output: conversational
+    grouping: by_area
+    include_routines: false
+    channels:
+      - memories_db
+      # - card_table_watch
+      # - calendar_events
+
+  daily_report:
+    description: "Formal daily report, persisted in the vault by the orchestrator"
+    output: formal
+    grouping: chronological
+    include_routines: false
+    channels:
+      - memories_db
+      # - card_table_watch
+      # - calendar_events
+
+  weekly_plan:
+    description: "Formal weekly plan, persisted in the vault by the orchestrator"
+    output: formal
+    grouping: by_area
+    include_routines: true
+    channels:
+      - memories_db
+      # - card_table_watch
+      # - calendar_events
+
+  ad_hoc:
+    description: "Specific ad-hoc questions (e.g. 'anything urgent?', 'anything about X today?'). Cal decides which declared channels to query based on the question."
+    output: conversational
+    grouping: none
+    include_routines: on_demand
+    channels: [on_demand]

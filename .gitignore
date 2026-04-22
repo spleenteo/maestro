@@ -1,6 +1,7 @@
 # Owner data — never committed
 private/
-myVault/
+# The internal-mode vault folder (named after the project slug) is appended
+# here automatically by the `setup` skill on first launch.
 
 # Workspace artifacts are ephemeral, but keep the folder structure
 workspace/handoff/*

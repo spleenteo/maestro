@@ -9,11 +9,24 @@ Everything that makes your orchestrator *yours* lives in **`private/preferences.
 
 The `setup` skill fills in the essentials at first launch. This document explains how to expand, refine, and reset the customization over time.
 
-## The seven sections
+## The sections
 
-Your preferences are organized in seven blocks. Fill what's relevant, leave the rest empty or remove sections you don't need.
+Your preferences are organized in several blocks. Fill what's relevant, leave the rest empty or remove sections you don't need.
 
-### 1. Identity (the orchestrator)
+### 1. Project
+
+The top-level scope this orchestrator is for. Shapes what "context" means in the rest of the file and provides the default folder name for the internal vault (if you picked internal mode at setup).
+
+```markdown
+## Project
+
+- project_name: Acme partnership
+- project_slug: acme-partnership
+```
+
+The **slug** is a filesystem-safe version of the name (lowercase, non-alphanumeric replaced by `-`). Setup computes it automatically. You can rename the project later, but if you do and you're in internal mode, remember to rename the vault folder on disk and update the `vault_path` / subfolder keys to match.
+
+### 2. Identity (the orchestrator)
 
 Defines how the orchestrator presents itself:
 
@@ -27,7 +40,7 @@ Defines how the orchestrator presents itself:
 
 **Rename** or **restyle** by editing these fields. The orchestrator reads them at the next session start.
 
-### 2. Owner — basics
+### 3. Owner — basics
 
 Who you are to the orchestrator:
 
@@ -38,11 +51,12 @@ Who you are to the orchestrator:
 - Full name: Jane Doe
 - Role: Account Manager
 - Default language: english
+- timezone: Europe/Rome   # optional — omit to fall back to system TZ
 ```
 
-Change language here and the orchestrator switches at next session (current session continues in the old language unless you ask).
+Change language here and the orchestrator switches at next session (current session continues in the old language unless you ask). The `timezone` key is optional — agents that reason about "today" and "this week" (like Cal) read it, falling back to the system timezone when absent.
 
-### 3. Context of operation
+### 4. Context of operation
 
 **The section that pays off the most.** The orchestrator is much more useful when it understands your world:
 
@@ -60,7 +74,7 @@ Change language here and the orchestrator switches at next session (current sess
 
 Expand freely. This is what the orchestrator uses to prioritize and tailor its help.
 
-### 4. People
+### 5. People
 
 People who matter in your work:
 
@@ -74,29 +88,30 @@ People who matter in your work:
 
 The orchestrator proposes additions when it notices someone recurring in conversation.
 
-### 5. File territories
+### 6. File territories
 
-Where the orchestrator is authorized to write:
+Where the orchestrator is authorized to write. The library is organized around a **vault root** (`vault_path`) with three subfolder keys that default to subfolders of it:
 
 ```markdown
 ## File territories
 
-- logbook_path: /Users/you/vault/Work/Diary
-- til_path: /Users/you/vault/Work/TIL
-- documents_path: /Users/you/vault/Work/Documents
+- vault_path: /Users/you/vault/Work
+- logbook_path: /Users/you/vault/Work/logbook
+- til_path: /Users/you/vault/Work/til
+- documents_path: /Users/you/vault/Work/documents
 ```
 
-Paths can be any filesystem location. Remove a line to disable that territory.
+`vault_path` is the single source of truth for the vault location — every other file (CLAUDE.md, agents, skills) references the key, never the value. Subfolder keys default to subfolders of `vault_path` but can point anywhere if you want a non-standard layout. Remove a subfolder line to disable that territory.
 
 **Internal vs external.** At setup time you chose between three modes:
 
-- **internal** — the orchestrator created `./myVault/{logbook,til,documents}/` inside the repo and filled the three paths accordingly. `myVault/` is gitignored, so notes stay private.
-- **external** — you gave absolute paths to folders outside the repo (typical for Obsidian vaults or cloud-synced directories).
-- **skip** — no territories, no markdown writes until you fill at least one path here.
+- **internal** — the orchestrator created `./<project-slug>/` inside the repo as the vault (the slug derived from your project name in Q2), with `logbook/`, `til/`, `documents/` as subfolders. All four keys were written to preferences and the slug was appended to `.gitignore`, so notes stay private.
+- **external** — you gave an absolute path to a vault on disk (typical for Obsidian vaults or cloud-synced directories); subfolders defaulted to `<vault_path>/{logbook,til,documents}`.
+- **skip** — no territories, no markdown writes until you set at least `vault_path` here.
 
-You can switch modes anytime. To migrate from internal to external, move the content from `./myVault/<sub>/` to your target folder and update the path here. To migrate from external to internal, do the reverse and adjust these paths to `<repo>/myVault/<sub>/`.
+You can switch modes anytime by editing `vault_path` (and adjusting the three subfolder keys, if you moved them). To migrate from internal to external, move the content from `./<project-slug>/` to your target vault and update `vault_path` here. To migrate from external to internal, do the reverse and point `vault_path` at `<repo>/<project-slug>/` (and add the slug to `.gitignore` if it isn't already).
 
-### 6. Integrations
+### 7. Integrations
 
 External services:
 
@@ -110,7 +125,7 @@ External services:
 
 Integrations declared here are things the orchestrator knows *about*. Actual wiring (MCP setup, OAuth) happens in Claude Code's config, not here.
 
-### 7. Communication preferences
+### 8. Communication preferences
 
 How the orchestrator should talk:
 
@@ -125,7 +140,7 @@ How the orchestrator should talk:
 
 This is also where the orchestrator will propose additions over time when it picks up on patterns in how you actually work.
 
-### 8. Notes
+### 9. Notes
 
 Free-form, for anything that doesn't fit the blocks above.
 

@@ -1,0 +1,44 @@
+# Recurring routines — input for the `scheduler` agent (Cal)
+#
+# The `setup` skill copies this file to `private/routines.yaml` on first
+# launch. Edit the private copy, not this template — the template is a
+# reference that gets removed after setup.
+#
+# Cal reads `private/routines.yaml` only when a `question_type` in
+# `.claude/agents/data/channels.yaml` has `include_routines: true`
+# (e.g. prospective_today, prospective_week, weekly_plan).
+#
+# Every routine is one YAML item under `routines:`. Shape:
+#
+#   - title:         <required> short, recognizable
+#     frequency:     <required> daily | weekly | monthly | quarterly | yearly
+#     day_of_week:   <for frequency: weekly>   mon|tue|wed|thu|fri|sat|sun
+#     day_of_month:  <for frequency: monthly>  1-31 (or `last`)
+#     month_of_year: <for frequency: yearly>   1-12
+#     active:        <required> true | false  — inert when false, routine is ignored
+#     tags:          <optional> free-form list, same multi-dimensional style as memory tags
+#     notes:         <optional> one-line context for future-you
+#
+# All examples below are commented. Uncomment and adapt the ones you want
+# Cal to surface. Add as many as you need — the file grows organically.
+
+version: 1
+
+routines: []
+
+# --- Examples (commented, inert) -------------------------------------------
+#
+# routines:
+#   - title: "Weekly retro — review the week, plan the next"
+#     frequency: weekly
+#     day_of_week: fri
+#     active: false
+#     tags: [retro, planning, self]
+#     notes: "Blocks ~30min on Friday afternoon; surfaced in prospective_week."
+#
+#   - title: "End-of-month billing check"
+#     frequency: monthly
+#     day_of_month: last
+#     active: false
+#     tags: [billing, admin]
+#     notes: "Reminder only; actual invoices are tracked elsewhere."

@@ -1,3 +1,17 @@
 version: 1
-active: []
+active:
+  - name: librarian
+    alias: Olivier
+    description: Research and catalog agent. Searches the owner's vault (locally, via `rg`) and optionally the web, and returns structured reports of sources for the orchestrator. Also reviews or creates frontmatter (`description`, `tags`) on owner-territory files per project conventions. Never talks to the owner directly.
+    file: .claude/agents/librarian.md
+    status: active
+    hired_at: "2026-04-22"
+    version: "1.0.0"
+  - name: scheduler
+    alias: Cal
+    description: Cold data-layer agent. Aggregates tasks, events, and completed work from channels declared in `.claude/agents/data/channels.yaml` (memories.db always; others the owner wires up — task tools, calendars, CRMs) to answer prospective ("what do I need to do") and retrospective ("what did I do") questions. Returns structured, sourced lists to the orchestrator. Never talks to the owner directly, never writes.
+    file: .claude/agents/scheduler.md
+    status: active
+    hired_at: "2026-04-22"
+    version: "1.0.0"
 retired: []

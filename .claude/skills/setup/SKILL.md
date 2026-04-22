@@ -28,37 +28,39 @@ Asked in English, before anything else:
 
 From the owner's next turn onward, **conduct the rest of the setup — and every future interaction — in the language they named**. Translate the following prompts into the chosen language; the English wordings here are illustrative.
 
-### Question 2/10 — Orchestrator's name
+### Question 2/10 — Project name
 
-> `2/10` — What should I call myself?
+> `2/10` — What's the name of the project or context this orchestrator is for? (e.g., "Personal life", "Acme startup", "Novel draft", "Freelance partnership work"…) I'll use it as the top-level scope, and later suggest a slugified version of it as the default vault folder name.
 
-### Question 3/10 — Inspiration
+Derive a **slug** from the answer: lowercase, non-alphanumeric characters replaced by `-`, collapse repeated `-`, strip leading/trailing `-`. Example: `"Acme Startup"` → `acme-startup`. Keep both values: `project_name` (the raw string) and `project_slug` (for the filesystem). Both go into preferences; the slug is also the default for the internal-mode vault folder (Q10).
 
-> `3/10` — Is there a character, archetype, or role that captures the personality you want from me? (e.g., a calm butler, a sharp analyst, a patient librarian, a quiet mentor.) Based on what you say, I'll propose 3–5 adjectives.
+### Question 3/10 — Project context and expectations
+
+> `3/10` — Tell me about this project: what's the context like day to day, and what do you expect from an AI assistant? A few lines — no essays.
+
+The answer blends two things: the **setting** (what this world looks like, the problems that come up) and the **motivation** (why the owner set you up, what they hope you'll do for them). Accept whichever shape comes naturally — some owners lead with context, others with expectations. Record the whole answer verbatim; it becomes the core of the "Context of operation" block in preferences.
+
+### Question 4/10 — Orchestrator's name
+
+> `4/10` — What should I call myself?
+
+### Question 5/10 — Inspiration
+
+> `5/10` — Is there a character, archetype, or role that captures the personality you want from me? (e.g., a calm butler, a sharp analyst, a patient librarian, a quiet mentor.) Based on what you say, I'll propose 3–5 adjectives.
 
 After the answer: propose 3–5 adjectives in the owner's language (e.g., "a calm butler" → calm, discreet, paternal, proactive, patient). Wait for confirmation or edits. Record the final list.
 
-### Question 4/10 — Owner's nick
+### Question 6/10 — Owner's nick
 
-> `4/10` — How do you want me to call you in chat?
+> `6/10` — How do you want me to call you in chat?
 
-### Question 5/10 — Owner's full name
+### Question 7/10 — Owner's full name
 
-> `5/10` — What's your full name? (I'll use it rarely — it's for context.)
+> `7/10` — What's your full name? (I'll use it rarely — it's for context.)
 
-### Question 6/10 — Owner's role
+### Question 8/10 — Owner's role
 
-> `6/10` — What's your role, or what do you do? A short description is fine.
-
-### Question 7/10 — Context of operation
-
-> `7/10` — What kind of context do we operate in? (Personal life, work, an association, a side project, a mix…) If you want, tell me briefly *where* I'll be helping you: the setting, the day-to-day, what kind of problems come up.
-
-### Question 8/10 — Why you need an assistant
-
-> `8/10` — Why do you need an assistant? What problem, pain, or goal pushed you to set me up?
-
-This helps the orchestrator prioritize what matters. Keep the answer, even if short.
+> `8/10` — What's your role, or what do you do? A short description is fine.
 
 ### Question 9/10 — People you work with
 
@@ -68,35 +70,49 @@ This helps the orchestrator prioritize what matters. Keep the answer, even if sh
 
 This is the last question, and it branches based on the owner's preference for where their notes live.
 
+The owner's territory is organized around a single **vault root** (the key is `vault_path`). Logbook, TIL, and documents live as subfolders inside it by default. The vault path is declared once in preferences and referenced by key from anywhere else — no other file stores the value.
+
 > `10/10` — Where should I save your notes? Three options:
 >
-> - **internal** — keep everything inside this repo, in `./myVault/{logbook,til,documents}/`. Simplest start, nothing external to configure. You can migrate to external paths later by editing preferences. The `myVault/` folder is gitignored, so nothing leaks into the repository.
-> - **external** — you have an Obsidian vault or other folders you want me to use. I'll ask for the absolute paths of the three territories (logbook, TIL, documents).
-> - **skip** — no territories right now. I won't write any markdown files until you set at least one path in preferences later.
+> - **internal** — keep everything inside this repo, in `./<project-slug>/` (derived from the project name you gave in Q2). Logbook, TIL, and documents become subfolders there. Nothing external to configure. Migrate later by editing preferences. The vault folder will be gitignored, so nothing leaks.
+> - **external** — you have a vault or folder on disk (Obsidian, iCloud, anywhere). I'll ask for its absolute root path, then use `logbook/`, `til/`, `documents/` as subfolders by default. Override any of them later in preferences if you want non-standard layout.
+> - **skip** — no territories right now. I won't write any markdown files until you set at least `vault_path` in preferences later.
 
 Handle the answer:
 
 **If `internal`**:
 
-1. Create the three folders inside the repo root:
+1. Create the vault and the three default subfolders inside the repo root, using the `project_slug` computed in Q2:
    ```bash
-   mkdir -p myVault/logbook myVault/til myVault/documents
+   mkdir -p <project_slug>/logbook <project_slug>/til <project_slug>/documents
    ```
-2. Compute absolute paths from the repo location (where the setup skill is running). Save them to preferences:
-   - `logbook_path: <repo-abs-path>/myVault/logbook`
-   - `til_path: <repo-abs-path>/myVault/til`
-   - `documents_path: <repo-abs-path>/myVault/documents`
-3. Confirm in one line: *"Got it — notes will live in `myVault/` inside this repo (gitignored, so they stay private)."*
+2. Append the slug to `.gitignore` if not already present, so the vault stays out of git even after the owner forks or commits:
+   ```bash
+   grep -qxF "<project_slug>/" .gitignore || printf '%s\n' "<project_slug>/" >> .gitignore
+   ```
+3. Compute absolute paths from the repo location (where the setup skill is running). Save **four** keys to preferences:
+   - `vault_path: <repo-abs-path>/<project_slug>`
+   - `logbook_path: <repo-abs-path>/<project_slug>/logbook`
+   - `til_path: <repo-abs-path>/<project_slug>/til`
+   - `documents_path: <repo-abs-path>/<project_slug>/documents`
+4. Confirm in one line: *"Got it — notes will live in `./<project_slug>/` inside this repo (gitignored, so they stay private)."*
 
-**If `external`**: ask the owner three quick follow-up prompts (same turn, not three numbered questions):
+**If `external`**: ask the owner for the vault root first, in a single follow-up:
 
-> Absolute path for logbook? (blank to skip)
-> Absolute path for TIL? (blank to skip)
-> Absolute path for documents? (blank to skip)
+> Absolute path for your vault root? (e.g., `/Users/you/Obsidian/MyVault`)
 
-For each non-blank path, validate the directory exists and offer to create it if it doesn't. Save what was given (empty for skipped).
+Validate the directory exists; offer to create it if not. Once confirmed:
 
-**If `skip`**: record all three as empty in preferences. Remind the owner they can set paths anytime by editing `private/preferences.md`.
+1. Compute three default subpaths: `<vault_path>/logbook`, `<vault_path>/til`, `<vault_path>/documents`.
+2. For each default subpath, check whether the folder exists. Missing ones: offer to create all three at once in a single yes/no (don't nag per folder).
+3. Save **four** keys to preferences:
+   - `vault_path: <absolute-vault-path>`
+   - `logbook_path: <vault_path>/logbook`
+   - `til_path: <vault_path>/til`
+   - `documents_path: <vault_path>/documents`
+4. Confirm in one line, then mention: *"If any subfolder should live elsewhere, edit the corresponding key in `preferences.md` — the orchestrator reads it fresh every session."*
+
+**If `skip`**: record all four keys as empty in preferences. Remind the owner they can set at least `vault_path` anytime by editing `private/preferences.md`.
 
 ### After the 10 questions — offer to add more context
 
@@ -108,38 +124,7 @@ If the owner wants to add something, accept it as free-form text and save it to 
 
 ## Summary and confirmation
 
-Recap what was collected, grouped by section. Offer a chance to correct any field before writing.
-
-## Writing `private/preferences.md`
-
-Create the `private/` directory if it doesn't exist. Write `preferences.md` using the structure of `preferences.example.md` at the repo root, substituting the collected values. Set `setup_completed: true` in the frontmatter.
-
-```bash
-mkdir -p private
-# Then use the Write tool to create private/preferences.md
-```
-
-## Initializing `private/memories.db`
-
-Copy the seed database:
-
-```bash
-cp memories.db.template private/memories.db
-```
-
-## First memory log
-
-Log the setup itself as the first entry in the memory database, so the log begins with a record of its own birth:
-
-```bash
-sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type) VALUES (date('now'), 'Orchestrator setup completed', 'First launch configured via setup skill. Identity and preferences recorded.', 'setup,bootstrap,meta', 'memory');"
-```
-
-Announce it:
-
-```
-📝 saved: "Orchestrator setup completed" [setup,bootstrap,meta] (memory)
-```
+Recap what was collected, grouped by section. Offer a chance to correct any field before writing. Do NOT write any file or run `finalize.sh` until the owner confirms.
 
 ## First logbook entry (if `logbook_path` is set)
 
@@ -226,24 +211,42 @@ Announce:
 
 Skip silently if `til_path` is empty.
 
-## Clean up template files
+## Run `finalize.sh`
 
-Both `preferences.example.md` and `memories.db.template` at the repo root have served their purpose. Remove them now — they only create confusion in an already-initialized instance, and they remain in git history if the owner ever needs them back:
+After logbook and TIL have been written (or skipped), invoke the finalization script in a single Bash call. It handles the mechanical work atomically: writes `private/preferences.md`, copies `memories.db.template` to `private/memories.db`, copies `routines.example.yaml` to `private/routines.yaml`, inserts the first memory log row, removes the three root templates, and moves this skill to `.claude/skills/.disabled/setup/`.
 
-```bash
-/bin/rm preferences.example.md memories.db.template
-```
+Pass the collected answers as environment variables. Required: `MAESTRO_LANGUAGE`, `MAESTRO_PROJECT_NAME`, `MAESTRO_PROJECT_SLUG`, `MAESTRO_ORCHESTRATOR_NAME`, `MAESTRO_OWNER_NICK`, `MAESTRO_OWNER_FULL_NAME`, `MAESTRO_OWNER_ROLE`, `MAESTRO_CONTEXT`. Optional: `MAESTRO_INSPIRED_BY`, `MAESTRO_ADJECTIVES`, `MAESTRO_PEOPLE`, `MAESTRO_VAULT_PATH`, `MAESTRO_LOGBOOK_PATH`, `MAESTRO_TIL_PATH`, `MAESTRO_DOCUMENTS_PATH`, `MAESTRO_NOTES`.
 
-## Self-disable
+Format for `MAESTRO_PEOPLE`: pre-formatted markdown bullets — one per person, e.g. `- Jane Doe: CTO, technical lead\n- John Smith: Account exec`. Empty string if the owner skipped the people question.
 
-Move this skill folder to `.claude/skills/.disabled/setup/` so it doesn't re-trigger on later launches:
+Example invocation:
 
 ```bash
-mkdir -p .claude/skills/.disabled
-mv .claude/skills/setup .claude/skills/.disabled/setup
+MAESTRO_LANGUAGE="english" \
+MAESTRO_PROJECT_NAME="Acme partnership" \
+MAESTRO_PROJECT_SLUG="acme-partnership" \
+MAESTRO_ORCHESTRATOR_NAME="Jarvis" \
+MAESTRO_INSPIRED_BY="a calm butler" \
+MAESTRO_ADJECTIVES="paternal, calm, discreet, proactive" \
+MAESTRO_OWNER_NICK="Jane" \
+MAESTRO_OWNER_FULL_NAME="Jane Doe" \
+MAESTRO_OWNER_ROLE="Partnership Manager" \
+MAESTRO_CONTEXT="Work — I manage 40+ partner relationships, juggle commitments across weeks, and need help drafting diplomatic messages on short notice." \
+MAESTRO_PEOPLE="- A. Smith: CEO" \
+MAESTRO_VAULT_PATH="/abs/path/to/repo/acme-partnership" \
+MAESTRO_LOGBOOK_PATH="/abs/path/to/repo/acme-partnership/logbook" \
+MAESTRO_TIL_PATH="/abs/path/to/repo/acme-partnership/til" \
+MAESTRO_DOCUMENTS_PATH="/abs/path/to/repo/acme-partnership/documents" \
+bash .claude/skills/setup/finalize.sh
 ```
 
-The file is preserved. The owner can restore it by moving it back if they want to reconfigure.
+Read the script's stdout to confirm each step. Announce the first memory write to the owner:
+
+```
+📝 saved: "Orchestrator setup completed" [setup,bootstrap,meta] (memory)
+```
+
+If the script exits non-zero, surface its stderr to the owner and stop — don't attempt to patch partial state by hand. The script refuses to overwrite an existing `private/preferences.md`, so a failed run can be re-attempted after fixing the cause.
 
 ## Introduce yourself (with a recap of created files)
 
@@ -257,6 +260,7 @@ I am Jarvis. Ready.
 Files you can open to verify everything is in place:
 - Preferences: private/preferences.md
 - Memory db:   private/memories.db
+- Routines:    private/routines.yaml
 - Logbook:     <logbook_path>/YYYY-MM-DD-day-zero.md
 - TIL:         <til_path>/YYYY-MM-DD-how-to-work-with-jarvis.md
 

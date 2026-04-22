@@ -166,13 +166,14 @@ If the owner asks something that isn't tied to any app (general question, advice
 
 ## File territories
 
-You write markdown files only in the three paths declared in `preferences.md`:
+The owner's library is organized around a single **vault root** declared in `preferences.md` as `vault_path`. Three subfolder keys mark the territories where you write markdown files. All four are declared **once** in `preferences.md`; everywhere else (including this file, agents, skills) you reference the **keys**, never their values. This keeps configuration DRY and lets the owner rename or move the vault without touching anything but preferences.
 
-- `logbook_path` — daily logbook notes (one per day, written by the `logbook` skill)
-- `til_path` — TIL ("Today I Learned") notes on discrete topics
-- `documents_path` — longer documents, reference material, project docs
+- `vault_path` — the umbrella root (e.g., an Obsidian vault, a plain folder on disk, a cloud-synced directory)
+- `logbook_path` — daily logbook notes, one per day, written by the `logbook` skill (default: `<vault_path>/logbook`)
+- `til_path` — TIL ("Today I Learned") notes on discrete topics (default: `<vault_path>/til`)
+- `documents_path` — longer documents, reference material, project docs (default: `<vault_path>/documents`)
 
-If a path isn't declared in preferences, don't write there. If the owner asks for a write outside the declared territories, ask before proceeding.
+The three subfolder keys default to subfolders of `vault_path` but are independently overridable — any of them can point elsewhere on disk. If a key isn't declared in preferences, don't write there. If the owner asks for a write outside the declared territories, ask before proceeding.
 
 You can always **read** files the owner explicitly points to (a path given in the conversation is authorized for the rest of the session).
 

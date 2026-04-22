@@ -15,7 +15,7 @@ After cloning and running setup, you have an orchestrator that:
 
 - Introduces itself with the **name and personality** you chose
 - Reads your **profile** (role, nick, default language) at every session
-- Writes to **three file territories** you declare (daily logbook, TIL notes, longer documents) — any filesystem path, Obsidian vault folders welcome but not required
+- Writes into a **vault you declare** (`vault_path`) with three note territories as subfolders by default — daily logbook, TIL notes, longer documents. Any filesystem path; Obsidian vault folders welcome but not required.
 - Keeps a **memory database** of what was done, what's to do, and ideas that emerged — as a log of your collaboration
 - Can **hire craft agents** through an HR agent that searches the filesystem, marketplaces, and GitHub for matches
 - Applies a **frontmatter discipline** so the files it writes are searchable by description and tags before anyone reads their body
@@ -46,14 +46,17 @@ On first launch, the orchestrator should notice that `private/preferences.md` do
 Either way, the `setup` skill asks you a short set of questions, starting with your preferred language — from that point on the whole setup runs in that language. In order:
 
 1. **Default language** — how the orchestrator talks to you by default (asked in English)
-2. **Name of your orchestrator** — what it should call itself
-3. **Inspiration** — a character or archetype (real or fictional) that captures the personality you want; the skill proposes 3–5 adjectives based on it, which you accept or tweak
-4. **Your nick** — how the orchestrator should refer to you
-5. **Your full name and role** — for context
-6. **File territories** — where markdown notes should live. Three options: **internal** (notes in `./myVault/{logbook,til,documents}/` inside the repo, gitignored), **external** (absolute paths to folders outside the repo, e.g. an Obsidian vault), or **skip** (no territories for now)
-7. **Integrations** (optional) — Basecamp, MCPs, or any other external service you want the orchestrator to be aware of
+2. **Project name** — the top-level scope this orchestrator is for (e.g. "Personal life", "Acme startup", "Novel draft"); a slug of it becomes the default vault folder name later
+3. **Project context and expectations** — a few lines about what this context looks like day to day and what you expect from an AI assistant
+4. **Name of your orchestrator** — what it should call itself
+5. **Inspiration** — a character or archetype (real or fictional) that captures the personality you want; the skill proposes 3–5 adjectives based on it, which you accept or tweak
+6. **Your nick** — how the orchestrator should refer to you
+7. **Your full name** — for context
+8. **Your role** — what you do
+9. **People you work with** (optional) — team, collaborators, family, clients — whoever's relevant
+10. **File territories** — where markdown notes should live. The setup writes four keys to preferences: `vault_path` (the root) plus `logbook_path`, `til_path`, `documents_path` as subfolders by default. Three options: **internal** (vault is `./<project-slug>/` inside the repo — the slug derived from Q2, gitignored), **external** (you give an absolute path to a vault on disk, e.g. an Obsidian vault — subfolders default to `<vault_path>/{logbook,til,documents}`), or **skip** (no territories for now)
 
-The setup writes `private/preferences.md`, copies `memories.db.template` into `private/memories.db`, writes a first logbook entry and a first TIL (if you chose territories), deletes the two template files at the repo root (`preferences.example.md` and `memories.db.template` — they've done their job and would only cause confusion; they remain in git history if ever needed), and self-disables (moves itself to `.claude/skills/.disabled/setup/`) so it doesn't rerun. You're operational.
+After the questions and a quick summary, a shipped script (`.claude/skills/setup/finalize.sh`) handles the mechanical work in one atomic step: writes `private/preferences.md`, copies `memories.db.template` into `private/memories.db`, copies `routines.example.yaml` into `private/routines.yaml`, inserts the first memory log row, removes the three root templates, and self-disables the skill (moves it to `.claude/skills/.disabled/setup/`). The first logbook entry and the first TIL are written just before that — creative content the orchestrator composes in your language. You're operational.
 
 Any time you feel lost later, type `/guide` — the orchestrator will read its own docs and answer. (`/help` is a Claude Code built-in command and won't reach this skill.)
 
