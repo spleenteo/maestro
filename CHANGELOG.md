@@ -8,6 +8,37 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.04.30.3 — 2026-04-30
+
+**Theme**: Introduce the `maestro-sync` skill — the actual sync engine.
+
+### Added
+
+- **`.claude/skills/maestro-sync/SKILL.md`** new hub skill. Implements the full sync flow:
+  1. Locate mirror (`~/.maestro/`) and primary working tree (`~/Sites/me/maestro/`)
+  2. Pre-sync check on the working tree (warn on uncommitted changes / unpushed commits)
+  3. Refresh the read-only mirror with `git fetch origin && git reset --hard origin/main`
+  4. Scan the instance for files marked `origin: maestro`, read each `maestro_version`
+  5. Show the changelog delta from instance floor to mirror version
+  6. Per-file diff and confirmation (`a` / `s` / `A` / `n`)
+  7. Apply, log to `private/maestro-sync.log`, summarize, log a memory
+- **`CLAUDE.md` → "Hub skills"** — new entry for `maestro-sync` so instances know the skill exists and how to trigger it.
+
+### Bootstrap notes
+
+- A brand new instance cloned from this template gets `maestro-sync` already installed.
+- An old instance predating `origin: maestro` markers needs the owner to mark its inheritable files manually with `maestro_version: v2026.04.29.1` (the baseline) before the first sync — then the normal flow handles it.
+
+### Self-update
+
+`maestro-sync` is itself marked `origin: maestro`. When upstream ships a new version of the skill, instances pick it up like any other file in the scan.
+
+### Commit
+
+- (commit hash on this version)
+
+---
+
 ## v2026.04.30.2 — 2026-04-30
 
 **Theme**: Promote three patterns proven in the Alfred instance into the template.

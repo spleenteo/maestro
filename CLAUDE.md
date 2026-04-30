@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.04.30.2
+maestro_version: v2026.04.30.3
 ---
 
 # Orchestrator
@@ -75,6 +75,7 @@ Shipped with the template:
 - **`logbook`** — writes a daily logbook note to `logbook_path` from preferences.
 - **`add-external-app`** — registers an external project as a sub-app: creates the symlink in `apps/`, generates a pointer skill with trigger keywords, and updates the "Available apps" section in `private/preferences.md`.
 - **`guide`** — answers the owner's questions about the orchestrator by reading `CLAUDE.md` and `howto/`. Triggered by `/guide`, "I'm lost", "how do I", or similar confusion signals. (Not `/help` — that's a Claude Code built-in.)
+- **`maestro-sync`** — keeps this instance aligned with the latest Maestro template upstream. Refreshes the read-only mirror at `~/.maestro/`, scans files marked `origin: maestro`, shows the changelog delta, and applies per-file diffs with confirmation. Triggered by `/maestro-sync`, "sync maestro", "update from maestro", or similar.
 
 Additional skills can be installed by the owner or hired as agents by HR over time.
 
