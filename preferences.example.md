@@ -83,6 +83,18 @@ Paths can target anything — Obsidian vaults, plain filesystem folders, cloud-s
 
 ---
 
+## Available apps
+
+Sub-apps connected to this instance via the `add-external-app` skill. The `Access` column controls whether the orchestrator may write to files in the sub-app through the symlink (`read-write`) or only read them (`read-only`). When you add a new sub-app, the `add-external-app` skill updates this section automatically.
+
+| Alias | Path | Purpose | Access |
+|-------|------|---------|--------|
+| — | — | No app connected yet | — |
+
+Each sub-app may also declare a dedicated notes territory in its pointer skill (`apps/<name>/.claude/skills/<name>/SKILL.md`), which counts as an additional write territory scoped to that sub-app.
+
+---
+
 ## Integrations
 
 Declare only what applies. Optional at setup time, add as you go.

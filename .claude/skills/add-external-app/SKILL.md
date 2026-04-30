@@ -1,15 +1,15 @@
 ---
 name: add-external-app
-description: Register an external project as a sub-app of this orchestrator. Creates a symlink in `apps/<name>/`, generates a pointer skill at `.claude/skills/<name>/` with a discoverable description, optionally attaches a notes territory in the owner's vault, and updates the "Available apps" table in `CLAUDE.md`. Use when the owner asks to add, register, link, hook up, connect, or integrate an external app/project/repo.
+description: Register an external project as a sub-app of this orchestrator. Creates a symlink in `apps/<name>/`, generates a pointer skill at `.claude/skills/<name>/` with a discoverable description, optionally attaches a notes territory in the owner's vault, and updates the "Available apps" section in `private/preferences.md`. Use when the owner asks to add, register, link, hook up, connect, or integrate an external app/project/repo.
 ---
 
 # Add external app
 
-This skill registers an external project as a sub-app of the orchestrator, without the owner having to touch `CLAUDE.md` or symlinks by hand. It performs three actions in sequence:
+This skill registers an external project as a sub-app of the orchestrator, without the owner having to touch `preferences.md` or symlinks by hand. It performs three actions in sequence:
 
 1. Creates a symlink `apps/<name>/` pointing at the external project.
 2. Generates a **pointer skill** at `.claude/skills/<name>/SKILL.md` — nearly empty body, rich `description` in frontmatter. The description is what lets the orchestrator automatically recognize when the owner's request is relevant to this app.
-3. Updates the "Available apps" table in `CLAUDE.md` with a new row.
+3. Updates the "Available apps" section in `private/preferences.md` with a new row.
 
 ## When this skill runs
 
@@ -42,7 +42,7 @@ Validate:
 
 ### Question 3/6 — One-line description
 
-> `3/6` — In one sentence, what is this app about? (It'll show up in `CLAUDE.md`'s apps table and in the pointer skill description.)
+> `3/6` — In one sentence, what is this app about? (It'll show up in the "Available apps" section of `preferences.md` and in the pointer skill description.)
 
 Example: *"Personal blog built with Astro, Markdown-first content pipeline."*
 
@@ -87,7 +87,7 @@ Recap the answers and ask for confirmation before acting. Example:
 > - Symlink: `apps/blog/` → `/Users/you/Sites/me/my-blog`
 > - Pointer skill: `.claude/skills/blog/SKILL.md` with the description and triggers above (access: `read-only`)
 > - Notes territory: `/Users/you/.../Projects/Blog/` (I'll write notes about this app there, with standard frontmatter)
-> - A new row in `CLAUDE.md` → "Available apps" table
+> - A new row in `private/preferences.md` → "Available apps" section
 >
 > Proceed?
 
@@ -151,9 +151,9 @@ Announce:
 🧩 pointer skill created: .claude/skills/<name>/SKILL.md
 ```
 
-### Step 3 — Update the "Available apps" table in CLAUDE.md
+### Step 3 — Update the "Available apps" section in private/preferences.md
 
-The template ships with a placeholder row `| — | — | No app connected yet |`. On first registration, **replace** that placeholder with the real row. On subsequent registrations, **append** a row.
+The template ships with a placeholder row `| — | — | No app connected yet | — |` in the "Available apps" section of `private/preferences.md`. On first registration, **replace** that placeholder with the real row. On subsequent registrations, **append** a row to the existing table.
 
 Target row format (the `Access` column lets the owner and the orchestrator see permissions at a glance):
 
@@ -163,12 +163,12 @@ Target row format (the `Access` column lets the owner and the orchestrator see p
 
 The template ships with a 4-column apps table (Alias, Path, Purpose, Access) and a placeholder row. On first registration, **replace** the placeholder; on subsequent registrations, **append**.
 
-Use the `Edit` tool, not shell, to make a precise string replacement inside `CLAUDE.md`.
+Use the `Edit` tool, not shell, to make a precise string replacement inside `private/preferences.md`.
 
 Announce:
 
 ```
-✏️ updated CLAUDE.md → Available apps: +<name>
+✏️ updated preferences.md → Available apps: +<name>
 ```
 
 ### Step 4 — Final summary
@@ -179,7 +179,7 @@ Tell the owner the files that changed and the paths to open if they want to veri
 Done. You can verify:
 - apps/<name> → <absolute-path>
 - .claude/skills/<name>/SKILL.md
-- CLAUDE.md → "Available apps" section
+- private/preferences.md → "Available apps" section
 ```
 
 If a `notes_dir` was set, add one more line:
@@ -201,7 +201,7 @@ Otherwise, offer gently:
 Per the "Announce every write" rule, after the actions, insert a memory entry:
 
 ```bash
-sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type) VALUES (date('now'), 'Registered external app <name>', 'Symlinked <absolute-path> → apps/<name>, created pointer skill, updated CLAUDE.md table.', 'app,symlink,setup,<name>', 'memory');"
+sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type) VALUES (date('now'), 'Registered external app <name>', 'Symlinked <absolute-path> → apps/<name>, created pointer skill, updated preferences.md Available apps section.', 'app,symlink,setup,<name>', 'memory');"
 ```
 
 Announce:

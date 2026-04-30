@@ -58,11 +58,7 @@ Three rules define the role:
 
 ## Available apps
 
-Initially empty. When the owner connects a sub-app, add a row. The `Access` column declares whether the orchestrator may edit files through the symlink (`read-write`) or is limited to reads (`read-only`). Apps are registered via the `add-external-app` skill, which updates this table automatically.
-
-| Alias | Path | Purpose | Access |
-|-------|------|---------|--------|
-| — | — | No app connected yet | — |
+The list of sub-apps connected to this instance lives in `private/preferences.md`, in the **Available apps** section. Each row declares alias, path, purpose, and the `access` field that controls whether the orchestrator may write through the symlink (`read-write`) or is limited to reads (`read-only`). Apps are registered via the `add-external-app` skill, which updates that section in preferences automatically.
 
 Each sub-app has its own skills in `apps/<name>/.claude/skills/*`. **They are not auto-loaded** into the root context: invoke them intentionally after entering the app's directory.
 
@@ -72,7 +68,7 @@ Shipped with the template:
 
 - **`setup`** — interactive first-launch configuration. Self-disables after first successful run.
 - **`logbook`** — writes a daily logbook note to `logbook_path` from preferences.
-- **`add-external-app`** — registers an external project as a sub-app: creates the symlink in `apps/`, generates a pointer skill with trigger keywords, and updates the "Available apps" table in `CLAUDE.md`.
+- **`add-external-app`** — registers an external project as a sub-app: creates the symlink in `apps/`, generates a pointer skill with trigger keywords, and updates the "Available apps" section in `private/preferences.md`.
 - **`guide`** — answers the owner's questions about the orchestrator by reading `CLAUDE.md` and `howto/`. Triggered by `/guide`, "I'm lost", "how do I", or similar confusion signals. (Not `/help` — that's a Claude Code built-in.)
 
 Additional skills can be installed by the owner or hired as agents by HR over time.
@@ -120,9 +116,9 @@ When a request arrives:
 
 **Always, before modifying files inside `apps/<name>/`, run a suitability check.** The orchestrator is a router; not every task is best executed from here. Evaluate these signals automatically — if any are on, **stop and propose the owner opens a dedicated Claude Code session on the app's repo** instead of proceeding.
 
-**Access gate — check before any write inside `apps/<name>/`.** Each registered app has a pointer skill at `.claude/skills/<name>/SKILL.md` with an `access:` field in frontmatter (`read-only` or `read-write`), also echoed in the "Available apps" table. Before editing any file inside the app through the symlink:
+**Access gate — check before any write inside `apps/<name>/`.** Each registered app has a pointer skill at `.claude/skills/<name>/SKILL.md` with an `access:` field in frontmatter (`read-only` or `read-write`), also echoed in the "Available apps" section of `private/preferences.md`. Before editing any file inside the app through the symlink:
 
-1. Read the pointer skill's `access` field (or the "Available apps" table).
+1. Read the pointer skill's `access` field (or the "Available apps" section in preferences).
 2. If `read-only`: **do not write**. Stop, explain the permission to the owner, and propose opening a dedicated Claude Code session inside the app. Proceed only if the owner explicitly overrides for that specific action.
 3. If `read-write`: proceed, but still apply the signals below to decide whether a dedicated session is the better choice anyway.
 
@@ -380,6 +376,12 @@ When writing into preferences, match the existing tone and structure. Keep entri
 ## Basecamp
 
 If preferences declare Basecamp integration, use only the authorized account and project listed there. Never access other Basecamp accounts or projects, not even read-only.
+
+## Distribution and modifications
+
+Files distributed by Maestro origin carry `origin: maestro` in their frontmatter. **Never modify these files in place** — any change must be made in the Maestro origin repository and reabsorbed via sync. The rule applies to `CLAUDE.md`, skills in `.claude/skills/<x>/` with `origin: maestro`, agents in `.claude/agents/<y>.md` with `origin: maestro`, and any other Maestro-distributed file. If a Maestro behavior doesn't fit this instance, stop and propose a change to the pattern, not a local override.
+
+Personal customizations live in `private/`, in `apps/<custom>/`, and in skills/agents without the `origin: maestro` marker. These are never touched by Maestro updates.
 
 ## Permissions and paths
 
