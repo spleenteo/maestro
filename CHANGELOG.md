@@ -8,6 +8,26 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.04.30.2 — 2026-04-30
+
+**Theme**: Promote three patterns proven in the Alfred instance into the template.
+
+### Added
+
+- **`CLAUDE.md` → "Decide which `date:` to write — early-morning rule"** under the Memory section. New sub-section that codifies the rule: writes to `memories.db` between 00:00 and 06:00 local time are attributed to the previous day (`date('now','-1 day')`) unless the owner has explicitly closed it. Avoids fragmenting one lived session across two calendar days.
+- **`CLAUDE.md` → "YAML safety in frontmatter values"** under "Frontmatter and search discipline". Lists the trigger characters (`: `, `# `, leading `[{>|*&!%@\``) that force a value to be quoted with double quotes, and the rule "when in doubt, quote".
+- **`CLAUDE.md` → "Linking discipline (Obsidian wikilinks)"** new top-level section. When the vault is an Obsidian one, references to other vault files use `[[Filename]]` syntax (with optional `[[Filename|alias]]`). Lists what stays in monospace (folder paths, files outside the vault, code identifiers, URLs). Explains the graph-connectivity reason. Section is conditional: skipped when the vault is plain filesystem.
+
+### Migration for existing instances
+
+These three patterns may already exist in instance-level customizations of `CLAUDE.md` (instances that surfaced them earlier). On sync, prefer the template's wording for consistency unless the local version has owner-specific examples worth keeping.
+
+### Commit
+
+- (commit hash filled in by the commit itself — see git log on this version's commit)
+
+---
+
 ## v2026.04.30.1 — 2026-04-30
 
 **Theme**: Available apps moves out of `CLAUDE.md` into `preferences.md`; new distribution rule.

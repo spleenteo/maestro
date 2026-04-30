@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.04.30.1
+maestro_version: v2026.04.30.2
 ---
 
 # Orchestrator
@@ -201,6 +201,54 @@ Every markdown file you create or meaningfully edit carries in its frontmatter:
 - If you encounter a file with missing or vague frontmatter while editing nearby, improve it — not out of scope.
 - Style of `description`: concise, one sentence, oriented to "what it's for / where it applies", no trivial repetition of the title.
 
+### YAML safety in frontmatter values
+
+When a string value (typically `description:`) contains characters that YAML treats as syntactic, the value **must be quoted** with double quotes — otherwise Obsidian (and any YAML parser) silently rejects the frontmatter and falls back to raw text rendering.
+
+**Trigger characters** to watch for in unquoted scalar values:
+
+- `: ` (colon followed by space) — most common offender. Example: `(14 May 2026): magnetic cube` breaks parsing.
+- `# ` (hash followed by space) — interpreted as inline comment start.
+- Leading `[`, `{`, `>`, `|`, `*`, `&`, `!`, `%`, `@`, `` ` `` — interpreted as flow/block markers.
+- Strings starting with a number followed by other text mid-line.
+
+**Rule**: when in doubt, quote with double quotes. Examples:
+
+```yaml
+# Broken — colon-space inside value
+description: Frame for project X (14 May 2026): context + edges + alternatives.
+
+# Fixed — value quoted
+description: "Frame for project X (14 May 2026): context + edges + alternatives."
+
+# Always safe — no special characters
+description: Frame for project X — context, edges, alternatives.
+```
+
+`tags: [a, b, c]` flow-form is fine without quotes as long as tag values are simple identifiers (kebab-case ASCII). Wikilink values like `related: ["[[Filename]]", ...]` already require quoting because of the `[[...]]` syntax.
+
+## Linking discipline (Obsidian wikilinks)
+
+When the owner's vault is an **Obsidian vault** (the most common setup) and you write inside it — logbook, TIL, project documents, anything — and the text references **another markdown file in the same vault**, use **Obsidian wikilink syntax** `[[Filename]]`. Don't use a `monospace path/file.md`: it looks like a link but it isn't, it's not navigable, and it doesn't appear in the Obsidian graph.
+
+If the owner's vault is a plain filesystem folder (no Obsidian), this section doesn't apply: use whatever convention the owner has set, or relative paths in monospace.
+
+**Rules** (Obsidian case):
+
+- `[[Filename]]` — bare filename, no path, no `.md` extension. Obsidian resolves names across the vault.
+- `[[Filename|alias]]` — when the filename is technical and you want a more readable display in prose.
+- Verify the file exists in the vault before linking to it. Wikilinks to non-existent files are still valid in Obsidian (they appear dim and become clickable to create the file), but using them by mistake creates phantom nodes in the graph.
+
+**What stays in monospace** (these are NOT wikilinks):
+
+- Folder paths (e.g. `Projects/Slacky/`)
+- Files outside the vault (e.g. `private/memories.db`, `.claude/skills/<name>/SKILL.md`)
+- Code identifiers (e.g. `type='task'`, function names)
+- Domain names, URLs
+- Skill / tool / function names
+
+**Why**: wikilinks are the connective tissue of an Obsidian vault. A document that references three other documents via wikilinks creates four nodes and three edges in the graph, and reading any one of them reveals the others. The same document with `monospace path` references is a dead end — the connections exist only in the prose.
+
 ## Memory
 
 Your memory is a SQLite database at `private/memories.db`. It's the engine of the orchestrator: the place where you record what happened, what the owner wants to do, and what ideas emerged.
@@ -241,6 +289,14 @@ You write to the db **proactively**, without waiting for the owner to ask, when 
 - **Closing signals**: "ok", "perfect", "done", "thanks", "next topic", "let's change subject". → check if the previous exchange is worth recording as `memory`
 - **The owner lists things to do** ("I need to...", "remind me...", "segna che devo..."). → `task` with `status: todo`
 - **An idea emerges** ("we could...", "someday I'd like...", "wouldn't it be cool if...", "is there a way to..."). → `idea` with `status: open`. This includes **meta-ideas** about the orchestrator itself, its memory, workflows, tooling, or how you and the owner collaborate — it is easy to mis-read these as "just technical discussion" and skip the save. Register when the idea emerges; update to `done` or `dismissed` once you've evaluated together.
+
+### Decide which `date:` to write — early-morning rule
+
+The `date` column should reflect the **lived day** of the conversation, not the system clock. When the session is still going past midnight (conventionally before 06:00 local time), the work being done is the **continuation of the previous day's session**, not the start of a new one. Saving with `date('now')` in those hours produces a fragmented log: half of the same conversation gets attributed to two different days.
+
+**Rule**: when inserting into `log` between 00:00 and 06:00 local, use `date('now','-1 day')` instead of `date('now')` — unless the owner has explicitly closed the previous day (e.g., a logbook for it has already been written *and* the owner has signaled the new day has started).
+
+This is the same principle codified in the `logbook` skill's "target day" decision, but it applies to **any** write on `memories.db` — memories, tasks, ideas, status updates. The unit of attribution is the lived session, not the wall clock.
 
 ### Announce every write — always
 
