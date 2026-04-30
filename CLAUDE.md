@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.04.30.3
+maestro_version: v2026.04.30.4
 ---
 
 # Orchestrator
@@ -442,6 +442,8 @@ If preferences declare Basecamp integration, use only the authorized account and
 ## Distribution and modifications
 
 Files distributed by Maestro origin carry `origin: maestro` in their frontmatter. **Never modify these files in place** — any change must be made in the Maestro origin repository and reabsorbed via sync. The rule applies to `CLAUDE.md`, skills in `.claude/skills/<x>/` with `origin: maestro`, agents in `.claude/agents/<y>.md` with `origin: maestro`, and any other Maestro-distributed file. If a Maestro behavior doesn't fit this instance, stop and propose a change to the pattern, not a local override.
+
+**Single exception — the `tools:` frontmatter field of skills and agents.** Each instance has its own set of installed MCP servers and skills, so the `tools:` whitelist of an `origin: maestro` skill or agent **may be extended in place** to declare instance-specific tools (e.g. adding `mcp__slacky__*` tools to an agent that calls Slacky). Only the `tools:` field is exempted; the body of the file (instructions, behavior, output format) and all other frontmatter keys remain governed by the rule above. The skill `maestro-sync` ignores diffs in the `tools:` field by design.
 
 Personal customizations live in `private/`, in `apps/<custom>/`, and in skills/agents without the `origin: maestro` marker. These are never touched by Maestro updates.
 

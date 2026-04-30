@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.04.30.3
+maestro_version: v2026.04.30.4
 name: maestro-sync
 description: Sync this orchestrator instance with the latest Maestro template. Updates the read-only mirror at `~/.maestro/`, scans the instance for files marked `origin: maestro`, shows the changelog delta, and proposes diffs for confirmation before applying. Use when the owner says "sync maestro", "update from maestro", "pull maestro changes", "/maestro-sync", or asks whether new patterns are available from the template.
 ---
@@ -156,6 +156,8 @@ diff -u <instance-path>/<file> <mirror-path>/<file>
 ```
 
 Skip files that are byte-identical (already up to date — common when the instance is mostly aligned).
+
+**Frontmatter `tools:` exemption** (per `CLAUDE.md` → "Distribution and modifications"): when comparing skill or agent files, **ignore differences in the `tools:` frontmatter field**. The instance is free to extend that field with its own MCPs/tools, and those changes must survive the sync. Concretely: parse the YAML frontmatter, set `tools:` of the mirror version to match the instance's `tools:` before computing the diff, then proceed as usual on body and other frontmatter keys. If only `tools:` differs, the file is considered identical and skipped.
 
 For each file with a non-empty diff, show:
 

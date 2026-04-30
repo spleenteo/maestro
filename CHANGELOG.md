@@ -8,6 +8,24 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.04.30.4 — 2026-04-30
+
+**Theme**: Allow per-instance customization of the `tools:` frontmatter field on `origin: maestro` files.
+
+### Changed
+
+- **`CLAUDE.md` → "Distribution and modifications"** gets a new "Single exception" paragraph. Each instance can extend the `tools:` whitelist of a skill or agent marked `origin: maestro` with its own MCPs/tools, without violating the no-in-place-edits rule. This is necessary because MCP installations are per-instance: an agent that needs to call Slacky tools needs `mcp__slacky__*` in its `tools:`, but Slacky may not exist on every instance. The `maestro-sync` skill ignores diffs limited to the `tools:` field — only the body and other frontmatter keys are diffed for sync.
+
+### Why
+
+Without this exception, an instance that wants to use the base `scheduler` agent (Maestro-distributed) couldn't add its own MCP tools without forking the file or fighting the sync. The exception keeps the agent body as upstream's source of truth and lets the instance own its tool whitelist.
+
+### Commit
+
+- (commit hash on this version)
+
+---
+
 ## v2026.04.30.3 — 2026-04-30
 
 **Theme**: Introduce the `maestro-sync` skill — the actual sync engine.
