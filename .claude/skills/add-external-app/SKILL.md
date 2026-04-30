@@ -1,4 +1,6 @@
 ---
+origin: maestro
+maestro_version: v2026.04.30.1
 name: add-external-app
 description: Register an external project as a sub-app of this orchestrator. Creates a symlink in `apps/<name>/`, generates a pointer skill at `.claude/skills/<name>/` with a discoverable description, optionally attaches a notes territory in the owner's vault, and updates the "Available apps" section in `private/preferences.md`. Use when the owner asks to add, register, link, hook up, connect, or integrate an external app/project/repo.
 ---

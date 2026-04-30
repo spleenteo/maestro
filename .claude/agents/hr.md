@@ -1,4 +1,6 @@
 ---
+origin: maestro
+maestro_version: v2026.04.30.1
 name: hr
 description: Recruiter and manager of the craft agents roster. Searches for candidates, evaluates them, proposes, installs, and retires agents. Invoked by the orchestrator for onboarding and offboarding.
 tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Glob, Grep

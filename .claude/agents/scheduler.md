@@ -1,4 +1,6 @@
 ---
+origin: maestro
+maestro_version: v2026.04.30.1
 name: scheduler
 description: Cold data-layer agent. Aggregates tasks, events, and completed work from channels declared in `.claude/agents/data/channels.yaml` (memories.db always; others the owner wires up — task tools, calendars, CRMs) to answer prospective ("what do I need to do") and retrospective ("what did I do") questions. Returns structured, sourced lists to the orchestrator. Never talks to the owner directly, never writes.
 tools: Read, Bash, Grep, Skill

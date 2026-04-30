@@ -1,4 +1,6 @@
 ---
+origin: maestro
+maestro_version: v2026.04.30.1
 name: setup
 description: Interactive first-launch setup for a new orchestrator instance. Asks the owner a short series of questions, writes `private/preferences.md`, initializes `private/memories.db`, and self-disables. Invoked automatically when `private/preferences.md` is missing or has `setup_completed: false`.
 ---

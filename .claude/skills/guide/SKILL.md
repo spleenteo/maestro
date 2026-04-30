@@ -1,4 +1,6 @@
 ---
+origin: maestro
+maestro_version: v2026.04.30.1
 name: guide
 description: Answer the owner's questions about this orchestrator — how it works, what features exist, how to do something specific. Reads CLAUDE.md and the guides in howto/ to give grounded answers. Use when the owner types /guide, or says things like "I'm lost", "what can you do", "how do I", "how does this work", "remind me how to...", or similar confusion signals. Note: /help is a Claude Code built-in command and won't reach this skill — only /guide does.
 ---

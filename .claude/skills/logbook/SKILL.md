@@ -1,4 +1,6 @@
 ---
+origin: maestro
+maestro_version: v2026.04.30.1
 name: logbook
 description: Daily logbook of sessions with the orchestrator. Use when the owner asks for "recap of today", "wrap up", "end of day", or whenever it's time to synthesize in writing what was done and what was learned. Writes to the `logbook_path` declared in preferences.
 ---
