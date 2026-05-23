@@ -105,6 +105,23 @@ Declare only what applies. Optional at setup time, add as you go.
 
 ---
 
+## Warm task channel
+
+*Optional.* If you use an external task manager (Slacky, Basecamp todos, Todoist, Linear, custom) as the source of truth for live tasks, declare it here. The orchestrator will run a **lazy garbage collector** at session start that archives done tasks from the warm layer into `memories.db` and updates a watermark. See `howto/07-warm-task-channel.md` for the full pattern.
+
+If you don't use an external task manager, **skip this section entirely** (or set `channel: none`) — the orchestrator will use `type='task'` in `memories.db` as documented in [04 — Memory and integrations](../howto/04-memory-and-integrations.md).
+
+```yaml
+channel: <slacky | basecamp | todoist | linear | none>
+skill: <slacky-task-manager | basecamp-task-manager | ...>     # must exist in .claude/skills/
+archive_tag: <slacky-archive | basecamp-archive | ...>          # tag prepended to archived memories
+marker_name: <last-slacky-flush | last-basecamp-flush | ...>    # watermark key in memories.db
+```
+
+The skill named here must implement a `## Garbage Collector` section conforming to the contract in the howto. Maestro ships no GC skill by default — the channel implementation is added as a personal customization.
+
+---
+
 ## Communication preferences
 
 How the orchestrator should talk *to you* and about *others*. Expand when you notice the orchestrator drifting from how you actually work.

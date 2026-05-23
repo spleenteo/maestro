@@ -8,6 +8,35 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.05.23.2 — 2026-05-23
+
+**Theme**: Extract the warm/cold/GC task pattern from instance-level boilerplate into a generic, opt-in Maestro feature. Instances declare a warm task channel in `preferences.md`; the orchestrator runs a lazy GC at session start. No hardcoded channel names in `CLAUDE.md`.
+
+### Added
+
+- **`howto/07-warm-task-channel.md`** — new how-to that describes the warm (external task system) / cold (`memories.db`) / GC (skill `<channel>-task-manager`) pattern, the skill contract, the archive-memory format, optional weekly trend, and reusability across instances. Includes worked examples for Slacky and Basecamp.
+- **`preferences.example.md` → `## Warm task channel`** — new optional block with `channel`, `skill`, `archive_tag`, `marker_name`. Skip the block entirely (or set `channel: none`) to keep `memories.db` as the only task store.
+
+### Changed
+
+- **`CLAUDE.md` → `## Session start`** — added step 4 "Warm task channel — lazy GC" as an optional, channel-driven instruction. If `preferences.md` declares a warm task channel, the orchestrator invokes the named skill's `## Garbage Collector` section. Idempotency guard (1h), cross-week-boundary trend (if the skill defines it), non-blocking on errors, one-line announcement only when N > 0.
+- **`CLAUDE.md` → `## Identity and customizations`** — added "Warm task channel" to the list of expected preferences blocks, marked optional.
+- **`howto/README.md`** — added the new how-to to the index.
+- **`CLAUDE.md` frontmatter** — `maestro_version` bumped to `v2026.05.23.2`.
+
+### Why
+
+- Pre-2026.05.23.2 instances that used a warm task channel (e.g. Alfred with Slacky) hardcoded the channel name in their own copy of `CLAUDE.md`, drifting from the template and making the same pattern hard to reuse on other instances (Pam with Basecamp, Claudio with Basecamp).
+- Extracting the pattern lets every instance opt-in by editing `preferences.md` alone, without touching `CLAUDE.md`. New channels are added by writing a skill that conforms to the GC contract — the orchestrator's top-level behavior stays unchanged.
+- The howto is the single source of truth for the contract, so each `<channel>-task-manager` skill (Slacky, Basecamp, etc.) can point at it instead of redefining the flow.
+
+### Migration
+
+- Instances with no warm task channel: **no action needed**. The new session-start step is a no-op when the preferences block is absent.
+- Instances that already hardcoded a channel (e.g. Alfred): pull this version via `maestro-sync`, then move the channel declaration into a `## Warm task channel` block in `private/preferences.md` and delete any instance-level edits to `CLAUDE.md`'s session-start section. The existing `<channel>-task-manager` skill keeps working as-is — only the entry point moves from CLAUDE.md to preferences.
+
+---
+
 ## v2026.05.23.1 — 2026-05-23
 
 **Theme**: Ship `bin/mem` — a Python CLI wrapper for `memories.db` that replaces verbose raw SQL with a consistent, escape-safe, output-aware interface.
