@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.04.30.4
+maestro_version: v2026.05.23.1
 ---
 
 # Orchestrator
@@ -315,71 +315,94 @@ Format:
 
 Reads (`SELECT` queries for reports) don't need a write-style announcement — the report itself *is* the output.
 
-### Commands
+### Commands — via `bin/mem` (preferred)
+
+Use the project CLI `bin/mem` for all standard operations. It handles escape of apostrophes/accents/quotes, relative dates (`tomorrow`, `+3d`), the early-morning rule automatically, and emits the announcement line for you. Output is a table on TTY and JSON on pipe (`--json` forces JSON).
 
 Insert a **memory**:
 
 ```bash
-sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type) VALUES ('YYYY-MM-DD', 'short title', 'optional context', 'tag1,tag2,tag3', 'memory'); SELECT last_insert_rowid();"
+bin/mem save "short title" -t tag1,tag2,tag3 -d "optional context"
 ```
 
 Insert a **task**:
 
 ```bash
-sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type, status, due_date, priority) VALUES ('YYYY-MM-DD', 'actionable title', 'optional context', 'tag1,tag2', 'task', 'todo', NULL, 'normal'); SELECT last_insert_rowid();"
+bin/mem task "actionable title" -t tag1,tag2 --due tomorrow --priority high
 ```
 
-Close a task:
+Close a task (one or more):
 
 ```bash
-sqlite3 private/memories.db "UPDATE log SET status='done', completed_date='YYYY-MM-DD' WHERE id=<id>;"
+bin/mem done <id> [<id>...]
 ```
 
 Insert an **idea**:
 
 ```bash
-sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type, status) VALUES ('YYYY-MM-DD', 'idea title', 'free context: reasoning, why it came up, links', 'tag1,tag2', 'idea', 'open'); SELECT last_insert_rowid();"
+bin/mem idea "idea title" -t tag1,tag2 -d "free context: reasoning, why it came up"
 ```
 
-Realize an idea:
+Realize an idea (or any update):
 
 ```bash
-sqlite3 private/memories.db "UPDATE log SET status='done', description=COALESCE(description,'')||' → implemented at <where>' WHERE id=<id>;"
+bin/mem update <id> --status done --description "→ implemented at <where>"
 ```
 
-### Reports
+**Bulk** — N rows in a single transaction (use when archiving many at once, e.g. when flushing an external task store into the cold layer):
 
-Favorite queries to answer the owner. Always present results grouped by date when the period spans multiple days, and don't show `id` unless you need it for a follow-up operation.
+```bash
+echo '[{"title":"a","tags":"x,y","type":"memory"},{"title":"b","type":"memory"}]' | bin/mem save --bulk
+```
+
+**Marker** — named upsert, useful for sync markers or watermarks:
+
+```bash
+bin/mem marker get <name>
+bin/mem marker set <name> "<value>"
+```
+
+### Reports — via `bin/mem`
 
 Today:
 
 ```bash
-sqlite3 -header -column private/memories.db "SELECT id, title, type, tags FROM log WHERE date='YYYY-MM-DD' ORDER BY id;"
+bin/mem today
 ```
 
-This week:
+Open tasks (sorted by priority then due):
 
 ```bash
-sqlite3 -header -column private/memories.db "SELECT id, date, title, type, tags FROM log WHERE date>=date('now','-7 days') ORDER BY date DESC, id;"
+bin/mem todo
 ```
 
-Open tasks (sorted by priority and due date):
+Overdue tasks:
 
 ```bash
-sqlite3 -header -column private/memories.db "SELECT id, title, status, priority, due_date FROM log WHERE type='task' AND status IN ('todo','in_progress') ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 END, due_date;"
+bin/mem overdue
 ```
 
-Open ideas:
+Search across types (free text + tag + type + date range):
 
 ```bash
-sqlite3 -header -column private/memories.db "SELECT id, date, title, description FROM log WHERE type='idea' AND status='open' ORDER BY date DESC;"
+bin/mem search "keyword" --tag <tag> --type memory --since 2026-05-01 --until 2026-05-23 --limit 50
 ```
 
-Everything tagged with a keyword (across all types):
+Show a single row in detail:
 
 ```bash
-sqlite3 -header -column private/memories.db "SELECT id, date, title, type, status FROM log WHERE tags LIKE '%<keyword>%' ORDER BY date DESC;"
+bin/mem show <id>
 ```
+
+Stats (counts by type, open tasks/ideas, date range):
+
+```bash
+bin/mem stats
+```
+
+### Fallback to raw `sqlite3`
+
+For queries the CLI doesn't cover (custom joins, ad-hoc aggregations, schema introspection, vacuum/integrity checks), fall back to `sqlite3 private/memories.db "<query>"`. The CLI is a convenience layer, not a replacement for SQL access.
 
 ### Rules
 

@@ -1,0 +1,648 @@
+#!/usr/bin/env python3
+# origin: maestro
+# maestro_version: v2026.05.23.1
+"""mem — CLI wrapper su memories.db.
+
+Riduce verbosity, escape, error-rate delle scritture SQL grezze da parte
+dell'orchestrator. Output table su TTY, JSON su pipe.
+Path db: env MEM_DB > <repo>/private/memories.db (auto-detect dal path dello script).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sqlite3
+import sys
+from contextlib import contextmanager
+from datetime import datetime, timedelta, date
+from pathlib import Path
+from typing import Any, Iterable
+
+# ---------------------------------------------------------------------------
+# DB path resolution
+# ---------------------------------------------------------------------------
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def db_path() -> Path:
+    env = os.environ.get("MEM_DB")
+    if env:
+        return Path(env).expanduser()
+    return _repo_root() / "private" / "memories.db"
+
+
+@contextmanager
+def connect():
+    p = db_path()
+    if not p.exists():
+        sys.stderr.write(f"mem: db not found at {p}\n")
+        sys.exit(2)
+    con = sqlite3.connect(str(p))
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys = ON")
+    try:
+        yield con
+        con.commit()
+    finally:
+        con.close()
+
+
+# ---------------------------------------------------------------------------
+# Date parsing
+# ---------------------------------------------------------------------------
+
+_REL_RE = re.compile(r"^([+-])(\d+)([dwm])$")
+
+
+def parse_date(s: str | None, *, allow_keywords: bool = True) -> str | None:
+    """Parse a date spec into 'YYYY-MM-DD'. None passes through."""
+    if s is None:
+        return None
+    s = s.strip()
+    if not s:
+        return None
+    today = date.today()
+    if allow_keywords:
+        kw = s.lower()
+        if kw == "today":
+            return today.isoformat()
+        if kw == "yesterday":
+            return (today - timedelta(days=1)).isoformat()
+        if kw == "tomorrow":
+            return (today + timedelta(days=1)).isoformat()
+    m = _REL_RE.match(s)
+    if m:
+        sign, n, unit = m.group(1), int(m.group(2)), m.group(3)
+        delta_days = {"d": n, "w": n * 7, "m": n * 30}[unit]
+        delta = timedelta(days=delta_days if sign == "+" else -delta_days)
+        return (today + delta).isoformat()
+    # ISO date
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date().isoformat()
+    except ValueError as e:
+        raise SystemExit(f"mem: invalid date '{s}' ({e})")
+
+
+def effective_today() -> str:
+    """Today, with early-morning rule (00:00–06:00 → ieri)."""
+    now = datetime.now()
+    if now.hour < 6:
+        return (now.date() - timedelta(days=1)).isoformat()
+    return now.date().isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+
+def is_tty() -> bool:
+    return sys.stdout.isatty()
+
+
+def emit_json(payload: Any) -> None:
+    json.dump(payload, sys.stdout, ensure_ascii=False, separators=(",", ":"))
+    sys.stdout.write("\n")
+
+
+def emit_table(rows: list[dict], cols: list[str]) -> None:
+    if not rows:
+        print("(empty)")
+        return
+    widths = {c: max(len(c), *(len(str(r.get(c) or "")) for r in rows)) for c in cols}
+    header = " | ".join(c.ljust(widths[c]) for c in cols)
+    sep = "-+-".join("-" * widths[c] for c in cols)
+    print(header)
+    print(sep)
+    for r in rows:
+        print(" | ".join(str(r.get(c) or "").ljust(widths[c]) for c in cols))
+
+
+def emit_rows(rows: list[dict], cols: list[str], force_json: bool) -> None:
+    if force_json or not is_tty():
+        emit_json(rows)
+    else:
+        emit_table(rows, cols)
+
+
+def announce(line: str, *, json_mode: bool) -> None:
+    """Announcement on stdout (or skipped in --json mode if writing JSON payload)."""
+    if json_mode:
+        return
+    print(line)
+
+
+def tags_list(tags: str | None) -> list[str]:
+    if not tags:
+        return []
+    return [t.strip() for t in tags.split(",") if t.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Write commands
+# ---------------------------------------------------------------------------
+
+def _insert_log(con: sqlite3.Connection, row: dict) -> int:
+    cols = [
+        "date", "title", "description", "tags",
+        "type", "status", "due_date", "completed_date", "priority",
+    ]
+    values = [row.get(c) for c in cols]
+    cur = con.execute(
+        f"INSERT INTO log ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+        values,
+    )
+    return cur.lastrowid
+
+
+def cmd_save(args) -> int:
+    if args.bulk:
+        return _bulk_save(args)
+    row = {
+        "date": parse_date(args.date) or effective_today(),
+        "title": args.title,
+        "description": args.description,
+        "tags": ",".join(args.tags) if args.tags else None,
+        "type": "memory",
+    }
+    with connect() as con:
+        rid = _insert_log(con, row)
+    payload = {"id": rid, **row}
+    if args.json:
+        emit_json(payload)
+    else:
+        tags = row["tags"] or ""
+        announce(f'📝 saved: "{row["title"]}" [{tags}] (memory) #{rid}', json_mode=False)
+    return 0
+
+
+def _bulk_save(args) -> int:
+    """Read JSON array from stdin, insert all in single transaction."""
+    raw = sys.stdin.read()
+    try:
+        items = json.loads(raw)
+    except json.JSONDecodeError as e:
+        sys.stderr.write(f"mem: invalid JSON on stdin: {e}\n")
+        return 2
+    if not isinstance(items, list):
+        sys.stderr.write("mem: --bulk expects JSON array\n")
+        return 2
+    inserted = []
+    today = effective_today()
+    with connect() as con:
+        for item in items:
+            row = {
+                "date": parse_date(item.get("date")) or today,
+                "title": item.get("title") or "(untitled)",
+                "description": item.get("description"),
+                "tags": item.get("tags"),
+                "type": item.get("type") or "memory",
+                "status": item.get("status"),
+                "due_date": parse_date(item.get("due_date")),
+                "completed_date": parse_date(item.get("completed_date")),
+                "priority": item.get("priority") or "normal",
+            }
+            # memory has NULL status
+            if row["type"] == "memory":
+                row["status"] = None
+            rid = _insert_log(con, row)
+            inserted.append({"id": rid, "title": row["title"], "type": row["type"]})
+    if args.json or not is_tty():
+        emit_json({"inserted": inserted, "count": len(inserted)})
+    else:
+        print(f"📦 bulk: inserted {len(inserted)} row(s)")
+        for r in inserted:
+            print(f"  #{r['id']} [{r['type']}] {r['title']}")
+    return 0
+
+
+def cmd_task(args) -> int:
+    row = {
+        "date": parse_date(args.date) or effective_today(),
+        "title": args.title,
+        "description": args.description,
+        "tags": ",".join(args.tags) if args.tags else None,
+        "type": "task",
+        "status": "todo",
+        "due_date": parse_date(args.due),
+        "priority": args.priority or "normal",
+    }
+    with connect() as con:
+        rid = _insert_log(con, row)
+    if args.json:
+        emit_json({"id": rid, **row})
+    else:
+        tags = row["tags"] or ""
+        due = f" due:{row['due_date']}" if row["due_date"] else ""
+        announce(
+            f'📝 task: "{row["title"]}" [{tags}]{due} (priority:{row["priority"]}) #{rid}',
+            json_mode=False,
+        )
+    return 0
+
+
+def cmd_idea(args) -> int:
+    row = {
+        "date": parse_date(args.date) or effective_today(),
+        "title": args.title,
+        "description": args.description,
+        "tags": ",".join(args.tags) if args.tags else None,
+        "type": "idea",
+        "status": "open",
+    }
+    with connect() as con:
+        rid = _insert_log(con, row)
+    if args.json:
+        emit_json({"id": rid, **row})
+    else:
+        tags = row["tags"] or ""
+        announce(f'💡 idea: "{row["title"]}" [{tags}] (open) #{rid}', json_mode=False)
+    return 0
+
+
+def cmd_update(args) -> int:
+    fields = {}
+    if args.title is not None: fields["title"] = args.title
+    if args.description is not None: fields["description"] = args.description
+    if args.tags is not None: fields["tags"] = ",".join(args.tags)
+    if args.status is not None: fields["status"] = args.status
+    if args.due is not None: fields["due_date"] = parse_date(args.due)
+    if args.priority is not None: fields["priority"] = args.priority
+    if args.date is not None: fields["date"] = parse_date(args.date)
+    if not fields:
+        sys.stderr.write("mem: nothing to update\n")
+        return 1
+    set_clause = ", ".join(f"{k}=?" for k in fields)
+    with connect() as con:
+        cur = con.execute(
+            f"UPDATE log SET {set_clause} WHERE id=?",
+            (*fields.values(), args.id),
+        )
+        if cur.rowcount == 0:
+            sys.stderr.write(f"mem: no row with id {args.id}\n")
+            return 1
+    changed = ", ".join(f"{k}={v!r}" for k, v in fields.items())
+    if args.json:
+        emit_json({"id": args.id, "updated": fields})
+    else:
+        announce(f"✏️ updated #{args.id}: {changed}", json_mode=False)
+    return 0
+
+
+def cmd_done(args) -> int:
+    today = effective_today()
+    with connect() as con:
+        for rid in args.ids:
+            cur = con.execute(
+                "UPDATE log SET status='done', completed_date=? WHERE id=? AND type='task'",
+                (today, rid),
+            )
+            if cur.rowcount == 0:
+                sys.stderr.write(f"mem: no task with id {rid}\n")
+                return 1
+    if args.json:
+        emit_json({"done": args.ids, "completed_date": today})
+    else:
+        for rid in args.ids:
+            announce(f"✅ done #{rid}", json_mode=False)
+    return 0
+
+
+def cmd_reopen(args) -> int:
+    with connect() as con:
+        cur = con.execute(
+            "UPDATE log SET status='todo', completed_date=NULL WHERE id=? AND type='task'",
+            (args.id,),
+        )
+        if cur.rowcount == 0:
+            sys.stderr.write(f"mem: no task with id {args.id}\n")
+            return 1
+    if args.json:
+        emit_json({"reopened": args.id})
+    else:
+        announce(f"↩️ reopened #{args.id}", json_mode=False)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Marker commands (kv-style on log table, retrocompat with last-slacky-flush)
+# ---------------------------------------------------------------------------
+
+def cmd_marker(args) -> int:
+    if args.action == "get":
+        with connect() as con:
+            row = con.execute(
+                "SELECT id, date, description FROM log WHERE title=? AND type='memory' "
+                "AND tags LIKE '%marker%' ORDER BY id DESC LIMIT 1",
+                (args.name,),
+            ).fetchone()
+            # fallback: any record with title=<name> (retrocompat con marker pre-CLI)
+            if row is None:
+                row = con.execute(
+                    "SELECT id, date, description FROM log WHERE title=? "
+                    "ORDER BY id DESC LIMIT 1",
+                    (args.name,),
+                ).fetchone()
+        if row is None:
+            if args.json:
+                emit_json({"name": args.name, "value": None})
+            return 0
+        if args.json:
+            emit_json({"name": args.name, "value": row["description"], "id": row["id"], "date": row["date"]})
+        else:
+            print(row["description"] or "")
+        return 0
+
+    if args.action == "set":
+        today = effective_today()
+        with connect() as con:
+            existing = con.execute(
+                "SELECT id FROM log WHERE title=? ORDER BY id DESC LIMIT 1",
+                (args.name,),
+            ).fetchone()
+            if existing:
+                con.execute(
+                    "UPDATE log SET date=?, description=?, tags=? WHERE id=?",
+                    (today, args.value, "marker", existing["id"]),
+                )
+                rid = existing["id"]
+                action = "updated"
+            else:
+                cur = con.execute(
+                    "INSERT INTO log (date, title, description, tags, type) "
+                    "VALUES (?, ?, ?, 'marker', 'memory')",
+                    (today, args.name, args.value),
+                )
+                rid = cur.lastrowid
+                action = "created"
+        if args.json:
+            emit_json({"name": args.name, "value": args.value, "id": rid, "action": action})
+        else:
+            announce(f"🏷️ marker {action} #{rid}: {args.name} = {args.value}", json_mode=False)
+        return 0
+
+    sys.stderr.write("mem marker: unknown action\n")
+    return 2
+
+
+# ---------------------------------------------------------------------------
+# Read commands
+# ---------------------------------------------------------------------------
+
+_DEFAULT_COLS = ["id", "date", "type", "status", "title", "tags"]
+
+
+def _row_to_dict(row: sqlite3.Row) -> dict:
+    return {k: row[k] for k in row.keys()}
+
+
+def _query(con: sqlite3.Connection, where: str, params: Iterable, order: str = "date DESC, id DESC", limit: int | None = None) -> list[dict]:
+    sql = f"SELECT * FROM log WHERE {where} ORDER BY {order}"
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    return [_row_to_dict(r) for r in con.execute(sql, list(params)).fetchall()]
+
+
+def cmd_today(args) -> int:
+    with connect() as con:
+        rows = _query(con, "date=?", [effective_today()], order="id ASC")
+    emit_rows(rows, _DEFAULT_COLS, args.json)
+    return 0
+
+
+def cmd_todo(args) -> int:
+    with connect() as con:
+        rows = _query(
+            con,
+            "type='task' AND status IN ('todo','in_progress')",
+            [],
+            order=(
+                "CASE priority WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 END, "
+                "due_date NULLS LAST, id"
+            ),
+        )
+    cols = ["id", "title", "status", "priority", "due_date", "tags"]
+    emit_rows(rows, cols, args.json)
+    return 0
+
+
+def cmd_overdue(args) -> int:
+    today = effective_today()
+    with connect() as con:
+        rows = _query(
+            con,
+            "type='task' AND status IN ('todo','in_progress') AND due_date < ?",
+            [today],
+            order="due_date ASC, id",
+        )
+    cols = ["id", "title", "due_date", "priority", "tags"]
+    emit_rows(rows, cols, args.json)
+    return 0
+
+
+def cmd_search(args) -> int:
+    clauses = []
+    params: list[Any] = []
+    if args.query:
+        like = f"%{args.query}%"
+        clauses.append("(title LIKE ? OR description LIKE ? OR tags LIKE ?)")
+        params.extend([like, like, like])
+    if args.tag:
+        for t in args.tag:
+            clauses.append("tags LIKE ?")
+            params.append(f"%{t}%")
+    if args.type:
+        clauses.append("type=?")
+        params.append(args.type)
+    if args.status:
+        clauses.append("status=?")
+        params.append(args.status)
+    if args.since:
+        clauses.append("date>=?")
+        params.append(parse_date(args.since))
+    if args.until:
+        clauses.append("date<=?")
+        params.append(parse_date(args.until))
+    where = " AND ".join(clauses) if clauses else "1=1"
+    with connect() as con:
+        rows = _query(con, where, params, limit=args.limit)
+    emit_rows(rows, _DEFAULT_COLS, args.json)
+    return 0
+
+
+def cmd_show(args) -> int:
+    with connect() as con:
+        row = con.execute("SELECT * FROM log WHERE id=?", (args.id,)).fetchone()
+    if row is None:
+        sys.stderr.write(f"mem: no row with id {args.id}\n")
+        return 1
+    d = _row_to_dict(row)
+    if args.json or not is_tty():
+        emit_json(d)
+    else:
+        for k, v in d.items():
+            if v is None or v == "":
+                continue
+            print(f"{k:>16}: {v}")
+    return 0
+
+
+def cmd_stats(args) -> int:
+    with connect() as con:
+        total = con.execute("SELECT COUNT(*) FROM log").fetchone()[0]
+        by_type = {
+            r["type"]: r["n"]
+            for r in con.execute("SELECT type, COUNT(*) AS n FROM log GROUP BY type")
+        }
+        open_tasks = con.execute(
+            "SELECT COUNT(*) FROM log WHERE type='task' AND status IN ('todo','in_progress')"
+        ).fetchone()[0]
+        open_ideas = con.execute(
+            "SELECT COUNT(*) FROM log WHERE type='idea' AND status='open'"
+        ).fetchone()[0]
+        first = con.execute("SELECT MIN(date) FROM log").fetchone()[0]
+        last = con.execute("SELECT MAX(date) FROM log").fetchone()[0]
+    payload = {
+        "total": total,
+        "by_type": by_type,
+        "open_tasks": open_tasks,
+        "open_ideas": open_ideas,
+        "first_date": first,
+        "last_date": last,
+    }
+    if args.json or not is_tty():
+        emit_json(payload)
+    else:
+        print(f"total rows: {total}")
+        print(f"  by type:  {by_type}")
+        print(f"  open tasks: {open_tasks}")
+        print(f"  open ideas: {open_ideas}")
+        print(f"  date range: {first} → {last}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# CLI parser
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="mem", description="CLI wrapper su memories.db.")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    # save
+    sp = sub.add_parser("save", help="Save a memory")
+    sp.add_argument("title", nargs="?", help="Memory title (omit with --bulk)")
+    sp.add_argument("-d", "--description")
+    sp.add_argument("-t", "--tags", action="append", help="Tag (repeat or comma-separate)")
+    sp.add_argument("--date")
+    sp.add_argument("--bulk", action="store_true", help="Read JSON array from stdin")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_save)
+
+    # task
+    sp = sub.add_parser("task", help="Create a task")
+    sp.add_argument("title")
+    sp.add_argument("-d", "--description")
+    sp.add_argument("-t", "--tags", action="append")
+    sp.add_argument("--due")
+    sp.add_argument("--priority", choices=["low", "normal", "high"])
+    sp.add_argument("--date")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_task)
+
+    # idea
+    sp = sub.add_parser("idea", help="Open an idea")
+    sp.add_argument("title")
+    sp.add_argument("-d", "--description")
+    sp.add_argument("-t", "--tags", action="append")
+    sp.add_argument("--date")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_idea)
+
+    # update
+    sp = sub.add_parser("update", help="Patch an existing row")
+    sp.add_argument("id", type=int)
+    sp.add_argument("--title")
+    sp.add_argument("--description")
+    sp.add_argument("--tags", action="append")
+    sp.add_argument("--status")
+    sp.add_argument("--due")
+    sp.add_argument("--priority", choices=["low", "normal", "high"])
+    sp.add_argument("--date")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_update)
+
+    # done
+    sp = sub.add_parser("done", help="Mark task(s) as done")
+    sp.add_argument("ids", type=int, nargs="+")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_done)
+
+    # reopen
+    sp = sub.add_parser("reopen", help="Reopen a task")
+    sp.add_argument("id", type=int)
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_reopen)
+
+    # marker
+    sp = sub.add_parser("marker", help="Get/set a named marker")
+    sp.add_argument("action", choices=["get", "set"])
+    sp.add_argument("name")
+    sp.add_argument("value", nargs="?")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_marker)
+
+    # today / todo / overdue
+    for name, func, help_ in [
+        ("today", cmd_today, "Rows dated today"),
+        ("todo", cmd_todo, "Open tasks"),
+        ("overdue", cmd_overdue, "Overdue open tasks"),
+    ]:
+        sp = sub.add_parser(name, help=help_)
+        sp.add_argument("--json", action="store_true")
+        sp.set_defaults(func=func)
+
+    # search
+    sp = sub.add_parser("search", help="Search rows")
+    sp.add_argument("query", nargs="?")
+    sp.add_argument("--tag", action="append")
+    sp.add_argument("--type", choices=["memory", "task", "idea"])
+    sp.add_argument("--status")
+    sp.add_argument("--since")
+    sp.add_argument("--until")
+    sp.add_argument("--limit", type=int, default=50)
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_search)
+
+    # show
+    sp = sub.add_parser("show", help="Show a single row")
+    sp.add_argument("id", type=int)
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_show)
+
+    # stats
+    sp = sub.add_parser("stats", help="Aggregate counts")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_stats)
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except SystemExit:
+        raise
+    except Exception as e:
+        sys.stderr.write(f"mem: error: {e}\n")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

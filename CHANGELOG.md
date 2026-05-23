@@ -8,6 +8,66 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.05.23.1 — 2026-05-23
+
+**Theme**: Ship `bin/mem` — a Python CLI wrapper for `memories.db` that replaces verbose raw SQL with a consistent, escape-safe, output-aware interface.
+
+### Added
+
+- **`bin/mem`** new executable Python script (stdlib only, no dependencies). Subcommands:
+  - **Writes**: `save`, `task`, `idea`, `update`, `done`, `reopen`
+  - **Reads**: `today`, `todo`, `overdue`, `search`, `show`, `stats`
+  - **Bulk**: `save --bulk` reads a JSON array from stdin, inserts every row in a single SQLite transaction
+  - **Markers**: `marker get|set <name>` for sync watermarks (upsert in-place on the `log` table — retro-compatible with marker rows created before the CLI existed)
+- Cross-cutting features in the CLI:
+  - Parameterized SQL — no more escape errors on apostrophes/accents/quotes
+  - Relative dates: `today`, `yesterday`, `tomorrow`, `+Nd`, `-Nd`, `+Nw`, `+Nm`
+  - Early-morning rule (00:00–06:00 → previous day) applied automatically when `--date` is omitted
+  - Output: ASCII table on TTY, dense JSON on pipe; `--json` forces JSON
+  - DB path resolution: env `MEM_DB` > `<repo-root>/private/memories.db` (auto-detected from the script's location)
+
+### Changed
+
+- **`CLAUDE.md` → `## Memory` → "Commands" / "Reports"** rewritten to promote `bin/mem` as the preferred access layer. Raw `sqlite3` is kept as a documented fallback for queries the CLI doesn't cover (custom joins, integrity checks, vacuum, `ALTER TABLE`).
+- **`howto/04-memory-and-integrations.md`** new section "CLI helper — `bin/mem`" explaining the why and the surface.
+- **`CLAUDE.md` frontmatter** — `maestro_version` bumped to `v2026.05.23.1`.
+
+### Why
+
+- Verbosity of raw SQL was the dominant token cost in the orchestrator's memory writes (~700–800 tokens per non-trivial save). The CLI cuts this by 30–40%.
+- Escape of Italian (or any non-ASCII) text in raw SQL was a recurring source of silent INSERT failures. Parameterized SQL closes that.
+- Bulk writes via single transaction unlock efficient flush flows (e.g., archiving an external task store's done items into the cold memory layer in one round-trip instead of N).
+- Markers as named upsert give a clean replacement for the pattern of "row in `log` with a sentinel title".
+
+### Migration note for instances
+
+**`bin/mem` is not yet in `maestro-sync`'s scan scope.** The sync skill only walks Markdown files with `origin: maestro` frontmatter (CLAUDE.md, hub skills, base agents). Python files in `bin/` have an `# origin: maestro` comment marker but the parser doesn't read it yet.
+
+At the next sync, after running `/maestro-sync` and applying the markdown diffs, **copy `bin/mem` manually** from the mirror:
+
+```bash
+mkdir -p bin
+cp ~/.maestro/bin/mem bin/mem
+chmod +x bin/mem
+```
+
+This is a one-shot step per instance (idempotent — running it again just overwrites with the current upstream version). A future Maestro release may extend `maestro-sync` to scan `bin/*` for comment-style frontmatter; until then, copy by hand.
+
+### Roadmap (open)
+
+The work behind this release is part of a larger shaping (see Alfred's `memories.db` idea #408). What's deferred for now:
+
+- **FTS5 + indexes + views** — relevant when the row count grows past a few thousand
+- **`sqlite-vec` + semantic similarity** — `bin/mem similar <id-or-query>` k-NN search (idea #407 in Alfred)
+- **MCP server layer** — would eliminate the Bash round-trip the CLI still incurs; deferred because the dominant cost was verbosity (now solved) and an MCP server reopens the multi-instance isolation question (idea #455)
+- **Scope extension of `maestro-sync`** to handle `bin/*` with comment-style markers — would remove the manual copy step above
+
+### Commit
+
+- (commit hash on this version)
+
+---
+
 ## v2026.04.30.4 — 2026-04-30
 
 **Theme**: Allow per-instance customization of the `tools:` frontmatter field on `origin: maestro` files.
