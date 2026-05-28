@@ -8,6 +8,28 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.05.28.1 — 2026-05-28
+
+**Theme**: Promote two librarian disciplines proven in the Luigi instance into the base agent — tag parsimony and a symlink safety rail — generalized to be instance-agnostic.
+
+### Changed
+
+- **`.claude/agents/librarian.md`** gains two sections:
+  - **`### Tag discipline — parsimony over creativity`** (under Frontmatter discipline): no orphan tags (a tag must be used by ≥2 files), reuse before inventing, prefer cross-cutting axes over content-descriptive adjectives, the orchestrator's controlled vocabulary wins on bulk catalog.
+  - **`## Forbidden targets — symlinks to other repositories`** (after the catalog report format) + a matching `## Never` bullet: resolve `realpath` before any write, refuse to write if the real target sits outside the task's named territory (e.g. a symlink into an application code repo). Generic — names no specific repos.
+- **`librarian.md` frontmatter** — `maestro_version` bumped to `v2026.05.28.1`.
+
+### Why
+
+Both patterns surfaced in the Luigi instance (Gestart) as hand-edits to the librarian: a tag-hygiene rule and a safety rail against writing through symlinks into application code. They are generic and benefit every instance, so they belong in the template rather than living as an instance fork.
+
+### Migration
+
+- Instances that had **not** customized `librarian.md`: pull via `maestro-sync` and apply the diff. No data migration.
+- The Luigi instance carried these two sections as a local fork; after this promotion it re-aligns to the upstream (generalized) librarian and rejoins `maestro-sync` scope.
+
+---
+
 ## v2026.05.23.2 — 2026-05-23
 
 **Theme**: Extract the warm/cold/GC task pattern from instance-level boilerplate into a generic, opt-in Maestro feature. Instances declare a warm task channel in `preferences.md`; the orchestrator runs a lazy GC at session start. No hardcoded channel names in `CLAUDE.md`.
