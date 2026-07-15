@@ -6,7 +6,7 @@ description: "Shaping doc for the spring-upgrade audit: slim CLAUDE.md (behavior
 
 # Spring upgrade — Shaping
 
-> **Status: 🔨 in progress.** Release A implemented on branch `spring-upgrade` (this session, 2026-07-15). Release B planned, not yet started. Release C (SQLite) deliberately out of scope — see "Deferred".
+> **Status: ✅ shipped (A + B).** Release A (v2026.07.15.1, reverse scan) and Release B (v2026.07.15.2, CLAUDE.md refactor + `howto/08` + `bin/mem --help`) both implemented on branch `spring-upgrade` on 2026-07-15. Release C (SQLite) deliberately out of scope — see "Deferred". Outcome: CLAUDE.md 489 → ~260 lines, no rule dropped.
 
 Audit of the Maestro template with two goals: make `CLAUDE.md` lighter and better-structured (it is 489 lines / ~31KB, loaded at every session start in every instance), and close distribution gaps in `maestro-sync` — all without touching the two-layer contract (distributed `origin: maestro` files identical everywhere; personalizations only in `private/preferences.md`, agents, task channel).
 

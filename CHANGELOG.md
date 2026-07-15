@@ -8,6 +8,38 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.07.15.2 — 2026-07-15
+
+**Theme**: Slim `CLAUDE.md` from 489 to ~260 lines — second half of the "spring upgrade" (see `docs/shaping-spring-upgrade.md`). Behavioral rules stay resident and are rewritten tighter; reference material moves to canonical sources loaded on demand. **No rule was dropped** — only prose, examples, and duplicated reference were compressed or extracted.
+
+### Added
+
+- **`howto/08-markdown-discipline.md`** — new distributed reference file (`origin: maestro`, the first marked howto) carrying the full markdown discipline extracted from `CLAUDE.md`: frontmatter style (tags + description), YAML safety with examples, Obsidian wikilink rules. Delivered to instances by the reverse scan shipped in v2026.07.15.1.
+
+### Changed
+
+- **`CLAUDE.md`** — restructured (~-47%):
+  - "Frontmatter and search discipline" + "YAML safety" + "Linking discipline" merged into one condensed **"Markdown discipline"** section (all rules kept) pointing to `howto/08` for details and examples.
+  - **Memory section**: the SQL schema block is dropped (the schema ships in `memories.db.template`; type/status semantics stay inline); the full `bin/mem` command/report reference is replaced by a ~10-line cheatsheet plus `bin/mem --help` as the canonical reference.
+  - Verbose behavioral sections (Session start step 4, Validation before touching a sub-app, Preferences evolution, Delegation, Handoff) rewritten tighter with every rule preserved.
+- **`bin/mem`** — argparse help texts enriched so `--help` can serve as the canonical reference: top-level epilog documents relative dates, the early-morning rule, output modes, and `MEM_DB`; per-flag help added for `--date`, `--due`, `--status` (allowed values per type), `--bulk` (row keys), `marker`, and `search` filters. No behavior change.
+- **`.claude/skills/logbook/SKILL.md`** — points to `howto/08-markdown-discipline.md` for the markdown discipline; the "retrieve today's entries" step uses `bin/mem today` (raw `sqlite3` kept as fallback).
+- **`.claude/agents/librarian.md`** — frontmatter-discipline section points to `howto/08-markdown-discipline.md`.
+- `maestro_version` bumped to `v2026.07.15.2` on: `CLAUDE.md`, `howto/08-markdown-discipline.md`, `.claude/skills/logbook/SKILL.md`, `.claude/agents/librarian.md`.
+
+### Why
+
+- ~40–45% of the old `CLAUDE.md` was reference material, not behavior. Loaded at every session start in every instance, it diluted the weight of the rules that matter (announce-every-write, access gate) and cost ~7–8k tokens per session. Reference belongs where it can't drift: the CLI documents itself via `--help`, the markdown discipline lives in one distributed file that skills and agents point to.
+- Future SQLite work (FTS5, indexes, `sqlite-vec`) will land in `bin/mem` and its `--help` without touching `CLAUDE.md` again.
+
+### Migration
+
+- Instances that applied v2026.07.15.1 (reverse scan): run `/maestro-sync` — the slimmed `CLAUDE.md`, `logbook`, `librarian` arrive as diffs; `howto/08-markdown-discipline.md` is proposed as a new file. Copy `bin/mem` manually from the mirror (`cp ~/.maestro/bin/mem bin/mem`) — `bin/*` is still outside sync scope.
+- Instances still on ≤ v2026.05.28.1: run `/maestro-sync` **twice** — the first run installs the reverse-scan-capable skill, the second delivers the new howto. The CLAUDE.md diff applies on the first run either way; the pointer to `howto/08` stays dangling until the second run (harmless: the condensed rules in CLAUDE.md are self-sufficient).
+- Instances that hand-edited their `CLAUDE.md` despite the distribution rule: review the diff carefully per file — this release rewrites most lines.
+
+---
+
 ## v2026.07.15.1 — 2026-07-15
 
 **Theme**: Close the new-file delivery gap in `maestro-sync` — first half of the "spring upgrade" (see `docs/shaping-spring-upgrade.md`). Until now the skill only scanned the instance, so files created upstream after an instance was cloned (new skills, `bin/mem`, marked howtos) were never proposed and required manual copies.

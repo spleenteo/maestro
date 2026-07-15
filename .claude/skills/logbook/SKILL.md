@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.04.30.1
+maestro_version: v2026.07.15.2
 name: logbook
 description: Daily logbook of sessions with the orchestrator. Use when the owner asks for "recap of today", "wrap up", "end of day", or whenever it's time to synthesize in writing what was done and what was learned. Writes to the `logbook_path` declared in preferences.
 ---
@@ -41,6 +41,8 @@ description: one-line summary of what the day covered — used to decide relevan
 
 **Description** is the one-line summary — same pattern as skill descriptions. It enables the orchestrator (or the owner) to know what a past note was about without opening it.
 
+Follow the full markdown discipline in `howto/08-markdown-discipline.md`: quote YAML values containing `: `/`# `/leading special characters, and use `[[Wikilinks]]` when referencing other notes in an Obsidian vault.
+
 ### Body
 
 1. **First body line** (after frontmatter): the date in the owner's **default language** (from preferences). For example, in Italian: `## 19 Aprile 2026`. In English: `## 19 April 2026`.
@@ -76,8 +78,10 @@ The db is the starting point, not the text of the note. It needs *interpretation
 2. Retrieve today's log entries:
 
    ```bash
-   sqlite3 -header -column private/memories.db "SELECT id, title, description, tags, type, status FROM log WHERE date = date('now') ORDER BY id;"
+   bin/mem today
    ```
+
+   (Fallback without the CLI: `sqlite3 -header -column private/memories.db "SELECT id, title, description, tags, type, status FROM log WHERE date = date('now') ORDER BY id;"`)
 
 3. Group by theme (not by type): multiple entries can merge into a single section if they talk about the same topic.
 4. Pick a thread for the H1 if the day has one; otherwise use a neutral title like `# Work log`.

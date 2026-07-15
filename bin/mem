@@ -530,49 +530,63 @@ def cmd_stats(args) -> int:
 # ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="mem", description="CLI wrapper su memories.db.")
+    p = argparse.ArgumentParser(
+        prog="mem",
+        description="CLI wrapper su memories.db.",
+        epilog=(
+            "dates: absolute YYYY-MM-DD or relative (today, yesterday, tomorrow, +Nd, -Nd, +Nw, +Nm).\n"
+            "When --date is omitted, writes use today with the early-morning rule:\n"
+            "between 00:00 and 06:00 local the row is attributed to the previous day,\n"
+            "so a session running past midnight stays on the lived day.\n"
+            "Output: ASCII table on TTY, dense JSON on pipe; --json forces JSON.\n"
+            "DB path: env MEM_DB overrides <repo-root>/private/memories.db."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     # save
     sp = sub.add_parser("save", help="Save a memory")
     sp.add_argument("title", nargs="?", help="Memory title (omit with --bulk)")
-    sp.add_argument("-d", "--description")
+    sp.add_argument("-d", "--description", help="Optional context: notes, links, reasoning")
     sp.add_argument("-t", "--tags", action="append", help="Tag (repeat or comma-separate)")
-    sp.add_argument("--date")
-    sp.add_argument("--bulk", action="store_true", help="Read JSON array from stdin")
+    sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, -2d); omitted = today with early-morning rule")
+    sp.add_argument("--bulk", action="store_true",
+                    help='Read JSON array from stdin, insert all rows in one transaction. '
+                         'Row keys: title (required), type, tags, description, date, due_date, priority, status')
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_save)
 
     # task
     sp = sub.add_parser("task", help="Create a task")
     sp.add_argument("title")
-    sp.add_argument("-d", "--description")
-    sp.add_argument("-t", "--tags", action="append")
-    sp.add_argument("--due")
+    sp.add_argument("-d", "--description", help="Optional context: notes, links, reasoning")
+    sp.add_argument("-t", "--tags", action="append", help="Tag (repeat or comma-separate)")
+    sp.add_argument("--due", help="Due date: YYYY-MM-DD or relative (tomorrow, +3d, +1w, +1m)")
     sp.add_argument("--priority", choices=["low", "normal", "high"])
-    sp.add_argument("--date")
+    sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, -2d); omitted = today with early-morning rule")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_task)
 
     # idea
     sp = sub.add_parser("idea", help="Open an idea")
     sp.add_argument("title")
-    sp.add_argument("-d", "--description")
-    sp.add_argument("-t", "--tags", action="append")
-    sp.add_argument("--date")
+    sp.add_argument("-d", "--description", help="Optional context: notes, links, reasoning")
+    sp.add_argument("-t", "--tags", action="append", help="Tag (repeat or comma-separate)")
+    sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, -2d); omitted = today with early-morning rule")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_idea)
 
     # update
     sp = sub.add_parser("update", help="Patch an existing row")
     sp.add_argument("id", type=int)
-    sp.add_argument("--title")
-    sp.add_argument("--description")
-    sp.add_argument("--tags", action="append")
-    sp.add_argument("--status")
-    sp.add_argument("--due")
+    sp.add_argument("--title", help="New title")
+    sp.add_argument("--description", help="New description (replaces the old one)")
+    sp.add_argument("--tags", action="append", help="New tags (replace the old ones)")
+    sp.add_argument("--status", help="task: todo|in_progress|done|cancelled; idea: open|done|dismissed")
+    sp.add_argument("--due", help="Due date: YYYY-MM-DD or relative (tomorrow, +3d, +1w, +1m)")
     sp.add_argument("--priority", choices=["low", "normal", "high"])
-    sp.add_argument("--date")
+    sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, -2d); omitted = today with early-morning rule")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_update)
 
@@ -590,9 +604,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # marker
     sp = sub.add_parser("marker", help="Get/set a named marker")
-    sp.add_argument("action", choices=["get", "set"])
-    sp.add_argument("name")
-    sp.add_argument("value", nargs="?")
+    sp.add_argument("action", choices=["get", "set"], help="get prints the marker; set upserts it in place")
+    sp.add_argument("name", help="Marker name, e.g. last-slacky-flush")
+    sp.add_argument("value", nargs="?", help="New value (required with set)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_marker)
 
@@ -608,13 +622,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     # search
     sp = sub.add_parser("search", help="Search rows")
-    sp.add_argument("query", nargs="?")
-    sp.add_argument("--tag", action="append")
+    sp.add_argument("query", nargs="?", help="Free text, matched on title and description")
+    sp.add_argument("--tag", action="append", help="Filter by tag (repeatable)")
     sp.add_argument("--type", choices=["memory", "task", "idea"])
-    sp.add_argument("--status")
-    sp.add_argument("--since")
-    sp.add_argument("--until")
-    sp.add_argument("--limit", type=int, default=50)
+    sp.add_argument("--status", help="task: todo|in_progress|done|cancelled; idea: open|done|dismissed")
+    sp.add_argument("--since", help="Lower date bound (YYYY-MM-DD or relative)")
+    sp.add_argument("--until", help="Upper date bound (YYYY-MM-DD or relative)")
+    sp.add_argument("--limit", type=int, default=50, help="Max rows (default 50)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_search)
 
