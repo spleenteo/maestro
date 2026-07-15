@@ -8,6 +8,31 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.07.16.1 — 2026-07-16
+
+**Theme**: Optional semantic layer for `memories.db` — recall by meaning, duplicate detection, pattern discovery — built and calibrated on a real instance (Alfred), then upstreamed. Strictly opt-in per machine and fully additive: an instance without Ollama/uv behaves exactly as before.
+
+### Added
+
+- **`bin/mem-vec`** (new, PEP 723 script) — the data layer. Runs via `uv run --script`, declares its own dependency (`sqlite-vec`) inline, needs no project-level install. Talks to a local Ollama instance for embeddings (default model `bge-m3`, override via `MEM_EMBED_MODEL` or `--model`). Commands: `embed` (vectorize new/changed rows, `--rebuild`/`--status`), `search` (cosine similarity ranking), `similar` (rows close to a given id), `dupes` (candidate duplicate pairs). Vectors live in `log_vec`, a plain additive table that self-creates on first use — `log` and `memories.db.template` are untouched.
+- **`bin/mem`** — thin delegation to `bin/mem-vec` via a new `_vec_run` helper (`uv run --script`, capturing stdout/stderr). New subcommands `embed`, `similar`, `dupes`; `search` gains `--semantic`, `--min-score`, `--model` and branches to `_cmd_search_semantic` in `cmd_search` when `--semantic` is set. `EXIT_SEM_UNAVAILABLE = 3` is returned (with a clear stderr message) whenever `uv` is missing or Ollama is unreachable — every other command is unaffected. Epilog documents exit code 3.
+- **`tests/test_mem_vec.py`** (new, + `tests/__init__.py`) — stdlib-only unit tests (content hashing, pack/roundtrip, `log_vec` auto-creation, embed-state lifecycle) plus integration tests that self-skip when `sqlite-vec` or Ollama aren't available in the running interpreter. Full run: `uv run --with sqlite-vec python -m unittest tests.test_mem_vec -v`.
+- **`howto/09-memoria-semantica.md`** (new, `origin: maestro`) — setup (`brew install ollama uv`, `ollama pull bge-m3`, `bin/mem embed --rebuild`), command reference, how embeddings are derived data (rebuildable from scratch, safe across machine changes), degradation behavior, and the evolution markers that signal a future move to vec0 KNN indexes (scale) or an FTS5 hybrid (exact-term recall).
+- **`CLAUDE.md` → `## Memory`**: new `### Semantic layer (optional)` subsection (between `### Commands — via bin/mem` and `### Rules`) documenting the four commands, the anti-duplication rule (`--semantic --limit 3`, propose update on score ≥ 0.80 instead of inserting a duplicate), and the degradation rule (exit 3 → silent keyword fallback, never surfaced as an error).
+
+### Why
+
+- Keyword search on `log` misses paraphrases and near-duplicates by construction — the owner routinely thinks in concepts, not in the exact words a past entry used. A semantic layer closes that gap without touching the write path or the schema instances already depend on.
+- Zero-risk by design: additive table, opt-in per machine (no Ollama/uv → identical behavior to today), derived data (embeddings are a pure function of text + model, always reconstructible via `--rebuild`), and delegated to a separate PEP-723 script so `bin/mem`'s own dependency surface stays at zero.
+- `bge-m3` and the `0.80` anti-duplication threshold are concrete defaults calibrated against a real instance's data, not placeholders — instances can retune both without any code change.
+
+### Migration
+
+- Run `/maestro-sync`: `bin/mem`, `bin/mem-vec`, `tests/test_mem_vec.py`, `tests/__init__.py`, `howto/09-memoria-semantica.md` arrive as diffs/new files; the `CLAUDE.md` diff adds the `### Semantic layer (optional)` subsection. `bin/*` stays outside sync's diff scope for `maestro_version` bookkeeping — copy manually if the sync skill doesn't offer it (`cp ~/.maestro/bin/mem bin/mem` etc.).
+- To activate on an instance: `brew install ollama uv && brew services start ollama && ollama pull bge-m3 && bin/mem embed --rebuild`. Without this setup, `bin/mem` is unchanged — semantic subcommands simply exit 3.
+
+---
+
 ## v2026.07.15.2 — 2026-07-15
 
 **Theme**: Slim `CLAUDE.md` from 489 to ~260 lines — second half of the "spring upgrade" (see `docs/shaping-spring-upgrade.md`). Behavioral rules stay resident and are rewritten tighter; reference material moves to canonical sources loaded on demand. **No rule was dropped** — only prose, examples, and duplicated reference were compressed or extracted.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # origin: maestro
-# maestro_version: v2026.05.23.1
+# maestro_version: v2026.07.16.1
 """mem — CLI wrapper su memories.db.
 
 Riduce verbosity, escape, error-rate delle scritture SQL grezze da parte
@@ -445,6 +445,8 @@ def cmd_overdue(args) -> int:
 
 
 def cmd_search(args) -> int:
+    if args.semantic:
+        return _cmd_search_semantic(args)
     clauses = []
     params: list[Any] = []
     if args.query:
@@ -526,6 +528,110 @@ def cmd_stats(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Semantic layer (delega a bin/mem-vec via uv; degrada con grazia, exit 3)
+# ---------------------------------------------------------------------------
+
+EXIT_SEM_UNAVAILABLE = 3
+
+_SEM_COLS = ["id", "date", "type", "status", "title", "tags", "score"]
+
+
+def _vec_run(vec_args: list[str]) -> tuple[int, str]:
+    import shutil
+    import subprocess
+    uv = shutil.which("uv")
+    if uv is None:
+        sys.stderr.write(
+            "mem: strato semantico non disponibile — 'uv' non installato "
+            "(brew install uv). La ricerca keyword resta attiva.\n")
+        return EXIT_SEM_UNAVAILABLE, ""
+    script = Path(__file__).resolve().parent / "mem-vec"
+    env = os.environ.copy()
+    env.setdefault("MEM_DB", str(db_path()))
+    proc = subprocess.run(
+        [uv, "run", "--script", str(script), *vec_args],
+        capture_output=True, text=True, env=env)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        return proc.returncode, ""
+    return 0, proc.stdout
+
+
+def cmd_embed(args) -> int:
+    vec_args = ["embed"]
+    if args.rebuild:
+        vec_args.append("--rebuild")
+    if args.status:
+        vec_args.append("--status")
+    if args.model:
+        vec_args += ["--model", args.model]
+    rc, out = _vec_run(vec_args)
+    if rc != 0:
+        return rc
+    payload = json.loads(out)
+    if args.json or not is_tty():
+        emit_json(payload)
+    elif args.status:
+        print(f"🧭 embedding: {payload['embedded']}/{payload['total']} ok, "
+              f"{payload['stale']} stale, {payload['missing']} mancanti "
+              f"(model {payload['model']})")
+    else:
+        print(f"🧠 embedded {payload['embedded']} row(s) in {payload['seconds']}s "
+              f"(model {payload['model']})")
+    return 0
+
+
+def _cmd_search_semantic(args) -> int:
+    if not args.query:
+        sys.stderr.write("mem: --semantic richiede una query di testo\n")
+        return 2
+    vec_args = ["search", args.query, "--limit", str(args.limit),
+                "--min-score", str(args.min_score)]
+    if args.type:
+        vec_args += ["--type", args.type]
+    if args.status:
+        vec_args += ["--status", args.status]
+    if args.since:
+        vec_args += ["--since", parse_date(args.since)]
+    if args.until:
+        vec_args += ["--until", parse_date(args.until)]
+    for t in (args.tag or []):
+        vec_args += ["--tag", t]
+    if getattr(args, "model", None):
+        vec_args += ["--model", args.model]
+    rc, out = _vec_run(vec_args)
+    if rc != 0:
+        return rc
+    emit_rows(json.loads(out), _SEM_COLS, args.json)
+    return 0
+
+
+def cmd_similar(args) -> int:
+    rc, out = _vec_run(["similar", str(args.id), "--limit", str(args.limit),
+                        "--min-score", str(args.min_score)])
+    if rc != 0:
+        return rc
+    emit_rows(json.loads(out), _SEM_COLS, args.json)
+    return 0
+
+
+def cmd_dupes(args) -> int:
+    vec_args = ["dupes", "--min-score", str(args.min_score),
+                "--limit", str(args.limit)]
+    if args.type:
+        vec_args += ["--type", args.type]
+    if getattr(args, "model", None):
+        vec_args += ["--model", args.model]
+    rc, out = _vec_run(vec_args)
+    if rc != 0:
+        return rc
+    cols = ["id_a", "id_b", "type", "status_a", "status_b",
+            "title_a", "title_b", "score"]
+    emit_rows(json.loads(out), cols, args.json)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # CLI parser
 # ---------------------------------------------------------------------------
 
@@ -539,7 +645,8 @@ def build_parser() -> argparse.ArgumentParser:
             "between 00:00 and 06:00 local the row is attributed to the previous day,\n"
             "so a session running past midnight stays on the lived day.\n"
             "Output: ASCII table on TTY, dense JSON on pipe; --json forces JSON.\n"
-            "DB path: env MEM_DB overrides <repo-root>/private/memories.db."
+            "DB path: env MEM_DB overrides <repo-root>/private/memories.db.\n"
+            "Exit code 3: strato semantico non disponibile (uv/Ollama mancanti) — fallback keyword.\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -629,6 +736,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--since", help="Lower date bound (YYYY-MM-DD or relative)")
     sp.add_argument("--until", help="Upper date bound (YYYY-MM-DD or relative)")
     sp.add_argument("--limit", type=int, default=50, help="Max rows (default 50)")
+    sp.add_argument("--semantic", action="store_true",
+                    help="Ricerca per significato via embedding (richiede Ollama+uv)")
+    sp.add_argument("--min-score", type=float, default=0.0, dest="min_score",
+                    help="Score minimo con --semantic (0-1)")
+    sp.add_argument("--model", help="Override modello embedding (solo con --semantic)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_search)
 
@@ -642,6 +754,31 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("stats", help="Aggregate counts")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_stats)
+
+    # embed (strato semantico)
+    sp = sub.add_parser("embed", help="Vettorizza righe nuove/modificate (Ollama+uv)")
+    sp.add_argument("--rebuild", action="store_true", help="Rigenera tutti gli embedding")
+    sp.add_argument("--status", action="store_true", help="Report copertura, nessuna scrittura")
+    sp.add_argument("--model", help="Override modello embedding")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_embed)
+
+    # similar
+    sp = sub.add_parser("similar", help="Righe semanticamente affini a un id")
+    sp.add_argument("id", type=int)
+    sp.add_argument("--limit", type=int, default=10)
+    sp.add_argument("--min-score", type=float, default=0.0, dest="min_score")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_similar)
+
+    # dupes
+    sp = sub.add_parser("dupes", help="Coppie candidate duplicate (igiene)")
+    sp.add_argument("--min-score", type=float, default=0.85, dest="min_score")
+    sp.add_argument("--type", choices=["memory", "task", "idea"])
+    sp.add_argument("--limit", type=int, default=50)
+    sp.add_argument("--model", help="Override modello embedding")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_dupes)
 
     return p
 

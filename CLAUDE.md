@@ -213,6 +213,17 @@ bin/mem search "keyword" --tag t --type memory --since 2026-05-01 --limit 50
 
 For what the CLI doesn't cover (custom joins, ad-hoc aggregations, schema introspection, vacuum/integrity checks), fall back to `sqlite3 private/memories.db "<query>"`.
 
+### Semantic layer (optional)
+
+If the machine has Ollama + uv installed, `bin/mem` exposes a semantic layer over `log` (additive table `log_vec`, self-creating):
+
+- `bin/mem search "text" --semantic [--min-score 0.5]` — meaning-based recall, composable with the usual filters (`--type`, `--status`, `--since`). Use it when keyword search misses or the owner asks "what do we know about…".
+- `bin/mem similar <id>` — rows semantically close to a given one.
+- `bin/mem dupes` — candidate duplicate pairs, for hygiene sessions.
+- `bin/mem embed` — vectorize new/changed rows. Run it opportunistically at session start alongside the warm-channel GC; never block on it.
+
+**Anti-duplication rule**: before saving a new task/idea, run `bin/mem search "<title>" --semantic --limit 3`; on a strong match (score ≥ 0.80) propose updating the existing row instead of inserting a duplicate. **Degradation rule**: exit code 3 means the layer is unavailable (no Ollama/uv) — fall back to keyword search silently, never surface it as an error. Pattern: `howto/09-memoria-semantica.md`.
+
 ### Rules
 
 - **Announce every write, always** — never silent.

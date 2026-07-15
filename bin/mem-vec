@@ -1,0 +1,301 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["sqlite-vec>=0.1.6"]
+# ///
+# origin: maestro
+# maestro_version: v2026.07.16.1
+"""mem-vec — strato semantico di memories.db (data layer).
+
+Usato da bin/mem (che fa da UX layer): questo script emette SEMPRE JSON
+su stdout. Richiede uv (dipendenze PEP 723) e Ollama locale per gli
+embedding. Exit code 3 = strato semantico non disponibile.
+Path db: env MEM_DB > <repo>/private/memories.db.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sqlite3
+import struct
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+OLLAMA_URL = os.environ.get("MEM_OLLAMA_URL", "http://localhost:11434")
+DEFAULT_MODEL = os.environ.get("MEM_EMBED_MODEL", "bge-m3")
+EXIT_UNAVAILABLE = 3
+BATCH_SIZE = 32
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS log_vec (
+  log_id INTEGER PRIMARY KEY REFERENCES log(id),
+  model TEXT NOT NULL,
+  dims INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  embedding BLOB NOT NULL,
+  embedded_at TEXT NOT NULL
+);
+"""
+
+
+def db_path() -> Path:
+    env = os.environ.get("MEM_DB")
+    if env:
+        return Path(env).expanduser()
+    return Path(__file__).resolve().parent.parent / "private" / "memories.db"
+
+
+def connect() -> sqlite3.Connection:
+    p = db_path()
+    if not p.exists():
+        sys.stderr.write(f"mem-vec: db not found at {p}\n")
+        sys.exit(2)
+    con = sqlite3.connect(str(p))
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys = ON")
+    con.executescript(SCHEMA)
+    return con
+
+
+def load_vec(con: sqlite3.Connection) -> None:
+    try:
+        import sqlite_vec
+    except ImportError:
+        sys.stderr.write(
+            "mem-vec: dipendenza sqlite-vec assente — esegui via "
+            "'uv run --script bin/mem-vec'\n")
+        sys.exit(EXIT_UNAVAILABLE)
+    con.enable_load_extension(True)
+    sqlite_vec.load(con)
+    con.enable_load_extension(False)
+
+
+def content_text(title: str | None, description: str | None, tags: str | None) -> str:
+    return "\n".join(x for x in (title, description, tags) if x)
+
+
+def content_hash(model: str, text: str) -> str:
+    return hashlib.sha256(f"{model}\n{text}".encode("utf-8")).hexdigest()
+
+
+def pack(vec: list[float]) -> bytes:
+    return struct.pack(f"<{len(vec)}f", *vec)
+
+
+def unpack(blob: bytes) -> list[float]:
+    n = len(blob) // 4
+    return list(struct.unpack(f"<{n}f", blob))
+
+
+def scan_state(con: sqlite3.Connection, model: str):
+    """(pending, stale, ok) — item: {"id", "text", "hash"}."""
+    logs = con.execute("SELECT id, title, description, tags FROM log").fetchall()
+    vecs = {r["log_id"]: r for r in con.execute(
+        "SELECT log_id, model, content_hash FROM log_vec").fetchall()}
+    pending, stale, ok = [], [], []
+    for l in logs:
+        text = content_text(l["title"], l["description"], l["tags"])
+        h = content_hash(model, text)
+        item = {"id": l["id"], "text": text, "hash": h}
+        v = vecs.get(l["id"])
+        if v is None:
+            pending.append(item)
+        elif v["model"] != model or v["content_hash"] != h:
+            stale.append(item)
+        else:
+            ok.append(item)
+    return pending, stale, ok
+
+
+def emit(obj) -> None:
+    json.dump(obj, sys.stdout, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
+def ollama_embed(texts: list[str], model: str) -> list[list[float]]:
+    req = urllib.request.Request(
+        f"{OLLAMA_URL}/api/embed",
+        data=json.dumps({"model": model, "input": texts}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            payload = json.loads(resp.read())
+    except (urllib.error.URLError, OSError) as e:
+        sys.stderr.write(
+            f"mem-vec: Ollama non raggiungibile su {OLLAMA_URL} ({e}). "
+            "Strato semantico non disponibile — usa la ricerca keyword.\n")
+        sys.exit(EXIT_UNAVAILABLE)
+    embs = payload.get("embeddings")
+    if not embs or len(embs) != len(texts):
+        sys.stderr.write(f"mem-vec: risposta inattesa da Ollama: {str(payload)[:200]}\n")
+        sys.exit(1)
+    return embs
+
+
+def cmd_embed(args) -> int:
+    model = args.model
+    con = connect()
+    t0 = time.monotonic()
+    pending, stale, ok = scan_state(con, model)
+    if args.status:
+        emit({"model": model, "total": len(pending) + len(stale) + len(ok),
+              "embedded": len(ok), "stale": len(stale), "missing": len(pending)})
+        return 0
+    todo = pending + stale + (ok if args.rebuild else [])
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    n = 0
+    for i in range(0, len(todo), BATCH_SIZE):
+        batch = todo[i:i + BATCH_SIZE]
+        embs = ollama_embed([b["text"] or "(vuoto)" for b in batch], model)
+        with con:
+            for item, embv in zip(batch, embs):
+                con.execute(
+                    "INSERT OR REPLACE INTO log_vec "
+                    "(log_id, model, dims, content_hash, embedding, embedded_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (item["id"], model, len(embv), item["hash"], pack(embv), now))
+        n += len(batch)
+    emit({"embedded": n, "model": model, "seconds": round(time.monotonic() - t0, 2)})
+    return 0
+
+
+def _score(r) -> float:
+    return round(1 - r["distance"], 3)
+
+
+def _scored(r) -> dict:
+    d = {k: r[k] for k in ("id", "date", "type", "status", "title", "tags")}
+    d["score"] = _score(r)
+    return d
+
+
+def _filters(args, params: list) -> list[str]:
+    clauses = []
+    if args.type:
+        clauses.append("l.type=?"); params.append(args.type)
+    if args.status:
+        clauses.append("l.status=?"); params.append(args.status)
+    if args.since:
+        clauses.append("l.date>=?"); params.append(args.since)
+    if args.until:
+        clauses.append("l.date<=?"); params.append(args.until)
+    for t in (args.tag or []):
+        clauses.append("l.tags LIKE ?"); params.append(f"%{t}%")
+    return clauses
+
+
+_SELECT_SCORED = (
+    "SELECT l.id, l.date, l.type, l.status, l.title, l.tags, "
+    "vec_distance_cosine(v.embedding, ?) AS distance "
+    "FROM log l JOIN log_vec v ON v.log_id = l.id ")
+
+
+def cmd_search(args) -> int:
+    con = connect()
+    load_vec(con)
+    qvec = pack(ollama_embed([args.query], args.model)[0])
+    params: list = [qvec, args.model]
+    clauses = _filters(args, params)
+    where = (" AND " + " AND ".join(clauses)) if clauses else ""
+    rows = con.execute(
+        _SELECT_SCORED + f"WHERE v.model = ?{where} ORDER BY distance ASC LIMIT ?",
+        (*params, args.limit)).fetchall()
+    emit([_scored(r) for r in rows if _score(r) >= args.min_score])
+    return 0
+
+
+def cmd_similar(args) -> int:
+    con = connect()
+    load_vec(con)
+    row = con.execute(
+        "SELECT embedding, model FROM log_vec WHERE log_id=?", (args.id,)).fetchone()
+    if row is None:
+        sys.stderr.write(
+            f"mem-vec: nessun embedding per #{args.id} — esegui prima 'mem embed'\n")
+        return 1
+    rows = con.execute(
+        _SELECT_SCORED + "WHERE v.model = ? AND l.id != ? ORDER BY distance ASC LIMIT ?",
+        (row["embedding"], row["model"], args.id, args.limit)).fetchall()
+    emit([_scored(r) for r in rows if _score(r) >= args.min_score])
+    return 0
+
+
+def cmd_dupes(args) -> int:
+    con = connect()
+    load_vec(con)
+    max_distance = 1 - args.min_score
+    type_clause = " AND la.type = ?" if args.type else ""
+    params: list = [args.model, args.model]
+    if args.type:
+        params.append(args.type)
+    params += [max_distance, args.limit]
+    rows = con.execute(
+        "SELECT * FROM ("
+        "  SELECT a.log_id AS id_a, b.log_id AS id_b, la.type AS type, "
+        "         la.title AS title_a, lb.title AS title_b, "
+        "         la.status AS status_a, lb.status AS status_b, "
+        "         vec_distance_cosine(a.embedding, b.embedding) AS distance "
+        "  FROM log_vec a JOIN log_vec b ON a.log_id < b.log_id "
+        "  JOIN log la ON la.id = a.log_id JOIN log lb ON lb.id = b.log_id "
+        f" WHERE a.model = ? AND b.model = ? AND la.type = lb.type{type_clause}"
+        ") WHERE distance <= ? ORDER BY distance ASC LIMIT ?",
+        params).fetchall()
+    emit([{**{k: r[k] for k in ("id_a", "id_b", "type", "title_a", "title_b",
+                                "status_a", "status_b")}, "score": _score(r)}
+          for r in rows])
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="mem-vec",
+        description="Strato semantico di memories.db (emette JSON; usato da bin/mem).")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sp = sub.add_parser("embed", help="Vettorizza righe nuove/modificate")
+    sp.add_argument("--rebuild", action="store_true", help="Rigenera tutto da zero")
+    sp.add_argument("--status", action="store_true", help="Solo report copertura")
+    sp.add_argument("--model", default=DEFAULT_MODEL)
+    sp.set_defaults(func=cmd_embed)
+
+    sp = sub.add_parser("search", help="Ricerca semantica")
+    sp.add_argument("query")
+    sp.add_argument("--type")
+    sp.add_argument("--status")
+    sp.add_argument("--since")
+    sp.add_argument("--until")
+    sp.add_argument("--tag", action="append")
+    sp.add_argument("--limit", type=int, default=20)
+    sp.add_argument("--min-score", type=float, default=0.0, dest="min_score")
+    sp.add_argument("--model", default=DEFAULT_MODEL)
+    sp.set_defaults(func=cmd_search)
+
+    sp = sub.add_parser("similar", help="Righe affini a un id dato")
+    sp.add_argument("id", type=int)
+    sp.add_argument("--limit", type=int, default=10)
+    sp.add_argument("--min-score", type=float, default=0.0, dest="min_score")
+    sp.set_defaults(func=cmd_similar)
+
+    sp = sub.add_parser("dupes", help="Coppie candidate duplicate")
+    sp.add_argument("--min-score", type=float, default=0.85, dest="min_score")
+    sp.add_argument("--type")
+    sp.add_argument("--limit", type=int, default=50)
+    sp.add_argument("--model", default=DEFAULT_MODEL)
+    sp.set_defaults(func=cmd_dupes)
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
