@@ -68,10 +68,10 @@ Every instance built from this template has:
 - **`private/preferences.md`** — identity + owner profile + customizations, loaded at every session start. Gitignored.
 - **`private/memories.db`** — SQLite log of memories, tasks, ideas. Gitignored.
 - **`memories.db.template`** — empty SQLite seed with the schema, copied into `private/` by the setup skill.
-- **`.claude/roster.yaml`** — registry of active craft agents (empty at install).
-- **`.claude/agents/hr.md`** — the HR agent, recruiter and manager of craft agents.
-- **`.claude/skills/setup/`** — first-launch configuration (self-disables).
-- **`.claude/skills/logbook/`** — writes a daily logbook note in your configured `logbook_path`.
+- **`.claude/roster.yaml`** — registry of active craft agents (ships with `librarian` and `scheduler` enrolled).
+- **`.claude/agents/`** — the shipped craft agents: `hr` (recruiter and manager of the roster), `librarian` (vault research and frontmatter hygiene), `scheduler` (cold data layer for prospective/retrospective questions).
+- **`.claude/skills/`** — the hub skills: `setup` (first-launch configuration, self-disables), `logbook` (daily note in your configured `logbook_path`), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `maestro-sync` (pulls template updates from upstream).
+- **`bin/mem`** — CLI wrapper for `memories.db` (escape-safe writes, relative dates, reports).
 - **`.gitignore`** — covers `private/`, workspace artifacts, and local settings.
 
 Everything else grows organically as you use the orchestrator:
@@ -92,17 +92,19 @@ These live in `CLAUDE.md` under "Role: orchestrator" and carry through every ins
 
 ## Going deeper
 
-After setup, the `howto/` folder has four practical guides:
+After setup, the `howto/` folder has seven practical guides:
 
 - [`howto/01-skills.md`](howto/01-skills.md) — add, invoke, write, retire skills
 - [`howto/02-agents-and-hr.md`](howto/02-agents-and-hr.md) — hire, use, retire agents via HR
 - [`howto/03-customization.md`](howto/03-customization.md) — customize identity, owner profile, context, communication style
 - [`howto/04-memory-and-integrations.md`](howto/04-memory-and-integrations.md) — memory db internals and how to integrate external tools (Basecamp, Google Calendar, reminders)
 - [`howto/05-backup-and-sync.md`](howto/05-backup-and-sync.md) — privacy, `.gitignore`, cloud-drive sync, symlinks to external apps/skills/agents
+- [`howto/06-configure-cal.md`](howto/06-configure-cal.md) — configure the `scheduler` agent: data channels, routines, question types
+- [`howto/07-warm-task-channel.md`](howto/07-warm-task-channel.md) — wire an external task manager as the warm layer, with `memories.db` as the cold layer
 
 ## Status
 
-Initial release — version 0.1.0.
+Actively evolving. Versions follow the date-based `vYYYY.MM.DD.N` scheme — see [`CHANGELOG.md`](CHANGELOG.md) for the full history and migration notes. Instances pull updates via the `maestro-sync` skill.
 
 ## License
 

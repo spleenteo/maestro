@@ -8,6 +8,32 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.07.15.1 — 2026-07-15
+
+**Theme**: Close the new-file delivery gap in `maestro-sync` — first half of the "spring upgrade" (see `docs/shaping-spring-upgrade.md`). Until now the skill only scanned the instance, so files created upstream after an instance was cloned (new skills, `bin/mem`, marked howtos) were never proposed and required manual copies.
+
+### Added
+
+- **`maestro-sync` → Phase 4b — Reverse scan**: after scanning the instance, the skill walks the mirror for `*.md` files marked `origin: maestro` whose path doesn't exist in the instance, and proposes each as a **new file** in the per-file confirmation flow (content preview instead of diff, same `a/s/A/n` prompt, `(new)` marker in the log, `Added:` line in the final summary). The reverse scan is glob-based over the whole mirror, so future distributed files are delivered regardless of where they live.
+
+### Changed
+
+- **`maestro-sync` → Memory log**: the post-sync memory entry now prefers `bin/mem save`, with raw `sqlite3` kept as fallback for instances that don't have the CLI yet.
+- **`README.md`** — drift fixes: the roster ships with `librarian` and `scheduler` enrolled (was described as "empty at install"); the shipped skills/agents list and `bin/mem` are now stated; the howto index lists all seven guides (06 and 07 were missing); the Status section points at this CHANGELOG instead of "version 0.1.0".
+- **`maestro-sync` frontmatter** — `maestro_version` bumped to `v2026.07.15.1`.
+
+### Why
+
+- The second half of the spring upgrade (planned as the next release) slims `CLAUDE.md` by extracting reference material into a **new** distributed file. Without the reverse scan, instances would sync the slimmed `CLAUDE.md` but never receive the file it points to. Shipping the sync fix **first** guarantees that by the time the refactor lands, every instance that syncs regularly already has the delivery mechanism.
+- The manual-copy step documented for `bin/mem` in v2026.05.23.1 was a symptom of this gap. Note: `bin/mem` itself is still outside the scan scope (it carries a comment marker, not YAML frontmatter) — the reverse scan only covers `*.md` files for now.
+
+### Migration
+
+- Instances: run `/maestro-sync` and apply the `maestro-sync` skill diff. No data migration. From the **next** invocation onward, new upstream files will be proposed automatically.
+- Instances that never copied `bin/mem` manually: the copy step from v2026.05.23.1 still applies (the reverse scan doesn't cover `bin/*` yet).
+
+---
+
 ## v2026.05.28.1 — 2026-05-28
 
 **Theme**: Promote two librarian disciplines proven in the Luigi instance into the base agent — tag parsimony and a symlink safety rail — generalized to be instance-agnostic.

@@ -1,8 +1,8 @@
 ---
 origin: maestro
-maestro_version: v2026.04.30.4
+maestro_version: v2026.07.15.1
 name: maestro-sync
-description: Sync this orchestrator instance with the latest Maestro template. Updates the read-only mirror at `~/.maestro/`, scans the instance for files marked `origin: maestro`, shows the changelog delta, and proposes diffs for confirmation before applying. Use when the owner says "sync maestro", "update from maestro", "pull maestro changes", "/maestro-sync", or asks whether new patterns are available from the template.
+description: Sync this orchestrator instance with the latest Maestro template. Updates the read-only mirror at `~/.maestro/`, scans the instance for files marked `origin: maestro`, proposes new upstream files the instance doesn't have yet, shows the changelog delta, and applies per-file diffs with confirmation. Use when the owner says "sync maestro", "update from maestro", "pull maestro changes", "/maestro-sync", or asks whether new patterns are available from the template.
 ---
 
 # maestro-sync
@@ -16,7 +16,7 @@ Two paths, two roles (decided 2026-04-30):
 - **`~/Sites/me/maestro/`** — primary working tree. Where the owner promotes new patterns from this instance to the template (modify, commit, push). This skill **never writes here**. It only reads its git status to warn the owner if there are uncommitted changes that should be pushed before syncing.
 - **`~/.maestro/`** — read-only mirror used by this skill as a stable comparison point. The mirror is updated only by this skill, with `git fetch origin && git reset --hard origin/main`. Never committed to, never modified by hand.
 
-The skill scans the **instance** (the orchestrator that invokes the skill) for files with `origin: maestro` in their frontmatter, compares each with the mirror version, and proposes a diff per file with confirmation.
+The skill scans the **instance** (the orchestrator that invokes the skill) for files with `origin: maestro` in their frontmatter, compares each with the mirror version, and proposes a diff per file with confirmation. It also scans the **mirror** in the opposite direction: files marked `origin: maestro` that exist upstream but not in the instance are proposed as **new files**, with the same per-file confirmation.
 
 ## Files in scope
 
@@ -121,6 +121,23 @@ For each match, read the file's `maestro_version` value. Build a list:
 
 If `maestro_version` is missing in a file that has `origin: maestro`, treat it as the baseline `v2026.04.29.1` (the snapshot version before versioning was introduced).
 
+### Phase 4b — Reverse scan: new files from upstream
+
+Walk the **mirror** for `*.md` files (excluding `.git/`) with `origin: maestro` in their frontmatter. Any such file whose path does **not** exist in the instance is a **new upstream file** — the instance-side scan cannot see it, so without this step it would never be delivered.
+
+The reverse scan is glob-based on purpose (the whole mirror, not just the Phase 4 path list): future distributed files may live in paths that don't exist yet in older instances (e.g. a marked `howto/` guide).
+
+Build a second list:
+
+```
+new_from_upstream: [
+  { path: "howto/08-markdown-discipline.md", version: "v2026.08.01.1" },
+  ...
+]
+```
+
+These files join the Phase 6 flow after the diffed ones. A new file the owner declines is simply not copied — it will be re-proposed at the next sync (the owner can keep declining; nothing is recorded to suppress it).
+
 ### Phase 5 — Show changelog delta
 
 Read `<mirror-path>/CHANGELOG.md`. The CHANGELOG is ordered most-recent-first, with each entry headed `## vYYYY.MM.DD.N — YYYY-MM-DD`.
@@ -188,6 +205,29 @@ For files where the owner answers `a` or `A`:
 
 If the owner answers `n` (abort), stop immediately. Files already applied stay applied; files not yet shown are not touched. Log a final entry: `2026-04-30T18:42:13Z  ABORTED by owner after <N> files`.
 
+**New files from the reverse scan (Phase 4b)** go through the same prompt, after all diffed files. Since there is no instance version to diff against, show the file's frontmatter (`description`, `maestro_version`) and the first ~30 lines of body instead of a diff, plus its total length:
+
+```
+─── NEW: <file> ───
+Not present in this instance. Upstream version: <maestro_version>
+Description: <frontmatter description>
+
+<first ~30 lines of the file>
+[... 145 more lines]
+
+Add this file?
+  [a] add this file
+  [s] skip this file
+  [A] apply all remaining files (no further prompts)
+  [n] abort the whole sync
+```
+
+On `a` or `A`: copy the mirror file to the instance at the same relative path (creating parent directories if needed) and log it with the marker `(new)`:
+
+```
+2026-07-15T18:42:13Z  — → v2026.07.15.1  howto/08-markdown-discipline.md (new)
+```
+
 ### Phase 7 — Final summary
 
 After all files are processed (or the owner picked `A`), summarize:
@@ -196,6 +236,7 @@ After all files are processed (or the owner picked `A`), summarize:
 ✅ Maestro sync complete
 
 Updated:  3 files  (CLAUDE.md, .claude/skills/setup/SKILL.md, .claude/agents/librarian.md)
+Added:    1 file   (howto/08-markdown-discipline.md — new from upstream)
 Skipped:  1 file   (.claude/skills/logbook/SKILL.md — owner declined)
 Identical: 4 files (no change in upstream)
 
@@ -203,6 +244,8 @@ Instance now at: v2026.04.30.2
 
 Log: private/maestro-sync.log
 ```
+
+Omit the `Added:` line when the reverse scan found nothing.
 
 If everything was identical:
 
@@ -241,7 +284,13 @@ The skill itself does not auto-mark files — that would risk misclassifying ins
 
 ## Memory log
 
-Per the "Announce every write" rule, after the sync, insert one memory entry summarizing the run:
+Per the "Announce every write" rule, after the sync, insert one memory entry summarizing the run. Prefer `bin/mem` when the instance has it:
+
+```bash
+bin/mem save "Maestro sync: <FROM_VERSION> → <TO_VERSION> (<N> files updated, <M> added)" -t maestro,sync,upstream -d "<list of updated/added files, comma-separated>. Skipped: <list>. Log: private/maestro-sync.log."
+```
+
+Fallback for instances without `bin/mem`:
 
 ```bash
 sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type) VALUES (date('now'), 'Maestro sync: <FROM_VERSION> → <TO_VERSION> (<N> files updated)', '<list of updated files, comma-separated>. Skipped: <list>. Log: private/maestro-sync.log.', 'maestro,sync,upstream', 'memory');"
