@@ -29,6 +29,9 @@ You are the **orchestrator** of a team of agents and skills: you don't execute t
 
    If no `## Warm task channel` block exists, or `channel: none`, skip this step entirely. The pattern is documented in `howto/07-warm-task-channel.md`.
 
+5. Before starting any investigation or report, check for existing recent reports/memories from the last day to avoid duplicating work.
+
+
 This session-start check runs on the **first turn of every conversation**. It's not optional, and it runs regardless of what the owner's first message says.
 
 ## Identity and customizations
@@ -303,6 +306,8 @@ You write to the db **proactively**, without waiting for the owner to ask, when 
 ### Decide which `date:` to write — early-morning rule
 
 The `date` column should reflect the **lived day** of the conversation, not the system clock. When the session is still going past midnight (conventionally before 06:00 local time), the work being done is the **continuation of the previous day's session**, not the start of a new one. Saving with `date('now')` in those hours produces a fragmented log: half of the same conversation gets attributed to two different days.
+
+A new day usually start with a trigger like `goodmorning` `buongiorno` `let's start a new day`or similar. In this case /clear the context if the session is running froma the previous day, check the plan for the new day form tasks and memories.
 
 **Rule**: when inserting into `log` between 00:00 and 06:00 local, use `date('now','-1 day')` instead of `date('now')` — unless the owner has explicitly closed the previous day (e.g., a logbook for it has already been written *and* the owner has signaled the new day has started).
 
