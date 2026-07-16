@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.07.16.1
+maestro_version: v2026.07.16.2
 ---
 
 # Orchestrator
@@ -215,12 +215,13 @@ For what the CLI doesn't cover (custom joins, ad-hoc aggregations, schema intros
 
 ### Semantic layer (optional)
 
-If the machine has Ollama + uv installed, `bin/mem` exposes a semantic layer over `log` (additive table `log_vec`, self-creating):
+If the machine has Ollama + uv installed, `bin/mem` exposes a semantic layer over `log` and the markdown vault (additive tables `log_vec` + `vault_vec`, self-creating):
 
 - `bin/mem search "text" --semantic [--min-score 0.5]` — meaning-based recall, composable with the usual filters (`--type`, `--status`, `--since`). Use it when keyword search misses or the owner asks "what do we know about…".
 - `bin/mem similar <id>` — rows semantically close to a given one.
 - `bin/mem dupes` — candidate duplicate pairs, for hygiene sessions.
-- `bin/mem embed` — vectorize new/changed rows. Run it opportunistically at session start alongside the warm-channel GC; never block on it.
+- `bin/mem embed [--root <vault>]` — vectorize new/changed rows; with a vault root (flag or env `MEM_VAULT_ROOTS`) also indexes the markdown vault, chunked by section (exclusions in `<vault_root>/.mem-ignore`). Run it opportunistically at session start alongside the warm-channel GC; never block on it.
+- With a vault root indexed, `search --semantic` fuses memory + vault into one ranking — each hit labelled `source` (`memory`/`vault`) with a citable `ref` (`#id` or `path#section`); `--only memory|vault` restricts it, `--vault-frac` caps the vault quota.
 
 **Anti-duplication rule**: before saving a new task/idea, run `bin/mem search "<title>" --semantic --limit 3`; on a strong match (score ≥ 0.80) propose updating the existing row instead of inserting a duplicate. **Degradation rule**: exit code 3 means the layer is unavailable (no Ollama/uv) — fall back to keyword search silently, never surface it as an error. Pattern: `howto/09-memoria-semantica.md`.
 

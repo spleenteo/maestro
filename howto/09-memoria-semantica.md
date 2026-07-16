@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.07.16.1
+maestro_version: v2026.07.16.2
 tags: [maestro, memory, semantic-search, sqlite-vec, ollama, vault, chunking, pattern]
 description: "Optional semantic layer for memories.db and the chunked markdown vault: setup (Ollama + uv), commands, vault index, graceful degradation, rebuild, machine-change notes, and the markers that signal when to evolve the architecture."
 ---

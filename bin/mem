@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # origin: maestro
-# maestro_version: v2026.07.16.1
+# maestro_version: v2026.07.16.2
 """mem — CLI wrapper su memories.db.
 
 Riduce verbosity, escape, error-rate delle scritture SQL grezze da parte

@@ -8,6 +8,41 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.07.16.2 — 2026-07-16
+
+**Theme**: Extend the semantic layer to the markdown **vault**, chunked by section — one fused recall over `memories.db` *and* the vault. Built on v2026.07.16.1 and fully additive: `log`/`log_vec` are untouched, and an instance that never supplies a vault root behaves exactly as before. Same model, dimensions, and vector format as `log_vec`, so the two indexes are co-queryable.
+
+### Added
+
+- **Markdown chunker in `bin/mem-vec`** (stdlib only — `re`, `fnmatch`, `hashlib`, `pathlib`): `parse_frontmatter`, `split_sections` (splits on `##`/`###`, ignores headings inside code fences, keeps the heading chain), `subsplit` (light overlap for oversized sections), `build_embed_text` (a **context sign** — file `description` + heading chain + `tags` — prepended to the chunk so cryptic headings still embed meaningfully), `make_snippet`, `compute_chunk_id`, `chunk_file`. No new dependency.
+- **`vault_vec` table** — additive, self-creating alongside `log_vec` (PK = `sha256(rel_path | heading_path | sub_index)`; stores `rel_path`, `heading`/`anchor`, per-row `model`/`dims`, `content_hash`, `snippet`, `file_mtime`, and the float32-LE `embedding`). `rel_path` (relative, not absolute) keeps the index portable across machines.
+- **Vault walk + `.mem-ignore`** — `walk_vault`/`load_ignore` iterate `*.md` under each root, honoring a `<vault_root>/.mem-ignore` (gitignore-style: comments, globs, `dir/`, `!negation`); dot-directories are always skipped. The ignore file lives in the vault (travels with it via iCloud/across machines), never in the template.
+- **Root injection** — `bin/mem embed --root <path>` (repeatable) or env `MEM_VAULT_ROOTS` (`:`-separated). The engine stays preferences-agnostic; the orchestrator, which already reads `vault_path`, is the natural bridge. No root → `embed` does memories only, silently.
+- **Incremental vault embed** — `scan_vault_state` classifies chunks as pending/stale/ok/orphan via an `mtime` pre-filter plus per-chunk `content_hash`: editing one section re-embeds only that section, deleting a file removes its chunks (orphan cleanup).
+- **Fused search** — `search --semantic` merges `log_vec` + `vault_vec` in the data layer into a single ranking with a `source` field (`memory`/`vault`), a citable `ref` (`#id` or `rel_path#Section`, ready for an Obsidian `[[file#Section]]` wikilink), `score`, and `snippet`. Anti-flooding cap `--vault-frac` (default 0.6) and `--min-score` threshold; `--only memory|vault` restricts the source.
+- **`tests/test_mem_vec.py`** — `TestChunker`, `TestIgnoreWalk` (stdlib, always run) plus `TestVaultEmbed`, `TestFusedSearch` (self-skip without sqlite-vec/Ollama). Full run green: 26 tests under `uv run --python 3.12 --with sqlite-vec python -m unittest tests.test_mem_vec`.
+
+### Changed
+
+- **`bin/mem` semantic output columns** — now `source | ref | title | score | snippet` (was `id | date | type | status | title | tags | score`). `search --semantic` forwards `--only`/`--vault-frac`; `embed` forwards `--root`.
+- **`bin/mem-vec embed --status` shape** — now nested: `{"model", "memory": {…}, "vault"?: {…}}` (top-level `embedded`/`total`/`stale`/`missing` moved under `memory`). `bin/mem`'s human `--status` line was updated to read the nested shape and print a vault summary.
+- **`CLAUDE.md` → `### Semantic layer (optional)`** — notes the layer now spans `log` + the markdown vault, `embed`'s `--root`/`MEM_VAULT_ROOTS`, and the `source`/`ref`/`--only` of fused search.
+- **`howto/09-memoria-semantica.md`** — new "Vault index (chunked)" section (root injection, `.mem-ignore`, output columns, anti-flooding, degrade).
+- `maestro_version` bumped to `v2026.07.16.2` on: `CLAUDE.md`, `howto/09-memoria-semantica.md`, `bin/mem`, `bin/mem-vec`.
+
+### Why
+
+- The richest context in an instance lives in the vault (logbooks especially), yet the semantic layer only saw `memories.db`. A real miss — a client whose context lived only in a logbook — was found by neither keyword nor `--semantic`, only a manual `rg`. Chunk-by-section indexing closes that gap while keeping the `.md` files the single source of truth: the db stores only vectors + a `path#anchor` pointer + a short snippet, never the prose (recovered on demand by opening the file).
+- No new failure mode: same exit-3 degrade, same model/format, additive tables. Root absent → memories only. The engine never parses preferences; the vault root is declared once (in the instance) and injected by the caller.
+
+### Migration
+
+- Run `/maestro-sync`: `howto/09-memoria-semantica.md` arrives as a diff and `CLAUDE.md` gains the vault notes; copy `bin/mem` and `bin/mem-vec` from the mirror manually (`bin/*` stays outside sync's diff scope — `cp ~/.maestro/bin/mem bin/mem`, same for `mem-vec`).
+- To index the vault on an instance: create `<vault_path>/.mem-ignore` (at least `Diario/` for privacy + noise globs like `*.excalidraw`), export `MEM_VAULT_ROOTS=<vault_path>` before `bin/mem embed` (e.g. in the session-start hook — today it runs rootless and would keep doing memories only), then `bin/mem embed --rebuild` once. Without a root, `bin/mem` is unchanged.
+- **Contract change**: any consumer parsing `bin/mem embed --status` JSON must read `memory.*` (and optional `vault.*`) instead of the former top-level keys.
+
+---
+
 ## v2026.07.16.1 — 2026-07-16
 
 **Theme**: Optional semantic layer for `memories.db` — recall by meaning, duplicate detection, pattern discovery — built and calibrated on a real instance (Alfred), then upstreamed. Strictly opt-in per machine and fully additive: an instance without Ollama/uv behaves exactly as before.
