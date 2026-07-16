@@ -37,6 +37,18 @@ bin/mem dupes [--min-score 0.85]          # duplicate candidates for hygiene
 
 No Ollama or no uv → semantic commands exit with code **3** and a clear message; everything else works as always. The orchestrator falls back to keyword search silently.
 
+## Service management
+
+Ollama runs as a per-user brew service (label `homebrew.mxcl.ollama`, plist in `~/Library/LaunchAgents/`). It starts automatically at login — a machine reboot needs no action.
+
+```bash
+brew services list                  # all brew services; look for "ollama  started"
+brew services info ollama           # detail: Running, PID
+brew services restart ollama        # restart after an upgrade or a hang
+brew services stop ollama           # stop it — semantic commands degrade to exit 3, nothing breaks
+curl -s localhost:11434/api/version # one-shot health check
+```
+
 ## Evolution markers
 
 Watch for these; full rationale in the design doc (instance vault, Progetti/Maestro):
