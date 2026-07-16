@@ -315,5 +315,61 @@ class TestSemanticQueries(TempDbCase):
         self.assertTrue(any({p["id_a"], p["id_b"]} == {1, 3} for p in pairs))
 
 
+@unittest.skipUnless(_ollama_up(), "Ollama non raggiungibile")
+class TestVaultEmbed(TempDbCase):
+    def _vault(self):
+        import tempfile
+        self._vtmp = tempfile.TemporaryDirectory()
+        root = Path(self._vtmp.name)
+        (root / "Logbook").mkdir()
+        (root / "Logbook" / "2026-07-09.md").write_text(
+            "---\ndescription: diario del giorno\ntags: [casa]\n---\n\n"
+            "## Persiane\npreventivo Mannino mille euro una mano\n\n"
+            "## Karate\nallenamento kata Heian\n", encoding="utf-8")
+        return root
+
+    def test_embed_populates_vault_vec_incrementally(self):
+        root = self._vault()
+        rc = mem_vec.main(["embed", "--root", str(root)])
+        self.assertEqual(rc, 0)
+        con = mem_vec.connect()
+        n = con.execute("SELECT COUNT(*) FROM vault_vec").fetchone()[0]
+        self.assertEqual(n, 2)  # due sezioni
+        # ri-eseguire senza modifiche → nessun nuovo embed (tutti ok)
+        p, s, ok, orph = mem_vec.scan_vault_state(con, [root], mem_vec.DEFAULT_MODEL)
+        self.assertEqual((len(p), len(s)), (0, 0))
+        con.close()
+
+    def test_modifying_one_section_reembeds_only_that(self):
+        root = self._vault()
+        mem_vec.main(["embed", "--root", str(root)])
+        f = root / "Logbook" / "2026-07-09.md"
+        f.write_text(f.read_text(encoding="utf-8").replace(
+            "kata Heian", "kata Bassai"), encoding="utf-8")
+        con = mem_vec.connect()
+        p, s, ok, orph = mem_vec.scan_vault_state(
+            con, [root], mem_vec.DEFAULT_MODEL, use_mtime_skip=False)
+        self.assertEqual((len(p), len(s), len(ok)), (0, 1, 1))
+        con.close()
+
+    def test_deleting_file_orphans_its_chunks(self):
+        root = self._vault()
+        mem_vec.main(["embed", "--root", str(root)])
+        (root / "Logbook" / "2026-07-09.md").unlink()
+        con = mem_vec.connect()
+        p, s, ok, orph = mem_vec.scan_vault_state(con, [root], mem_vec.DEFAULT_MODEL)
+        self.assertEqual(len(orph), 2)
+        con.close()
+        mem_vec.main(["embed", "--root", str(root)])
+        con = mem_vec.connect()
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM vault_vec").fetchone()[0], 0)
+        con.close()
+
+    def tearDown(self):
+        super().tearDown()
+        if hasattr(self, "_vtmp"):
+            self._vtmp.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()

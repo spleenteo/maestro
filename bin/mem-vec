@@ -44,6 +44,24 @@ CREATE TABLE IF NOT EXISTS log_vec (
 );
 """
 
+SCHEMA_VAULT = """
+CREATE TABLE IF NOT EXISTS vault_vec (
+  chunk_id TEXT PRIMARY KEY,
+  rel_path TEXT NOT NULL,
+  heading TEXT,
+  anchor TEXT,
+  chunk_index INTEGER NOT NULL,
+  model TEXT NOT NULL,
+  dims INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  snippet TEXT NOT NULL,
+  file_mtime REAL NOT NULL,
+  embedding BLOB NOT NULL,
+  embedded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS vault_vec_relpath ON vault_vec(rel_path);
+"""
+
 
 def db_path() -> Path:
     env = os.environ.get("MEM_DB")
@@ -61,6 +79,7 @@ def connect() -> sqlite3.Connection:
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
     con.executescript(SCHEMA)
+    con.executescript(SCHEMA_VAULT)
     return con
 
 
@@ -320,17 +339,91 @@ def ollama_embed(texts: list[str], model: str) -> list[list[float]]:
     return embs
 
 
+def scan_vault_state(con, roots, model, *, max_words=1200, overlap=100,
+                     use_mtime_skip=True):
+    """(pending, stale, ok, orphans). item: dict del chunker + 'hash','mtime'.
+    orphans: chunk_id spariti dal filesystem. Pre-filtro mtime: un file il
+    cui mtime coincide con quello salvato per i suoi chunk non viene ri-letto."""
+    existing = {r["chunk_id"]: r for r in con.execute(
+        "SELECT chunk_id, rel_path, model, content_hash, file_mtime "
+        "FROM vault_vec").fetchall()}
+    by_rel: dict[str, list] = {}
+    for r in existing.values():
+        by_rel.setdefault(r["rel_path"], []).append(r)
+    pending, stale, ok, seen = [], [], [], set()
+    for path, root in walk_vault(roots):
+        rel = str(path.relative_to(root))
+        mtime = path.stat().st_mtime
+        prior = by_rel.get(rel)
+        if (use_mtime_skip and prior
+                and all(p["model"] == model
+                        and abs(p["file_mtime"] - mtime) < 1e-6 for p in prior)):
+            for p in prior:
+                seen.add(p["chunk_id"])
+                ok.append({"chunk_id": p["chunk_id"], "_skip": True})
+            continue
+        for ch in chunk_file(path, root, max_words=max_words, overlap_words=overlap):
+            cid = ch["chunk_id"]
+            seen.add(cid)
+            h = content_hash(model, ch["embed_text"])
+            item = {**ch, "hash": h, "mtime": mtime}
+            v = existing.get(cid)
+            if v is None:
+                pending.append(item)
+            elif v["model"] != model or v["content_hash"] != h:
+                stale.append(item)
+            else:
+                ok.append(item)
+    orphans = [cid for cid in existing if cid not in seen]
+    return pending, stale, ok, orphans
+
+
+def _embed_vault(con, roots, model, now, rebuild) -> dict:
+    pending, stale, ok, orphans = scan_vault_state(
+        con, roots, model, use_mtime_skip=not rebuild)
+    todo = pending + stale + (ok if rebuild else [])
+    n = 0
+    for i in range(0, len(todo), BATCH_SIZE):
+        batch = todo[i:i + BATCH_SIZE]
+        embs = ollama_embed([b["embed_text"] or "(vuoto)" for b in batch], model)
+        with con:
+            for item, embv in zip(batch, embs):
+                con.execute(
+                    "INSERT OR REPLACE INTO vault_vec (chunk_id, rel_path, heading,"
+                    " anchor, chunk_index, model, dims, content_hash, snippet,"
+                    " file_mtime, embedding, embedded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (item["chunk_id"], item["rel_path"], item["heading"],
+                     item["anchor"], item["chunk_index"], model, len(embv),
+                     item["hash"], item["snippet"], item["mtime"], pack(embv), now))
+        n += len(batch)
+    if orphans:
+        with con:
+            con.executemany("DELETE FROM vault_vec WHERE chunk_id=?",
+                            [(cid,) for cid in orphans])
+    return {"embedded": n, "orphans_removed": len(orphans)}
+
+
 def cmd_embed(args) -> int:
     model = args.model
     con = connect()
     t0 = time.monotonic()
+    roots = ([Path(r).expanduser() for r in (args.root or [])]
+             or vault_roots_from_env())
     pending, stale, ok = scan_state(con, model)
     if args.status:
-        emit({"model": model, "total": len(pending) + len(stale) + len(ok),
-              "embedded": len(ok), "stale": len(stale), "missing": len(pending)})
+        out = {"model": model, "memory": {
+            "total": len(pending) + len(stale) + len(ok), "embedded": len(ok),
+            "stale": len(stale), "missing": len(pending)}}
+        if roots:
+            vp, vs, vok, vorph = scan_vault_state(
+                con, roots, model, use_mtime_skip=not args.rebuild)
+            out["vault"] = {"total": len(vp) + len(vs) + len(vok),
+                            "embedded": len(vok), "stale": len(vs),
+                            "missing": len(vp), "orphans": len(vorph)}
+        emit(out)
         return 0
-    todo = pending + stale + (ok if args.rebuild else [])
     now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    todo = pending + stale + (ok if args.rebuild else [])
     n = 0
     for i in range(0, len(todo), BATCH_SIZE):
         batch = todo[i:i + BATCH_SIZE]
@@ -343,7 +436,11 @@ def cmd_embed(args) -> int:
                     "VALUES (?,?,?,?,?,?)",
                     (item["id"], model, len(embv), item["hash"], pack(embv), now))
         n += len(batch)
-    emit({"embedded": n, "model": model, "seconds": round(time.monotonic() - t0, 2)})
+    result = {"embedded": n, "model": model,
+              "seconds": round(time.monotonic() - t0, 2)}
+    if roots:
+        result["vault"] = _embed_vault(con, roots, model, now, args.rebuild)
+    emit(result)
     return 0
 
 
@@ -444,6 +541,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--rebuild", action="store_true", help="Rigenera tutto da zero")
     sp.add_argument("--status", action="store_true", help="Solo report copertura")
     sp.add_argument("--model", default=DEFAULT_MODEL)
+    sp.add_argument("--root", action="append",
+                    help="Radice del vault da indicizzare (ripetibile)")
     sp.set_defaults(func=cmd_embed)
 
     sp = sub.add_parser("search", help="Ricerca semantica")
