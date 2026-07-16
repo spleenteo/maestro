@@ -166,6 +166,43 @@ class TestChunker(unittest.TestCase):
         self.assertEqual(mem_vec.slugify("Persiane terrazza"), "persiane-terrazza")
         self.assertEqual(mem_vec.slugify("RMN & acufene!"), "rmn-acufene")
 
+    def test_subsplit_short_returns_single(self):
+        self.assertEqual(mem_vec.subsplit("a b c", 10, 2), ["a b c"])
+
+    def test_subsplit_long_overlaps(self):
+        text = " ".join(str(i) for i in range(10))
+        parts = mem_vec.subsplit(text, 4, 1)
+        self.assertGreater(len(parts), 1)
+        self.assertTrue(parts[0].startswith("0 1 2 3"))
+        # overlap: l'ultima parola di un chunk riappare nel successivo
+        self.assertIn("3", parts[1].split())
+
+    def test_build_embed_text_prepends_context(self):
+        out = mem_vec.build_embed_text("descr file", ["Persiane", "Costi"],
+                                       "casa, persiane", "1000 euro")
+        self.assertTrue(out.startswith("descr file"))
+        self.assertIn("Persiane › Costi", out)
+        self.assertTrue(out.rstrip().endswith("1000 euro"))
+
+    def test_chunk_file_produces_context_and_ids(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            f = root / "Logbook" / "2026-07-09.md"
+            f.parent.mkdir(parents=True)
+            f.write_text("---\ndescription: diario\ntags: [casa]\n---\n\n"
+                         "## Persiane terrazza\npreventivo Mannino 1000 euro\n",
+                         encoding="utf-8")
+            chunks = mem_vec.chunk_file(f, root)
+            self.assertEqual(len(chunks), 1)
+            c = chunks[0]
+            self.assertEqual(c["rel_path"], "Logbook/2026-07-09.md")
+            self.assertEqual(c["heading"], "Persiane terrazza")
+            self.assertEqual(c["anchor"], "persiane-terrazza")
+            self.assertIn("diario", c["embed_text"])
+            self.assertIn("Mannino", c["snippet"])
+            self.assertEqual(len(c["chunk_id"]), 64)  # sha256 hex
+
 
 @unittest.skipUnless(_has_sqlite_vec(), "sqlite-vec non disponibile in questo interprete")
 class TestDistance(TempDbCase):

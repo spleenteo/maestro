@@ -149,6 +149,73 @@ def split_sections(body: str) -> list[dict]:
     return out
 
 
+def count_words(text: str) -> int:
+    return len(text.split())
+
+
+def subsplit(text: str, max_words: int, overlap_words: int) -> list[str]:
+    """Divide un testo lungo in sub-chunk di ~max_words parole con overlap.
+    Ritorna [text] se già entro la soglia."""
+    words = text.split()
+    if len(words) <= max_words:
+        return [text]
+    step = max(1, max_words - overlap_words)
+    parts, i = [], 0
+    while i < len(words):
+        parts.append(" ".join(words[i:i + max_words]))
+        if i + max_words >= len(words):
+            break
+        i += step
+    return parts
+
+
+def build_embed_text(description: str, heading_path: list[str],
+                     tags: str, chunk_text: str) -> str:
+    """Cartello di contesto (description del file + catena heading + tags)
+    anteposto al testo del chunk, per dare senso anche a heading criptici."""
+    ctx = []
+    if description:
+        ctx.append(description)
+    if heading_path:
+        ctx.append(" › ".join(heading_path))
+    if tags:
+        ctx.append(tags)
+    prefix = "\n".join(ctx)
+    return f"{prefix}\n\n{chunk_text}" if prefix else chunk_text
+
+
+def make_snippet(text: str, max_len: int = 160) -> str:
+    flat = re.sub(r"\s+", " ", text).strip()
+    return flat if len(flat) <= max_len else flat[:max_len - 1].rstrip() + "…"
+
+
+def compute_chunk_id(rel_path: str, heading_path: list[str], sub_index: int) -> str:
+    key = f"{rel_path}\x1f{' › '.join(heading_path)}\x1f{sub_index}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def chunk_file(path: Path, vault_root: Path,
+               max_words: int = 1200, overlap_words: int = 100) -> list[dict]:
+    rel_path = str(path.relative_to(vault_root))
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    meta, body = parse_frontmatter(raw)
+    description, tags = meta.get("description", ""), meta.get("tags", "")
+    chunks = []
+    for sec in split_sections(body):
+        for sub_index, part in enumerate(subsplit(sec["text"], max_words, overlap_words)):
+            chunks.append({
+                "chunk_id": compute_chunk_id(rel_path, sec["heading_path"], sub_index),
+                "rel_path": rel_path,
+                "heading": sec["heading"],
+                "anchor": slugify(sec["heading"]) if sec["heading"] else "",
+                "chunk_index": sub_index,
+                "embed_text": build_embed_text(
+                    description, sec["heading_path"], tags, part),
+                "snippet": make_snippet(part),
+            })
+    return chunks
+
+
 def pack(vec: list[float]) -> bytes:
     return struct.pack(f"<{len(vec)}f", *vec)
 
