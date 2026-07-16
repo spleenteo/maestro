@@ -474,18 +474,63 @@ _SELECT_SCORED = (
     "vec_distance_cosine(v.embedding, ?) AS distance "
     "FROM log l JOIN log_vec v ON v.log_id = l.id ")
 
+_MEM_FUSED = (
+    "SELECT l.id, l.title, l.description, "
+    "vec_distance_cosine(v.embedding, ?) AS distance "
+    "FROM log l JOIN log_vec v ON v.log_id = l.id ")
+
+_SELECT_VAULT_SCORED = (
+    "SELECT rel_path, heading, snippet, "
+    "vec_distance_cosine(embedding, ?) AS distance "
+    "FROM vault_vec WHERE model = ? ORDER BY distance ASC LIMIT ?")
+
+
+def _mem_hits(con, qvec, args) -> list[dict]:
+    params: list = [qvec, args.model]
+    clauses = _filters(args, params)
+    where = (" AND " + " AND ".join(clauses)) if clauses else ""
+    rows = con.execute(
+        _MEM_FUSED + f"WHERE v.model = ?{where} ORDER BY distance ASC LIMIT ?",
+        (*params, args.limit)).fetchall()
+    hits = []
+    for r in rows:
+        sc = _score(r)
+        if sc >= args.min_score:
+            hits.append({"source": "memory", "ref": f"#{r['id']}",
+                         "title": r["title"], "score": sc,
+                         "snippet": r["description"] or r["title"]})
+    return hits
+
+
+def _vault_hits(con, qvec, args) -> list[dict]:
+    rows = con.execute(
+        _SELECT_VAULT_SCORED, (qvec, args.model, args.limit)).fetchall()
+    hits = []
+    for r in rows:
+        sc = _score(r)
+        if sc >= args.min_score:
+            anchor = f"#{r['heading']}" if r["heading"] else ""
+            hits.append({"source": "vault", "ref": f"{r['rel_path']}{anchor}",
+                         "title": r["heading"] or r["rel_path"], "score": sc,
+                         "snippet": r["snippet"]})
+    return hits
+
+
+def _merge_hits(mem: list, vault: list, limit: int, vault_frac: float) -> list:
+    cap = int(limit * vault_frac)
+    if len(vault) > cap:
+        vault = vault[:cap]
+    return sorted(mem + vault, key=lambda x: x["score"], reverse=True)[:limit]
+
 
 def cmd_search(args) -> int:
     con = connect()
     load_vec(con)
     qvec = pack(ollama_embed([args.query], args.model)[0])
-    params: list = [qvec, args.model]
-    clauses = _filters(args, params)
-    where = (" AND " + " AND ".join(clauses)) if clauses else ""
-    rows = con.execute(
-        _SELECT_SCORED + f"WHERE v.model = ?{where} ORDER BY distance ASC LIMIT ?",
-        (*params, args.limit)).fetchall()
-    emit([_scored(r) for r in rows if _score(r) >= args.min_score])
+    only = getattr(args, "only", None)
+    mem = [] if only == "vault" else _mem_hits(con, qvec, args)
+    vault = [] if only == "memory" else _vault_hits(con, qvec, args)
+    emit(_merge_hits(mem, vault, args.limit, args.vault_frac))
     return 0
 
 
@@ -555,6 +600,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=20)
     sp.add_argument("--min-score", type=float, default=0.0, dest="min_score")
     sp.add_argument("--model", default=DEFAULT_MODEL)
+    sp.add_argument("--only", choices=["memory", "vault"])
+    sp.add_argument("--vault-frac", type=float, default=0.6, dest="vault_frac")
     sp.set_defaults(func=cmd_search)
 
     sp = sub.add_parser("similar", help="Righe affini a un id dato")

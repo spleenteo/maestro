@@ -371,5 +371,42 @@ class TestVaultEmbed(TempDbCase):
             self._vtmp.cleanup()
 
 
+@unittest.skipUnless(_has_sqlite_vec() and _ollama_up(), "servono sqlite-vec + Ollama")
+class TestFusedSearch(TempDbCase):
+    def test_search_fuses_memory_and_vault_with_refs(self):
+        import contextlib, io, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Logbook").mkdir()
+            (root / "Logbook" / "2026-07-09.md").write_text(
+                "---\ndescription: diario\ntags: [casa]\n---\n\n"
+                "## Persiane terrazza\npreventivo Mannino mille euro\n",
+                encoding="utf-8")
+            mem_vec.main(["embed", "--root", str(root)])
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = mem_vec.main(["search", "verniciare le persiane",
+                                   "--limit", "5", "--min-score", "0.2"])
+            self.assertEqual(rc, 0)
+            rows = json.loads(buf.getvalue().strip())
+            sources = {r["source"] for r in rows}
+            self.assertIn("vault", sources)
+            vhit = next(r for r in rows if r["source"] == "vault")
+            self.assertEqual(vhit["ref"], "Logbook/2026-07-09.md#Persiane terrazza")
+            self.assertIn("score", vhit)
+
+    def test_only_memory_excludes_vault(self):
+        import contextlib, io, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "n.md").write_text("## S\ntesto persiane\n", encoding="utf-8")
+            mem_vec.main(["embed", "--root", str(root)])
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                mem_vec.main(["search", "persiane", "--only", "memory", "--min-score", "0"])
+            rows = json.loads(buf.getvalue().strip())
+            self.assertTrue(all(r["source"] == "memory" for r in rows))
+
+
 if __name__ == "__main__":
     unittest.main()
