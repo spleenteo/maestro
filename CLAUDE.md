@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.07.15.2
+maestro_version: v2026.07.16.1
 ---
 
 # Orchestrator

@@ -1,5 +1,6 @@
 ---
 origin: maestro
+maestro_version: v2026.07.16.1
 tags: [maestro, memory, semantic-search, sqlite-vec, ollama, pattern]
 description: "Optional semantic layer for memories.db: setup (Ollama + uv), commands, graceful degradation, rebuild, machine-change notes, and the markers that signal when to evolve the architecture."
 ---
