@@ -131,6 +131,42 @@ class TestCore(TempDbCase):
         con.close()
 
 
+class TestChunker(unittest.TestCase):
+    def test_parse_frontmatter_extracts_description_and_tags(self):
+        text = ("---\n"
+                "tags: [casa, persiane, preventivo]\n"
+                "description: \"nota sul preventivo\"\n"
+                "---\n\n"
+                "# Titolo\ncorpo qui")
+        meta, body = mem_vec.parse_frontmatter(text)
+        self.assertEqual(meta["description"], "nota sul preventivo")
+        self.assertEqual(meta["tags"], "casa, persiane, preventivo")
+        self.assertTrue(body.startswith("# Titolo"))
+
+    def test_parse_frontmatter_absent(self):
+        meta, body = mem_vec.parse_frontmatter("nessun frontmatter\n")
+        self.assertEqual(meta, {})
+        self.assertEqual(body, "nessun frontmatter\n")
+
+    def test_split_sections_by_heading(self):
+        body = "preambolo\n\n## Persiane\ntesto A\n\n### Dettaglio\ntesto B\n\n## Fisco\ntesto C"
+        secs = mem_vec.split_sections(body)
+        headings = [s["heading"] for s in secs]
+        self.assertEqual(headings, ["", "Persiane", "Dettaglio", "Fisco"])
+        dettaglio = next(s for s in secs if s["heading"] == "Dettaglio")
+        self.assertEqual(dettaglio["heading_path"], ["Persiane", "Dettaglio"])
+        self.assertEqual(dettaglio["text"], "testo B")
+
+    def test_split_sections_ignores_headings_in_code_fence(self):
+        body = "## Reale\n```\n## finto dentro codice\n```\ncorpo"
+        secs = mem_vec.split_sections(body)
+        self.assertEqual([s["heading"] for s in secs], ["Reale"])
+
+    def test_slugify(self):
+        self.assertEqual(mem_vec.slugify("Persiane terrazza"), "persiane-terrazza")
+        self.assertEqual(mem_vec.slugify("RMN & acufene!"), "rmn-acufene")
+
+
 @unittest.skipUnless(_has_sqlite_vec(), "sqlite-vec non disponibile in questo interprete")
 class TestDistance(TempDbCase):
     def test_cosine_distance_via_sql(self):

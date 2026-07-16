@@ -18,6 +18,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import struct
 import sys
@@ -81,6 +82,71 @@ def content_text(title: str | None, description: str | None, tags: str | None) -
 
 def content_hash(model: str, text: str) -> str:
     return hashlib.sha256(f"{model}\n{text}".encode("utf-8")).hexdigest()
+
+
+def parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Estrae {description, tags} dal frontmatter YAML e ritorna (meta, body).
+    Parsing minimale stdlib (nessuna dipendenza YAML); gestisce solo tags in
+    flow form [a, b] — quella imposta dalla markdown discipline Maestro."""
+    meta: dict = {}
+    if not text.startswith("---"):
+        return meta, text
+    end = text.find("\n---", 3)
+    if end == -1:
+        return meta, text
+    fm, body = text[3:end], text[end + 4:].lstrip("\n")
+    for line in fm.splitlines():
+        m = re.match(r"\s*(description|tags)\s*:\s*(.*)$", line)
+        if not m:
+            continue
+        key, val = m.group(1), m.group(2).strip()
+        if key == "tags":
+            val = val.strip("[]")
+            meta["tags"] = ", ".join(
+                t.strip().strip("'\"") for t in val.split(",") if t.strip())
+        else:
+            meta["description"] = val.strip("'\"")
+    return meta, body
+
+
+def slugify(heading: str) -> str:
+    s = re.sub(r"[^\w\s-]", "", heading.strip().lower())
+    return re.sub(r"[\s_]+", "-", s).strip("-")
+
+
+def split_sections(body: str) -> list[dict]:
+    """Spezza il corpo sugli heading ## / ###. Il preambolo prima del primo
+    heading (se non vuoto) è una sezione con heading=''. Gli heading dentro
+    i fence di codice sono ignorati."""
+    fence_re = re.compile(r"^\s*(```|~~~)")
+    head_re = re.compile(r"^(#{2,3})\s+(.*)$")
+    cur = {"heading": "", "heading_path": [], "level": 0, "lines": []}
+    sections, stack, in_fence = [], [], False
+    for line in body.splitlines():
+        if fence_re.match(line):
+            in_fence = not in_fence
+            cur["lines"].append(line)
+            continue
+        m = None if in_fence else head_re.match(line)
+        if m:
+            if cur["lines"] or cur["heading"]:
+                sections.append(cur)
+            level, heading = len(m.group(1)), m.group(2).strip()
+            stack = stack[:level - 2] + [heading]
+            cur = {"heading": heading, "heading_path": list(stack),
+                   "level": level, "lines": []}
+        else:
+            cur["lines"].append(line)
+    if cur["lines"] or cur["heading"]:
+        sections.append(cur)
+    out = []
+    for s in sections:
+        text = "\n".join(s["lines"]).strip()
+        if not text and not s["heading"]:
+            continue
+        out.append({"heading": s["heading"], "heading_path": s["heading_path"],
+                    "level": s["level"], "text": text})
+    return out
 
 
 def pack(vec: list[float]) -> bytes:
