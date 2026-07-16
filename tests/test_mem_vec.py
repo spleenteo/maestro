@@ -204,6 +204,48 @@ class TestChunker(unittest.TestCase):
             self.assertEqual(len(c["chunk_id"]), 64)  # sha256 hex
 
 
+class TestIgnoreWalk(unittest.TestCase):
+    def _vault(self, d):
+        root = Path(d)
+        (root / "Logbook").mkdir(parents=True)
+        (root / "Diario").mkdir()
+        (root / "Logbook" / "a.md").write_text("# a\nx", encoding="utf-8")
+        (root / "Diario" / "segreto.md").write_text("# s\ny", encoding="utf-8")
+        (root / "note.md").write_text("# n\nz", encoding="utf-8")
+        return root
+
+    def test_walk_respects_mem_ignore(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = self._vault(d)
+            (root / ".mem-ignore").write_text("Diario/\n", encoding="utf-8")
+            rels = sorted(str(p.relative_to(r)) for p, r in mem_vec.walk_vault([root]))
+            self.assertIn("Logbook/a.md", rels)
+            self.assertIn("note.md", rels)
+            self.assertNotIn("Diario/segreto.md", rels)
+
+    def test_walk_skips_dot_dirs_always(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".obsidian").mkdir()
+            (root / ".obsidian" / "x.md").write_text("# x", encoding="utf-8")
+            (root / "ok.md").write_text("# ok", encoding="utf-8")
+            rels = [str(p.relative_to(r)) for p, r in mem_vec.walk_vault([root])]
+            self.assertEqual(rels, ["ok.md"])
+
+    def test_load_ignore_glob_and_negation(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".mem-ignore").write_text(
+                "*.excalidraw\nTemplate/\n", encoding="utf-8")
+            ig = mem_vec.load_ignore(root)
+            self.assertTrue(ig("disegno.excalidraw"))
+            self.assertTrue(ig("Template/base.md"))
+            self.assertFalse(ig("Logbook/a.md"))
+
+
 @unittest.skipUnless(_has_sqlite_vec(), "sqlite-vec non disponibile in questo interprete")
 class TestDistance(TempDbCase):
     def test_cosine_distance_via_sql(self):

@@ -15,6 +15,7 @@ Path db: env MEM_DB > <repo>/private/memories.db.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -214,6 +215,54 @@ def chunk_file(path: Path, vault_root: Path,
                 "snippet": make_snippet(part),
             })
     return chunks
+
+
+def load_ignore(vault_root: Path):
+    """Legge <vault_root>/.mem-ignore (stile .gitignore semplificato) e
+    ritorna is_ignored(rel_path). Supporta: commenti (#), glob (fnmatch),
+    dir con '/' finale, negazione '!'. Le dot-directory sono sempre ignorate."""
+    patterns: list[tuple[bool, str]] = []
+    ig = vault_root / ".mem-ignore"
+    if ig.exists():
+        for line in ig.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            neg = line.startswith("!")
+            patterns.append((neg, (line[1:] if neg else line).rstrip("/")))
+
+    def is_ignored(rel_path: str) -> bool:
+        parts = rel_path.split("/")
+        if any(p.startswith(".") for p in parts):
+            return True
+        ignored = False
+        for neg, pat in patterns:
+            hit = (fnmatch.fnmatch(rel_path, pat)
+                   or fnmatch.fnmatch(rel_path, pat + "/*")
+                   or any(fnmatch.fnmatch(seg, pat) for seg in parts))
+            if hit:
+                ignored = not neg
+        return ignored
+
+    return is_ignored
+
+
+def walk_vault(roots: list[Path]):
+    """Itera i .md sotto ciascuna radice, rispettando .mem-ignore.
+    Yield (file_path, vault_root)."""
+    for root in roots:
+        root = Path(root).expanduser()
+        if not root.is_dir():
+            continue
+        is_ignored = load_ignore(root)
+        for path in sorted(root.rglob("*.md")):
+            if not is_ignored(str(path.relative_to(root))):
+                yield path, root
+
+
+def vault_roots_from_env() -> list[Path]:
+    raw = os.environ.get("MEM_VAULT_ROOTS", "")
+    return [Path(p).expanduser() for p in raw.split(":") if p.strip()]
 
 
 def pack(vec: list[float]) -> bytes:
