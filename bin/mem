@@ -533,7 +533,7 @@ def cmd_stats(args) -> int:
 
 EXIT_SEM_UNAVAILABLE = 3
 
-_SEM_COLS = ["id", "date", "type", "status", "title", "tags", "score"]
+_SEM_COLS = ["source", "ref", "title", "score", "snippet"]
 
 
 def _vec_run(vec_args: list[str]) -> tuple[int, str]:
@@ -565,6 +565,8 @@ def cmd_embed(args) -> int:
         vec_args.append("--status")
     if args.model:
         vec_args += ["--model", args.model]
+    for r in (getattr(args, "root", None) or []):
+        vec_args += ["--root", r]
     rc, out = _vec_run(vec_args)
     if rc != 0:
         return rc
@@ -572,12 +574,21 @@ def cmd_embed(args) -> int:
     if args.json or not is_tty():
         emit_json(payload)
     elif args.status:
-        print(f"🧭 embedding: {payload['embedded']}/{payload['total']} ok, "
-              f"{payload['stale']} stale, {payload['missing']} mancanti "
+        m = payload["memory"]
+        print(f"🧭 embedding: {m['embedded']}/{m['total']} ok, "
+              f"{m['stale']} stale, {m['missing']} mancanti "
               f"(model {payload['model']})")
+        if isinstance(payload.get("vault"), dict):
+            v = payload["vault"]
+            print(f"   📚 vault: {v['embedded']}/{v['total']} ok, "
+                  f"{v['stale']} stale, {v['missing']} mancanti, "
+                  f"{v['orphans']} orfani")
     else:
         print(f"🧠 embedded {payload['embedded']} row(s) in {payload['seconds']}s "
               f"(model {payload['model']})")
+    if not args.status and isinstance(payload.get("vault"), dict) and is_tty() and not args.json:
+        v = payload["vault"]
+        print(f"   📚 vault: +{v['embedded']} chunk, -{v['orphans_removed']} orfani")
     return 0
 
 
@@ -597,6 +608,10 @@ def _cmd_search_semantic(args) -> int:
         vec_args += ["--until", parse_date(args.until)]
     for t in (args.tag or []):
         vec_args += ["--tag", t]
+    if getattr(args, "only", None):
+        vec_args += ["--only", args.only]
+    if getattr(args, "vault_frac", None) is not None:
+        vec_args += ["--vault-frac", str(args.vault_frac)]
     if getattr(args, "model", None):
         vec_args += ["--model", args.model]
     rc, out = _vec_run(vec_args)
@@ -741,6 +756,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--min-score", type=float, default=0.0, dest="min_score",
                     help="Score minimo con --semantic (0-1)")
     sp.add_argument("--model", help="Override modello embedding (solo con --semantic)")
+    sp.add_argument("--only", choices=["memory", "vault"],
+                    help="Restringe il recall a una sola sorgente")
+    sp.add_argument("--vault-frac", type=float, default=0.6, dest="vault_frac",
+                    help="Quota massima di risultati dal vault (anti-sommersione)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_search)
 
@@ -760,6 +779,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--rebuild", action="store_true", help="Rigenera tutti gli embedding")
     sp.add_argument("--status", action="store_true", help="Report copertura, nessuna scrittura")
     sp.add_argument("--model", help="Override modello embedding")
+    sp.add_argument("--root", action="append",
+                    help="Radice del vault da indicizzare (ripetibile)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_embed)
 
