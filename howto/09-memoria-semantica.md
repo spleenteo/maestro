@@ -1,8 +1,8 @@
 ---
 origin: maestro
 maestro_version: v2026.07.16.1
-tags: [maestro, memory, semantic-search, sqlite-vec, ollama, pattern]
-description: "Optional semantic layer for memories.db: setup (Ollama + uv), commands, graceful degradation, rebuild, machine-change notes, and the markers that signal when to evolve the architecture."
+tags: [maestro, memory, semantic-search, sqlite-vec, ollama, vault, chunking, pattern]
+description: "Optional semantic layer for memories.db and the chunked markdown vault: setup (Ollama + uv), commands, vault index, graceful degradation, rebuild, machine-change notes, and the markers that signal when to evolve the architecture."
 ---
 
 # 09 — Semantic memory (optional layer)
@@ -33,6 +33,30 @@ bin/mem search "text" --semantic          # meaning-based recall (+ usual filter
 bin/mem similar <id>                      # rows close to a given one
 bin/mem dupes [--min-score 0.85]          # duplicate candidates for hygiene
 ```
+
+## Vault index (chunked)
+
+Oltre a `memories.db`, il layer indicizza il **vault markdown**, spezzato per
+sezione (heading `##`/`###`). I vettori vivono in `vault_vec` (additiva,
+self-creating come `log_vec`); i `.md` restano l'unica fonte di verità — il db
+tiene solo vettore + `path#anchor` + snippet.
+
+```bash
+# la radice arriva da --root (ripetibile) o env MEM_VAULT_ROOTS
+MEM_VAULT_ROOTS="$VAULT" bin/mem embed          # memorie + vault, incrementale
+bin/mem embed --root "$VAULT"                   # equivalente, esplicito
+bin/mem search "…" --semantic                   # classifica fusa memoria+vault
+bin/mem search "…" --semantic --only vault      # solo il vault
+```
+
+- **Esclusioni:** `<vault_root>/.mem-ignore`, stile `.gitignore` (un pattern per
+  riga; `Diario/`, `*.excalidraw`, `!eccezione`). Le dot-directory sono sempre
+  saltate. Il file è dell'istanza, non del template.
+- **Colonne di output:** `source` (`memory`/`vault`), `ref` (`#id` o
+  `path#sezione`), `title`/heading, `score`, `snippet`.
+- **Anti-sommersione:** `--vault-frac` (default 0.6) limita la quota di risultati
+  vault; `--min-score` taglia i vicini deboli.
+- **Degrade:** invariato (exit 3). Radice assente → `embed` fa solo le memorie.
 
 ## Degradation
 
