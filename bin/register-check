@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+# origin: maestro
+# maestro_version: v2026.08.14.1
+"""register-check — verifica meccanica dei divieti del writing register.
+
+Copre i quattro divieti con firma sintattica (3, 4, 5, 6). I divieti 1, 2
+e 7 sono semantici e restano in carico alla skill `writing-register`.
+
+Il tool è preferences-agnostic: le eccezioni dichiarate dall'owner in
+`private/preferences.md` arrivano come flag `--skip`, passate dalla skill.
+
+Exit code: 0 pulito, 1 rilevazioni, 2 errore d'uso o file illeggibile.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Set
+
+RULES = {
+    3: "negative parallelism",
+    4: "em dash as pause",
+    5: "bold as emphasis",
+    6: "rhythmic triad",
+}
+
+# I divieti 4 e 5 hanno una firma esatta: il match È la violazione.
+# I divieti 3 e 6 hanno una firma probabile: il match è un candidato,
+# lo giudica chi legge.
+KIND = {3: "candidate", 4: "violation", 5: "violation", 6: "candidate"}
+
+MASK = "\x00"
+
+# ---------------------------------------------------------------------------
+# Masking — porzioni di riga che non sono prosa
+# ---------------------------------------------------------------------------
+
+MASK_PATTERNS = [
+    re.compile(r"`[^`]*`"),            # inline code
+    re.compile(r"\[\[[^\]]*\]\]"),     # wikilink Obsidian
+    re.compile(r"\]\([^)]*\)"),        # target di un link markdown
+    re.compile(r"https?://\S+"),       # URL nudo
+]
+
+
+def mask_line(line: str) -> str:
+    """Sostituisce codice inline, wikilink, target di link e URL con NUL.
+
+    La lunghezza resta invariata, così le colonne riportate restano vere.
+    """
+    for pattern in MASK_PATTERNS:
+        line = pattern.sub(lambda m: MASK * len(m.group(0)), line)
+    return line
+
+
+# ---------------------------------------------------------------------------
+# Divieto 3 — parallelismo negativo (inglese + italiano)
+# ---------------------------------------------------------------------------
+
+_MID = r"[^,.;:\x00\n]{1,60}"
+
+RE_RULE3 = [
+    # EN — it's not X, it's Y
+    re.compile(r"\b(?:it|this|that)(?:'s|’s|\s+is)\s+not\s+" + _MID
+               + r",\s*(?:it|this|that)(?:'s|’s|\s+is)\b", re.I),
+    # EN — not just/only/merely/simply X, but Y
+    re.compile(r"\bnot\s+(?:just|only|merely|simply)\s+" + _MID
+               + r",\s*(?:but|it)\b", re.I),
+    # EN — is not X, but Y
+    re.compile(r"\b(?:is|are|was|were)\s+not\s+" + _MID + r",\s*but\b", re.I),
+    # EN — not so much X as Y
+    re.compile(r"\bnot\s+so\s+much\s+" + _MID + r"\s+as\b", re.I),
+    # EN — more than X, Y
+    re.compile(r"\bmore\s+than\s+" + _MID + r",\s", re.I),
+    # IT — non è X, è Y  /  non è X, ma Y
+    re.compile(r"\bnon\s+(?:è|e')\s+" + _MID + r",\s*(?:è|e'|ma)\b", re.I),
+    # IT — non solo/soltanto/solamente X, ma Y
+    re.compile(r"\bnon\s+(?:solo|soltanto|solamente)\s+" + _MID
+               + r",\s*ma\b", re.I),
+    # IT — non si tratta di X, ma Y
+    re.compile(r"\bnon\s+si\s+tratta\s+di\s+" + _MID + r",\s*ma\b", re.I),
+    # IT — non tanto X quanto Y
+    re.compile(r"\bnon\s+tanto\s+" + _MID + r"\s+quanto\b", re.I),
+    # IT — più che X, Y
+    re.compile(r"\bpiù\s+che\s+" + _MID + r",\s", re.I),
+    # EN/IT — X? No: Y
+    re.compile(r"\?\s+(?:no|non)\s*[:,]", re.I),
+    # EN — negazione in coda: "Y, not just X" / "Y, not a X"
+    # Serve un determinante o un intensificatore, altrimenti ", not yet"
+    # e simili passano per parallelismi.
+    re.compile(r",\s*not\s+(?:just|only|merely|simply|a|an|the|its|his|her|their|our|your)\s",
+               re.I),
+    # IT — negazione in coda: "Y, non solo X" / "Y, non un X"
+    re.compile(r",\s*non\s+(?:solo|soltanto|solamente|un|uno|una|il|lo|la|i|gli|le|"
+               r"suo|sua|suoi|sue|loro)\s", re.I),
+]
+
+# ---------------------------------------------------------------------------
+# Divieto 6 — triadi ritmiche
+# ---------------------------------------------------------------------------
+
+_ITEM = r"[^\W\d_][\w'’-]*(?:\s+[^\W\d_][\w'’-]*){0,2}"
+_CONJ_WORDS = "and|or|e|ed|o|oppure"
+_CONJ = r"(?:%s)" % _CONJ_WORDS
+
+# Cattura l'intera sequenza enumerativa, non tre voci a caso al suo interno:
+# una triade è un elenco di tre, e "a, b, c, d e f" non lo è.
+RE_RULE6 = re.compile(
+    r"\b(" + _ITEM + r"(?:,\s+" + _ITEM + r")+,?\s+" + _CONJ + r"\s+" + _ITEM + r")\b",
+    re.I | re.UNICODE,
+)
+
+RE_LEADING_CONJ = re.compile(r"^(?:%s)\s+\S" % _CONJ_WORDS, re.I)
+RE_INNER_CONJ = re.compile(r"\s+(?:%s)\s+" % _CONJ_WORDS, re.I)
+
+
+def count_items(run: str) -> int:
+    """Quante voci contiene una sequenza enumerativa già catturata.
+
+    L'ultimo segmento vale 1 se la congiunzione lo apre ('and reliable',
+    virgola di Oxford presente) e 2 se la congiunzione sta dentro
+    ('posts and comments', virgola di Oxford assente).
+    """
+    parts = [p.strip() for p in run.split(",")]
+    last = parts[-1]
+    if RE_LEADING_CONJ.match(last):
+        tail = 1
+    elif RE_INNER_CONJ.search(last):
+        tail = 2
+    else:
+        tail = 1
+    return len(parts) - 1 + tail
+
+# ---------------------------------------------------------------------------
+# Divieto 5 — grassetto
+# ---------------------------------------------------------------------------
+
+RE_BOLD = re.compile(r"\*\*(?!\s)([^*]+?)\*\*")
+RE_LINE_START = re.compile(r"\s*(?:[-*+]\s+|\d+[.)]\s+)?")
+RE_HEADING = re.compile(r"\s{0,3}#{1,6}\s")
+
+
+@dataclass
+class Finding:
+    rule: int
+    kind: str
+    line: int
+    col: int
+    match: str
+    message: str
+    path: str = "-"
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "rule": self.rule,
+            "kind": self.kind,
+            "line": self.line,
+            "col": self.col,
+            "match": self.match,
+            "message": self.message,
+            "path": self.path,
+        }
+
+
+def parse_skip(value: Optional[str]) -> Set[int]:
+    """'4,6' -> {4, 6}. None o stringa vuota -> set(). Numero ignoto -> ValueError."""
+    if not value:
+        return set()
+    out = set()
+    for chunk in value.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            n = int(chunk)
+        except ValueError:
+            raise ValueError("not a rule number: %s" % chunk)
+        if n not in RULES:
+            raise ValueError("unknown rule: %s (known: %s)"
+                             % (n, ", ".join(str(r) for r in sorted(RULES))))
+        out.add(n)
+    return out
+
+
+def _scannable_lines(text: str):
+    """Genera (numero_riga, riga, is_heading) saltando le regioni non-prosa.
+
+    Salta: frontmatter YAML in testa, blocchi recintati, righe di citazione.
+    """
+    lines = text.split("\n")
+    i = 0
+    n = len(lines)
+
+    # Frontmatter solo se il file ci apre. Un '---' a metà testo è una
+    # regola orizzontale, non frontmatter.
+    if n and lines[0].rstrip() == "---":
+        i = 1
+        while i < n and lines[i].rstrip() != "---":
+            i += 1
+        i += 1
+
+    fence = None  # marcatore di apertura del blocco recintato
+    while i < n:
+        line = lines[i]
+        stripped = line.lstrip()
+        fence_match = re.match(r"(`{3,}|~{3,})", stripped)
+        if fence_match:
+            token = fence_match.group(1)
+            if fence is None:
+                fence = token[0] * 3
+                i += 1
+                continue
+            if token[0] * 3 == fence:
+                fence = None
+                i += 1
+                continue
+        if fence is not None:
+            i += 1
+            continue
+        if stripped.startswith(">"):
+            i += 1
+            continue
+        yield i + 1, line, bool(RE_HEADING.match(line))
+        i += 1
+
+
+def _check_bold(line: str, masked: str, lineno: int) -> List[Finding]:
+    if line.lstrip().startswith("|"):
+        return []  # cella di tabella: etichetta strutturale
+    prefix = RE_LINE_START.match(line)
+    content_start = prefix.end() if prefix else 0
+    out = []
+    for m in RE_BOLD.finditer(masked):
+        if m.start() == content_start:
+            continue  # apre la riga o la voce di lista: chiave, non enfasi
+        tail = masked[m.end():m.end() + 2].lstrip()
+        if tail.startswith(":"):
+            continue  # etichetta con due punti
+        out.append(Finding(
+            rule=5, kind=KIND[5], line=lineno, col=m.start() + 1,
+            match=line[m.start():m.end()],
+            message=RULES[5],
+        ))
+    return out
+
+
+def analyze(text: str, skip: Optional[Set[int]] = None,
+            path: str = "-") -> List[Finding]:
+    """Rileva i divieti meccanici in text. Ritorna le rilevazioni ordinate."""
+    skip = skip or set()
+    out: List[Finding] = []
+
+    for lineno, line, is_heading in _scannable_lines(text):
+        masked = mask_line(line)
+
+        if 4 not in skip and not is_heading:
+            for m in re.finditer("—", masked):
+                out.append(Finding(
+                    rule=4, kind=KIND[4], line=lineno, col=m.start() + 1,
+                    match=line.strip()[:80], message=RULES[4], path=path,
+                ))
+
+        if 5 not in skip:
+            for f in _check_bold(line, masked, lineno):
+                f.path = path
+                out.append(f)
+
+        if 3 not in skip:
+            seen = set()
+            for pattern in RE_RULE3:
+                for m in pattern.finditer(masked):
+                    if m.start() in seen:
+                        continue
+                    seen.add(m.start())
+                    out.append(Finding(
+                        rule=3, kind=KIND[3], line=lineno, col=m.start() + 1,
+                        match=m.group(0).strip()[:80], message=RULES[3],
+                        path=path,
+                    ))
+
+        if 6 not in skip:
+            for m in RE_RULE6.finditer(masked):
+                if count_items(m.group(1)) != 3:
+                    continue
+                out.append(Finding(
+                    rule=6, kind=KIND[6], line=lineno, col=m.start() + 1,
+                    match=m.group(1).strip()[:80], message=RULES[6], path=path,
+                ))
+
+    out.sort(key=lambda f: (f.line, f.col, f.rule))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def _render_text(findings: Sequence[Finding]) -> str:
+    if not findings:
+        return "clean: no mechanical violations found\n"
+    lines = []
+    for f in findings:
+        lines.append("%s:%d:%d  [rule %d %s] %s\n    %s"
+                     % (f.path, f.line, f.col, f.rule, f.kind, f.message, f.match))
+    counts = {}
+    for f in findings:
+        counts[f.rule] = counts.get(f.rule, 0) + 1
+    summary = ", ".join("rule %d: %d" % (r, counts[r]) for r in sorted(counts))
+    lines.append("")
+    lines.append("%d finding(s) — %s" % (len(findings), summary))
+    return "\n".join(lines) + "\n"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="register-check",
+        description="Check text against the mechanical prohibitions of the "
+                    "writing register (3 negative parallelism, 4 em dash, "
+                    "5 bold as emphasis, 6 rhythmic triad). Prohibitions 1, 2 "
+                    "and 7 are semantic and belong to the writing-register skill.",
+        epilog="Exit 0 clean, 1 findings, 2 usage error. Rules 4 and 5 are "
+               "reported as violations, rules 3 and 6 as candidates for review.",
+    )
+    p.add_argument("paths", nargs="+",
+                   help="Files to check, or - to read stdin")
+    p.add_argument("--skip", metavar="N[,M]",
+                   help="Suspend rules, e.g. --skip 4,6 (from the owner's "
+                        "preferences block, passed by the skill)")
+    p.add_argument("--json", action="store_true",
+                   help="Emit JSON instead of a human-readable report")
+    return p
+
+
+def main(argv: Optional[Sequence[str]] = None, stdin=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    stream = stdin if stdin is not None else sys.stdin
+
+    try:
+        skip = parse_skip(args.skip)
+    except ValueError as exc:
+        print("error: %s" % exc, file=sys.stderr)
+        return 2
+
+    findings: List[Finding] = []
+    for raw in args.paths:
+        if raw == "-":
+            findings.extend(analyze(stream.read(), skip=skip, path="-"))
+            continue
+        path = Path(raw)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print("error: cannot read %s: %s" % (raw, exc), file=sys.stderr)
+            return 2
+        findings.extend(analyze(text, skip=skip, path=str(path)))
+
+    if args.json:
+        counts: Dict[str, int] = {}
+        for f in findings:
+            key = str(f.rule)
+            counts[key] = counts.get(key, 0) + 1
+        print(json.dumps({
+            "clean": not findings,
+            "counts": counts,
+            "findings": [f.to_dict() for f in findings],
+        }, ensure_ascii=False, indent=2))
+    else:
+        sys.stdout.write(_render_text(findings))
+
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
