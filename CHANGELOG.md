@@ -8,6 +8,44 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.08.14.1 — 2026-08-14
+
+**Theme**: A **writing register** distributed to every instance: seven prose prohibitions that bind any text the orchestrator produces for a human reader, plus a Maestro-owned post-pass skill and a deterministic checker. The template had opinions about *where* files go and *how* they are tagged, and none about how the prose reads.
+
+### Added
+
+- **`## Writing register` in `CLAUDE.md`** (~14 lines, after `## Tone`) — the seven prohibitions condensed, the perimeter, the post-pass, and the pointer to the canonical reference. Same pointer-plus-canonical-source shape as `## Markdown discipline`. The prohibitions: 1 meta-commentary on the text itself, 2 sycophantic concessions, 3 negative parallelism in every variant including the tailing form, 4 em dash as a pause, 5 bold as rhetorical emphasis, 6 rhythmic triads, 7 judgment as tone of voice.
+- **`howto/10-writing-register.md`** — canonical reference: perimeter, the seven prohibitions with bilingual (EN/IT) before-and-after examples, the removal test for prohibition 7, post-pass mechanics, the extended net, `bin/register-check` usage, the exceptions block, and a `## Reference` section crediting [Wikipedia: Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing) and [`humanizer`](https://github.com/blader/humanizer) (MIT).
+- **`.claude/skills/writing-register/SKILL.md`** — post-pass on finished text, invoked before every vault write and every post or comment going to an external channel, with no length threshold. Checks the seven prohibitions plus a wider net (vague attributions, promotional language, `-ing` analyses, hedging, filler, false ranges, elegant variation, copula avoidance). **Fidelity guard**: form only, no claim added or removed, quotations and code and paths and numbers and proper nouns off limits, unresolvable passages left and reported. **Silent delivery**: returns the corrected text with no summary of changes.
+- **`bin/register-check`** (Python, stdlib only, no network) — deterministic check of the four prohibitions with a syntactic signature: 3 negative parallelism (11 patterns across Italian and English, including the tailing `Y, not X` form), 4 em dash as a pause, 5 bold outside structural-label position, 6 rhythmic triads. Rules 4 and 5 report as `violation`, rules 3 and 6 as `candidate`. Skips YAML frontmatter, fenced blocks and blockquote lines; masks inline code, wikilinks, link targets and bare URLs before matching, preserving column numbers. Triad detection counts the whole enumeration run, so three consecutive items inside a longer list do not fire. `--skip N,M` suspends rules, `--json` emits machine-readable output, exit 0 clean / 1 findings / 2 usage error.
+- **`tests/test_register_check.py`** — 54 tests, stdlib only, always run: `TestRule3NegativeParallelism`, `TestRule4EmDash`, `TestRule5Bold`, `TestRule6Triads`, `TestMasking`, `TestSkip`, `TestCli`. Run: `python3 -m unittest tests.test_register_check`.
+- **`## Writing register` block in `preferences.example.md`** — optional per-instance exceptions: `suspended: [4, 6]` and `post_pass: on|off`. The section absent means the full register with the pass on, so `setup` writes nothing new.
+- **`docs/shaping-writing-register.md`** — shaping doc for the grill session of 2026-08-14: the fourteen decisions, the two that moved during the session, the rejected alternatives.
+
+### Changed
+
+- **`.claude/agents/librarian.md`** — new `## Writing register` section. Binds the reports handed back to the orchestrator, because the synthesis inherits the shape of its source, and any `description` or body text written in the owner's territories.
+- **`.claude/agents/scheduler.md`** — new `## Writing register` section, focused on the two prohibitions that bite on a structured list: meta-commentary and judgment as tone.
+- **`.claude/skills/logbook/SKILL.md`** — new `## Writing register` section, plus the instruction to pass the finished note through the `writing-register` skill before writing it, and to confirm path and tags without narrating what the pass changed.
+- **`CLAUDE.md` `## Tone`** — the "Direct, no fluff" bullet rewritten to drop an em dash used as a pause and a definition by negation.
+- `maestro_version` bumped to `v2026.08.14.1` on: `CLAUDE.md`, `howto/10-writing-register.md`, `.claude/skills/writing-register/SKILL.md`, `.claude/skills/logbook/SKILL.md`, `.claude/agents/librarian.md`, `.claude/agents/scheduler.md`, `bin/register-check`.
+
+### Why
+
+- The seven prohibitions are a strict subset of the 29 patterns in the external `humanizer` skill. Three ways to get them into instances were on the table: depend on the external skill, vendor its `SKILL.md`, or inline its content. Skills load lazily and `CLAUDE.md` loads in full at every session start, so a Maestro-owned skill costs one `description` line per session while inlining 27 KB would have undone the compression release B of the spring upgrade paid for.
+- The external skill stays out of the automatic flow on purpose. Its process is interactive (two prompts, three output blocks) and it carries no fidelity guard: its own canonical example removes a cited study, two named interviewees and a set of figures from the text it rewrites. On a Basecamp comment that is the difference between a post published and a post retracted.
+- No length threshold, because the discriminant is reversibility rather than length. A two-line comment on a public channel is harder to take back than a thirty-line note that stays on disk.
+- Existing template prose was left untouched. `CLAUDE.md` still contains 84 em dashes used as pauses inside the file that bans them, which works against prohibition 4 by imitation. Accepted knowingly: rewriting 84 sentences in a behavioral specification risks moving the meaning of instructions, and specification files sit outside the register's perimeter anyway.
+
+### Migration
+
+- Run `/maestro-sync`. `howto/10-writing-register.md` and `.claude/skills/writing-register/SKILL.md` arrive as new files through the reverse scan; `CLAUDE.md`, `logbook`, `librarian` and `scheduler` arrive as diffs.
+- **`bin/register-check` needs a manual copy**, since `bin/*` is still outside sync scope: `cp ~/.maestro/bin/register-check bin/ && chmod +x bin/register-check`. Optionally `cp ~/.maestro/tests/test_register_check.py tests/`. Without the tool the skill still runs, doing the whole pass by reading.
+- **`preferences.example.md` does not reach existing instances**, because `setup` removes the root templates after the first run. Instances that want the exceptions block add the section by hand, following `howto/10-writing-register.md` → "Per-instance exceptions". Instances that want the full register do nothing.
+- Nothing to migrate in `memories.db`, and no change to any existing behavior beyond the shape of the prose.
+
+---
+
 ## v2026.07.16.2 — 2026-07-16
 
 **Theme**: Extend the semantic layer to the markdown **vault**, chunked by section — one fused recall over `memories.db` *and* the vault. Built on v2026.07.16.1 and fully additive: `log`/`log_vec` are untouched, and an instance that never supplies a vault root behaves exactly as before. Same model, dimensions, and vector format as `log_vec`, so the two indexes are co-queryable.
