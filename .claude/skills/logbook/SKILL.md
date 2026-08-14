@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.07.15.2
+maestro_version: v2026.08.14.1
 name: logbook
 description: Daily logbook of sessions with the orchestrator. Use when the owner asks for "recap of today", "wrap up", "end of day", or whenever it's time to synthesize in writing what was done and what was learned. Writes to the `logbook_path` declared in preferences.
 ---
@@ -90,6 +90,16 @@ The db is the starting point, not the text of the note. It needs *interpretation
 7. Confirm to the owner: path written + tags chosen.
 
 **If a note for today already exists**, do not overwrite. Ask the owner whether to update it (append a new section) or create a second note with a different slug.
+
+## Writing register
+
+The note is prose for a human reader, so it follows the writing register: no meta-commentary on the text itself, no sycophantic concessions, no negative parallelism in any variant ("it's not X, it's Y", "non è X, è Y", and the tailing "Y, not X"), no em dash used as a pause, no bold as rhetorical emphasis (structural labels stay), no rhythmic triads, no judgment as tone of voice.
+
+Prohibition 7 is the one a logbook trips over most, because a daily note invites a closing verdict. "Solid progress on the parser" goes; "the parser now handles empty input, the timeout is still missing" stays. A reflective closing section is welcome when it carries an observation, not when it carries encouragement.
+
+Condensed rules: `CLAUDE.md` → `## Writing register`. Full reference: `howto/10-writing-register.md`.
+
+Before writing the file, pass the finished text through the `writing-register` skill, then write it. Delivery is silent: confirm the path and the tags to the owner, without narrating what the pass changed.
 
 ## When to trigger
 

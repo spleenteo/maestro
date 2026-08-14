@@ -133,6 +133,23 @@ How the orchestrator should talk *to you* and about *others*. Expand when you no
 
 ---
 
+## Writing register
+
+*Optional.* Maestro distributes seven prose prohibitions that apply to every text the orchestrator writes for a human reader, plus a post-pass through the `writing-register` skill on vault documents and external posts. Full reference: `howto/10-writing-register.md`.
+
+**Skip this section entirely** to get the full register with the post-pass on, which is the default. Declare it only to make an exception.
+
+```yaml
+suspended: []        # prohibitions to suspend, e.g. [4, 6]
+post_pass: on        # on | off
+```
+
+The numbers: 1 meta-commentary, 2 sycophantic concessions, 3 negative parallelism, 4 em dash as a pause, 5 bold as emphasis, 6 rhythmic triads, 7 judgment as tone of voice.
+
+`post_pass: off` keeps the seven prohibitions active while skipping the skill invocation before each write or send.
+
+---
+
 ## Notes
 
 Free-form section for anything else the orchestrator should remember that doesn't fit the blocks above. Idiosyncrasies, context that only matters sometimes, reminders the owner wants to see at session start.
