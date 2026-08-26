@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+# origin: maestro
+# maestro_version: v2026.08.26.1
+"""session-digest — recupera i messaggi umani delle sessioni Claude Code di un dato giorno.
+
+Serve alla skill `logbook`: quando l'owner lavora su più sessioni in parallelo
+(agent view), le memorie finiscono tutte in memories.db, ma il filo del discorso
+di ogni sessione resta nel suo transcript. Questo script lo estrae.
+
+Legge i transcript in ~/.claude/projects/<slug>/*.jsonl e restituisce, per ogni
+sessione che ha attività nel giorno target, il nome della sessione e i messaggi
+digitati dall'owner (origin.kind == "human"), in ordine cronologico.
+
+Non legge le risposte dell'assistente: sono megabyte e il costo non vale.
+
+Uso:
+    bin/session-digest                       # oggi, progetto corrente
+    bin/session-digest --date 2026-08-25
+    bin/session-digest --date yesterday
+    bin/session-digest --date 3d              # tre giorni fa
+    bin/session-digest --date 3d              # tre giorni fa
+    bin/session-digest --json
+    bin/session-digest --exclude-session <id>
+    bin/session-digest --cwd /path/to/project
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+PROJECTS_ROOT = Path(os.environ.get("CLAUDE_PROJECTS_ROOT", Path.home() / ".claude" / "projects"))
+
+# Rumore che entra nel canale "user" senza essere farina dell'owner.
+NOISE = re.compile(
+    r"<local-command-caveat>|<command-name>|<command-message>|<command-args>|"
+    r"<system-reminder>|<local-command-stdout>|named this session|"
+    r"^Caveat: The messages below",
+    re.IGNORECASE,
+)
+
+
+def slugify_cwd(path: str) -> str:
+    """Riproduce lo slug che Claude Code usa per nominare la cartella di progetto."""
+    return re.sub(r"[^A-Za-z0-9]+", "-", path)
+
+
+def find_project_dir(cwd: str) -> Path | None:
+    """Trova la cartella dei transcript per cwd. Prima per slug, poi per scansione."""
+    guess = PROJECTS_ROOT / slugify_cwd(cwd)
+    if guess.is_dir() and any(guess.glob("*.jsonl")):
+        return guess
+    if not PROJECTS_ROOT.is_dir():
+        return None
+    target = os.path.realpath(cwd)
+    for d in PROJECTS_ROOT.iterdir():
+        if not d.is_dir():
+            continue
+        for f in list(d.glob("*.jsonl"))[:3]:
+            try:
+                with f.open(encoding="utf-8", errors="replace") as fh:
+                    for i, line in enumerate(fh):
+                        if i > 200:
+                            break
+                        if '"cwd"' not in line:
+                            continue
+                        rec = json.loads(line)
+                        if rec.get("cwd") and os.path.realpath(rec["cwd"]) == target:
+                            return d
+            except (OSError, json.JSONDecodeError):
+                continue
+    return None
+
+
+def resolve_date(spec: str) -> str:
+    today = datetime.now().date()
+    if spec in ("today", "oggi"):
+        return today.isoformat()
+    if spec in ("yesterday", "ieri"):
+        return (today - timedelta(days=1)).isoformat()
+    m = re.fullmatch(r"-?(\d+)d", spec)
+    if m:
+        return (today - timedelta(days=int(m.group(1)))).isoformat()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", spec):
+        return spec
+    raise SystemExit(f"data non riconosciuta: {spec}")
+
+
+def local_stamp(ts: str) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone()
+
+
+def is_human(rec: dict) -> bool:
+    if rec.get("type") != "user" or rec.get("isSidechain"):
+        return False
+    origin = rec.get("origin")
+    if not isinstance(origin, dict) or origin.get("kind") != "human":
+        return False
+    return isinstance(rec.get("message", {}).get("content"), str)
+
+
+def read_session(path: Path, day: str, max_chars: int) -> dict | None:
+    custom_title = ai_title = None
+    messages = []
+    session_id = path.stem
+    try:
+        fh = path.open(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    with fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            rtype = rec.get("type")
+            if rtype == "custom-title":
+                custom_title = rec.get("customTitle") or custom_title
+                continue
+            if rtype == "ai-title":
+                ai_title = rec.get("aiTitle") or ai_title
+                continue
+            if not is_human(rec):
+                continue
+            stamp = local_stamp(rec.get("timestamp", ""))
+            if stamp is None or stamp.date().isoformat() != day:
+                continue
+            text = rec["message"]["content"].strip()
+            if not text or NOISE.search(text):
+                continue
+            if len(text) > max_chars:
+                text = text[:max_chars].rstrip() + " […]"
+            messages.append({"time": stamp.strftime("%H:%M"), "text": text})
+    if not messages:
+        return None
+    return {
+        "session_id": session_id,
+        "name": custom_title,
+        "ai_title": ai_title,
+        "count": len(messages),
+        "first": messages[0]["time"],
+        "last": messages[-1]["time"],
+        "messages": messages,
+    }
+
+
+def drop_shadow_sessions(sessions: list) -> list:
+    """Scarta le sessioni i cui messaggi sono già tutti dentro un'altra sessione.
+
+    Una conversazione mandata in background, o forkata, lascia due transcript:
+    il parent conserva i primi messaggi, il figlio li ha tutti. Tenere entrambi
+    farebbe leggere due volte lo stesso filo.
+    """
+    keyed = [(s, {(m["time"], m["text"]) for m in s["messages"]}) for s in sessions]
+    keep = []
+    for s, keys in keyed:
+        shadowed = any(
+            other is not s and keys and keys < other_keys
+            for other, other_keys in keyed
+        )
+        if not shadowed:
+            keep.append(s)
+    return keep
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Messaggi umani delle sessioni Claude Code di un giorno.")
+    ap.add_argument("--date", default="today",
+                    help="YYYY-MM-DD, today/oggi, yesterday/ieri, Nd (N giorni fa; con il segno serve --date=-Nd)")
+    ap.add_argument("--cwd", default=os.getcwd(), help="directory di progetto (default: cwd)")
+    ap.add_argument("--json", action="store_true", help="output JSON")
+    ap.add_argument("--exclude-session", action="append", default=[], metavar="ID",
+                    help="id (anche parziale) di sessione da escludere, ripetibile")
+    ap.add_argument("--session", metavar="NAME_OR_ID", help="una sola sessione, per nome o id")
+    ap.add_argument("--max-chars", type=int, default=1500, help="tetto per singolo messaggio (default 1500)")
+    ap.add_argument("--no-dedup", action="store_true", help="non scartare i transcript ombra di background/fork")
+    args = ap.parse_args()
+
+    day = resolve_date(args.date)
+    project_dir = find_project_dir(args.cwd)
+    if project_dir is None:
+        print(f"nessun transcript per {args.cwd} sotto {PROJECTS_ROOT}", file=sys.stderr)
+        return 2
+
+    sessions = []
+    for path in sorted(project_dir.glob("*.jsonl")):
+        if any(path.stem.startswith(x) or x in path.stem for x in args.exclude_session):
+            continue
+        session = read_session(path, day, args.max_chars)
+        if session:
+            sessions.append(session)
+
+    if not args.no_dedup:
+        sessions = drop_shadow_sessions(sessions)
+
+    if args.session:
+        needle = args.session.lower()
+        sessions = [s for s in sessions
+                    if needle in (s["name"] or "").lower()
+                    or needle in (s["ai_title"] or "").lower()
+                    or s["session_id"].startswith(args.session)]
+
+    sessions.sort(key=lambda s: s["first"])
+
+    if args.json:
+        json.dump({"date": day, "project": str(project_dir), "sessions": sessions},
+                  sys.stdout, ensure_ascii=False, indent=2)
+        print()
+        return 0
+
+    if not sessions:
+        print(f"nessuna sessione con messaggi il {day}")
+        return 0
+
+    total = sum(s["count"] for s in sessions)
+    plural = "sessione" if len(sessions) == 1 else "sessioni"
+    print(f"# Sessioni del {day} — {len(sessions)} {plural}, {total} messaggi\n")
+    for s in sessions:
+        label = s["name"] or s["ai_title"] or "senza nome"
+        print(f"## {label}  ({s['session_id'][:8]}, {s['first']}→{s['last']}, {s['count']} msg)\n")
+        for m in s["messages"]:
+            body = m["text"].replace("\n", "\n  ")
+            print(f"- [{m['time']}] {body}")
+        print()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

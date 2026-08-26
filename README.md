@@ -72,6 +72,7 @@ Every instance built from this template has:
 - **`.claude/agents/`** — the shipped craft agents: `hr` (recruiter and manager of the roster), `librarian` (vault research and frontmatter hygiene), `scheduler` (cold data layer for prospective/retrospective questions).
 - **`.claude/skills/`** — the hub skills: `setup` (first-launch configuration, self-disables), `logbook` (daily note in your configured `logbook_path`), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `maestro-sync` (pulls template updates from upstream).
 - **`bin/mem`** — CLI wrapper for `memories.db` (escape-safe writes, relative dates, reports).
+- **`bin/session-digest`** — pulls the owner's messages from the day's parallel sessions, for the `logbook` skill.
 - **`.gitignore`** — covers `private/`, workspace artifacts, and local settings.
 
 Everything else grows organically as you use the orchestrator:

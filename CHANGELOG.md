@@ -8,6 +8,39 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.08.26.1 — 2026-08-26
+
+**Theme**: The logbook learns to read the **parallel sessions** of the day. Claude Code's agent view lets the owner keep several conversations open at once and jump between them; the memories they produce already converge in `memories.db`, but the thread of each discussion stayed locked in its own transcript, visible only to the session that hosted it. Two behaviors instances had been growing on their own — flushing the warm task channel before writing, and documenting a day other than today — are absorbed into the template in the same pass.
+
+### Added
+
+- **`bin/session-digest`** (Python, stdlib only, no network) — extracts, for a given day, the messages the owner typed in every session of the current project. Reads the transcripts under `~/.claude/projects/<slug>/*.jsonl` (override with `CLAUDE_PROJECTS_ROOT`) and returns each session's name plus its messages in chronological order. Human messages are identified by `origin.kind == "human"`, which excludes tool results, subagent traffic (`isSidechain`) and harness noise (`<system-reminder>`, command wrappers) without heuristics on the text. Session names come from the last `custom-title` record, so a rename wins over the original; `ai-title` is the fallback. The assistant's replies stay out: they run to megabytes, while a full day of the owner's messages fits in a few KB. Filtering is by message timestamp rather than file mtime, because a session open across several days holds messages from all of them. Sessions whose messages are a strict subset of another's are dropped as shadow transcripts, the pair a backgrounded or forked conversation leaves behind (`--no-dedup` keeps them). Options: `--date` (`YYYY-MM-DD`, `today`/`oggi`, `yesterday`/`ieri`, `Nd`), `--cwd`, `--session`, `--exclude-session`, `--max-chars`, `--json`. Exit 0 clean (an empty day is not an error), 2 when no transcript directory matches the project.
+- **`tests/test_session_digest.py`** — 21 tests, stdlib only, no real transcripts: `TestExtraction`, `TestDayBoundary`, `TestShadowSessions`, `TestSelection`, `TestCli`. Run: `python3 -m unittest tests.test_session_digest`.
+
+### Changed
+
+- **`.claude/skills/logbook/SKILL.md`** — new step 3 in the procedure, `Pick up the threads of the parallel sessions`, invoking `bin/session-digest` before grouping by theme. It states that the db stays the source of facts while the digest carries context and nuance, asks that anything substantial found only in the digest be saved as a memory before the note is written, and degrades without blocking when the script is missing. `## Sources for composing the note` gains the parallel sessions as source 3, and records that the db is the one source already spanning every session. The closing confirmation now reports how many sessions fed into the note.
+- **`.claude/skills/logbook/SKILL.md`** — new step 2, `Pre-flush the warm task channel`: when `preferences.md` declares a `## Warm task channel` block with `channel != none`, the skill named there runs its `## Garbage Collector` before the note is composed. Writing the logbook is an end-of-session trigger, so the tasks closed in the warm layer land in `memories.db` dated to the target day instead of staying behind in the task manager. Announces only when it archives something, degrades without blocking, skips entirely when no channel is declared.
+- **`.claude/skills/logbook/SKILL.md`** — new step 3, `Decide which day you are documenting`: the target day follows the same early-morning rule that already governs every write to `memories.db`. Called before 06:00 local with no note yet for the previous day, the skill documents the previous day and pulls in the entries of the night that follows, which are the tail of the same lived session. The filename carries the target day rather than the day of writing, and the closing confirmation reports it when the two differ.
+- **`README.md`** — `bin/session-digest` listed next to `bin/mem`.
+- `maestro_version` bumped to `v2026.08.26.1` on `.claude/skills/logbook/SKILL.md` and `bin/session-digest`.
+
+### Why
+
+- Instances write memories from any session, so the *facts* of a parallel day already converge. What evaporated was the reasoning around them: constraints that emerged, options discarded, threads left open with no recorded outcome. The owner had to remember to flush each session before leaving it, which is a discipline that fails exactly on the busy days worth documenting.
+- Reading only the owner's messages is what makes this affordable. Measured on a real instance, the busiest session of a day held 11 KB of typed text against a transcript of several megabytes. The owner's side alone is enough to reconstruct what a session was about, and the db supplies the outcomes.
+- A separate script rather than instructions in the skill: the parsing has enough edge cases (day boundaries in local time, shadow transcripts, noise in the `user` channel) that prose instructions would have been re-derived, differently, at every invocation.
+- The warm-channel pre-flush and the target-day rule arrive from an instance that had written them into its local copy of the skill. Both are general: the warm task channel is already a template pattern (`howto/07`, session-start step 4) whose skill simply never got invoked at logbook time, and the early-morning rule is already stated in `CLAUDE.md` for every `memories.db` write. Leaving them in a fork meant the instance stopped receiving diffs on a distributed file, which is how a local customisation quietly costs an instance every future update.
+
+### Migration
+
+- Run `/maestro-sync`: `.claude/skills/logbook/SKILL.md` arrives as a diff. **`bin/session-digest` needs a manual copy**, since `bin/*` stays outside sync scope: `cp ~/.maestro/bin/session-digest bin/ && chmod +x bin/session-digest`. Optionally `cp ~/.maestro/tests/test_session_digest.py tests/`.
+- Without the script the skill still runs: step 3 degrades to a minor note and the logbook is composed from the db and the current conversation, as before.
+- Instances that had forked their `logbook` skill locally to add a warm-channel pre-flush or a target-day rule can now drop the fork and take the upstream file whole: both behaviors are in the template. Check that the frontmatter carries `origin: maestro` again, otherwise `maestro-sync` keeps treating the file as local and offers no further diffs.
+- Nothing to migrate in `memories.db`, and no change to how the note is written.
+
+---
+
 ## v2026.08.14.1 — 2026-08-14
 
 **Theme**: A **writing register** distributed to every instance: seven prose prohibitions that bind any text the orchestrator produces for a human reader, plus a Maestro-owned post-pass skill and a deterministic checker. The template had opinions about *where* files go and *how* they are tagged, and none about how the prose reads.
