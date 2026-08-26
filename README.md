@@ -73,6 +73,7 @@ Every instance built from this template has:
 - **`.claude/skills/`** — the hub skills: `setup` (first-launch configuration, self-disables), `logbook` (daily note in your configured `logbook_path`), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `maestro-sync` (pulls template updates from upstream).
 - **`bin/mem`** — CLI wrapper for `memories.db` (escape-safe writes, relative dates, reports).
 - **`bin/session-digest`** — pulls the owner's messages from the day's parallel sessions, for the `logbook` skill.
+- **`user-skills/`** — skills authored here but installed user-level, in `~/.claude/skills/`, because they are called from any session on the machine rather than from an instance. Currently `maestro-net`, the cross-talk channel between several Maestro instances (see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)).
 - **`.gitignore`** — covers `private/`, workspace artifacts, and local settings.
 
 Everything else grows organically as you use the orchestrator:
@@ -93,7 +94,7 @@ These live in `CLAUDE.md` under "Role: orchestrator" and carry through every ins
 
 ## Going deeper
 
-After setup, the `howto/` folder has seven practical guides:
+After setup, the `howto/` folder has eleven practical guides:
 
 - [`howto/01-skills.md`](howto/01-skills.md) — add, invoke, write, retire skills
 - [`howto/02-agents-and-hr.md`](howto/02-agents-and-hr.md) — hire, use, retire agents via HR
@@ -102,6 +103,10 @@ After setup, the `howto/` folder has seven practical guides:
 - [`howto/05-backup-and-sync.md`](howto/05-backup-and-sync.md) — privacy, `.gitignore`, cloud-drive sync, symlinks to external apps/skills/agents
 - [`howto/06-configure-cal.md`](howto/06-configure-cal.md) — configure the `scheduler` agent: data channels, routines, question types
 - [`howto/07-warm-task-channel.md`](howto/07-warm-task-channel.md) — wire an external task manager as the warm layer, with `memories.db` as the cold layer
+- [`howto/08-markdown-discipline.md`](howto/08-markdown-discipline.md) — frontmatter, tags, descriptions, YAML safety, wikilinks
+- [`howto/09-memoria-semantica.md`](howto/09-memoria-semantica.md) — the optional semantic layer over `memories.db` and the vault
+- [`howto/10-writing-register.md`](howto/10-writing-register.md) — the seven prose prohibitions, the post-pass, and `bin/register-check`
+- [`howto/11-maestro-net.md`](howto/11-maestro-net.md) — cross-talk between several Maestro instances: `recap`, `ask`, and the instance registry
 
 ## Status
 

@@ -8,6 +8,38 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.08.26.2 — 2026-08-26
+
+**Theme**: **maestro-net**, the cross-talk channel between an owner's Maestro instances. An owner living in several contexts runs several instances, each with its own memory and its own domain, and the separation holds until something learned in one belongs in another. Two verbs cross that gap, `recap` and `ask`, under one constraint: the channel carries memories, never permissions.
+
+### Added
+
+- **`user-skills/maestro-net/maestro-net`** (Python, stdlib only) — the tool behind the channel. `recap <instance> "<text>"` writes a memory into the recipient's db by invoking **their** `bin/mem` with an absolute path, tagged `from:<sender>`, with no model involved. `ask <instance> "<question>"` runs `claude -p` in the recipient's directory, so their `CLAUDE.md`, preferences and memory apply, and reports the answer; the prompt carries a read-only clause and no persistent session is opened. `scan` censuses the instances on disk, `list` shows what is registered and flags dead paths. The sender of a recap resolves in three steps (`--from`, the registry name of the current directory, that directory's name) and the confirmation states which one applied. `MEM_DB` and `PWD` are stripped from the remote process's environment, so a caller that declares its own database can't divert a recap into it.
+- **`user-skills/maestro-net/SKILL.md`** — the skill, meant to be installed **user-level** in `~/.claude/skills/`. The typical caller is a development session in an unrelated repository that has no Maestro skills loaded, so a project-level skill would never fire. The Maestro repository authors it and owns its version, tests and changelog; installation is a copy.
+- **`~/.claude/maestro-instances.yaml`** (registry, written by the owner) — schema `version` plus `instances.<name>.{path, domain, accepts}`. `domain` carries the routing when the owner names no recipient; `accepts` lists the verbs that instance allows, and absent or empty means none. Deliberately outside `~/.maestro/`, which is the read-only template mirror that `maestro-sync` resets with `git reset --hard`.
+- **`howto/11-maestro-net.md`** — the pattern: the constraint and the incident behind it, the two verbs, the registry schema, why the skill is user-level, the installation path through chezmoi, the exit-code table, and the reading side that isn't built yet.
+- **`tests/test_maestro_net.py`** — 59 tests, stdlib only, no real instances and no network: `TestRegistryLoading`, `TestInstanceResolution`, `TestAcceptsGate`, `TestRecap`, `TestAsk`, `TestScan`, `TestCli`. Both verbs run against recorder scripts that capture argv, cwd and environment. Run: `python3 -m unittest tests.test_maestro_net`.
+
+### Changed
+
+- **`README.md`** — `user-skills/` listed among the repository's components, and the `howto/` index brought back in line with the folder (guides 08 to 11 were missing).
+
+### Why
+
+- The four instances already existed on disk with their own `bin/mem`, and the primitives were already there: `bin/mem` invoked with an absolute path resolves its database from the script's location, and `claude -p` run in another directory inherits that instance's `CLAUDE.md`. What was missing was the addressing — the paths would otherwise be hardcoded in whoever typed the command — and a place for the skill where any session can see it.
+- `handoff` was dropped from the design. Pushing a memory covers most of what it was for, and a verb that opens a session inside another instance is exactly the kind of reach the constraint exists to prevent.
+- `accepts` is what turns the constraint from an intention into a value. The precedent: a work instance once read the owner's personal task manager, because MCP servers load user-level and are visible to every session regardless of folder. Preferences declared the boundary and nothing enforced it.
+- The registry parser is a small strict reader rather than a YAML dependency, so a line it doesn't understand is an error with a line number instead of a silently missing instance. Same reasoning behind the exit-code table: a channel that can't deliver says so, and a recap that can't reach its recipient is never written somewhere else.
+- The scanner reads the real `cwd` out of the transcripts under `~/.claude/projects/`, because those directory names are slugs where `-` replaces `/`, `.` and spaces, and can't be turned back into paths.
+
+### Migration
+
+- Nothing arrives through `/maestro-sync`: `user-skills/` is outside its scope by design, since the skill is installed user-level rather than into an instance. Copy it by hand: `cp -R user-skills/maestro-net ~/.claude/skills/`, then `chezmoi add ~/.claude/skills/maestro-net` if `~/.claude` is chezmoi-managed.
+- Populate the registry with `~/.claude/skills/maestro-net/maestro-net scan --write`, then fill in each `domain` and review each `accepts`. The scanner proposes both verbs for every instance it finds; narrow it with `--accepts recap` if the owner would rather grant `ask` case by case.
+- Nothing changes for an instance that doesn't install it. No file distributed to instances was touched, and `memories.db` is unchanged: a recap is an ordinary `memory` row that happens to carry a `from:` tag.
+
+---
+
 ## v2026.08.26.1 — 2026-08-26
 
 **Theme**: The logbook learns to read the **parallel sessions** of the day. Claude Code's agent view lets the owner keep several conversations open at once and jump between them; the memories they produce already converge in `memories.db`, but the thread of each discussion stayed locked in its own transcript, visible only to the session that hosted it. Two behaviors instances had been growing on their own — flushing the warm task channel before writing, and documenting a day other than today — are absorbed into the template in the same pass.
