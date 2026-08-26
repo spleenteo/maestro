@@ -1,0 +1,691 @@
+#!/usr/bin/env python3
+# origin: maestro
+# maestro_version: v2026.08.26.2
+"""maestro-net — canale di cross-talk fra istanze Maestro.
+
+Due verbi soli, `recap` e `ask`, più i comandi di servizio sul registry.
+
+    recap <istanza> "<testo>"      scrive una memoria nel db dell'istanza,
+                                   invocando il suo bin/mem con path assoluto.
+                                   Costo modello zero.
+    ask <istanza> "<domanda>"      esegue `claude -p` nella cwd dell'istanza
+                                   e riporta la risposta. Nessuna sessione
+                                   persistente aperta.
+    scan                           censisce le istanze Maestro sul disco e
+                                   propone il registry.
+    list                           elenca le istanze registrate.
+
+VINCOLO CARDINE: il canale trasporta memorie, non permessi. Nessun verbo
+tocca file, MCP o task di un'altra istanza. Il campo `accepts` del registry
+rende il vincolo un dato, modificabile per istanza.
+
+Registry: ~/.claude/maestro-instances.yaml (override: --registry, env
+MAESTRO_INSTANCES). Non vive in ~/.maestro/, che è il mirror read-only del
+template e verrebbe sovrascritto da maestro-sync.
+
+Exit code — la degradazione è sempre esplicita, mai silenziosa:
+    0  fatto
+    2  errore d'uso
+    3  registry assente
+    4  registry malformato
+    5  istanza sconosciuta o nome ambiguo
+    6  verbo non ammesso dal destinatario
+    7  path del destinatario non più valido
+    8  il comando remoto è fallito
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+OK = 0
+E_USAGE = 2
+E_NO_REGISTRY = 3
+E_BAD_REGISTRY = 4
+E_UNKNOWN_INSTANCE = 5
+E_VERB_REFUSED = 6
+E_DEAD_PATH = 7
+E_REMOTE_FAILED = 8
+
+VERBS = ("recap", "ask")
+SUPPORTED_VERSIONS = (1,)
+
+DEFAULT_REGISTRY = Path.home() / ".claude" / "maestro-instances.yaml"
+PROJECTS_ROOT = Path(os.environ.get("CLAUDE_PROJECTS_ROOT", Path.home() / ".claude" / "projects"))
+
+
+class RegistryError(Exception):
+    """Registry illeggibile o non conforme allo schema."""
+
+
+class NetError(Exception):
+    """Errore operativo con un exit code proprio."""
+
+    def __init__(self, code: int, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+# --------------------------------------------------------------------------
+# Parser YAML minimo
+#
+# Lo schema del registry è chiuso e piatto, quindi un parser dedicato costa
+# meno di una dipendenza esterna e permette messaggi d'errore con il numero
+# di riga. Tutto ciò che non rientra nello schema è un errore, non un
+# silenzio: un registry che il parser non capisce non deve mai degradare in
+# un registry vuoto.
+# --------------------------------------------------------------------------
+
+def _scalar(raw: str, lineno: int, source: str):
+    """Converte un valore: lista flow, intero, stringa (eventualmente quotata)."""
+    v = raw.strip()
+    if v.startswith("["):
+        if not v.endswith("]"):
+            raise RegistryError(f"{source}:{lineno}: lista non chiusa: {v}")
+        inner = v[1:-1].strip()
+        if not inner:
+            return []
+        return [_scalar(item, lineno, source) for item in inner.split(",")]
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        return v[1:-1]
+    if re.fullmatch(r"-?\d+", v):
+        return int(v)
+    return v
+
+
+def parse_registry(text: str, source: str) -> dict:
+    """Legge il registry. Solleva RegistryError su qualunque scostamento."""
+    data: Dict[str, object] = {}
+    instances: Dict[str, dict] = {}
+    current: Optional[str] = None
+    in_instances = False
+    seen_instances = False
+
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if "\t" in line[: len(line) - len(line.lstrip())]:
+            raise RegistryError(f"{source}:{lineno}: indentazione con tab, servono spazi")
+
+        indent = len(line) - len(line.lstrip(" "))
+        body = line.strip()
+        if ":" not in body:
+            raise RegistryError(f"{source}:{lineno}: riga senza `chiave: valore`: {body}")
+        key, _, raw = body.partition(":")
+        key = key.strip()
+        raw = raw.strip()
+
+        if indent == 0:
+            in_instances = key == "instances"
+            current = None
+            if in_instances:
+                seen_instances = True
+                if raw:
+                    raise RegistryError(
+                        f"{source}:{lineno}: `instances:` non prende un valore sulla stessa riga"
+                    )
+                continue
+            if key not in ("version",):
+                raise RegistryError(f"{source}:{lineno}: chiave di primo livello sconosciuta: {key}")
+            data[key] = _scalar(raw, lineno, source)
+        elif indent == 2:
+            if not in_instances:
+                raise RegistryError(f"{source}:{lineno}: blocco indentato fuori da `instances:`")
+            if raw:
+                raise RegistryError(
+                    f"{source}:{lineno}: il nome istanza `{key}` non prende un valore sulla stessa riga"
+                )
+            if key in instances:
+                raise RegistryError(f"{source}:{lineno}: istanza duplicata: {key}")
+            current = key
+            instances[key] = {}
+        elif indent == 4:
+            if current is None:
+                raise RegistryError(f"{source}:{lineno}: campo `{key}` fuori da un blocco istanza")
+            instances[current][key] = _scalar(raw, lineno, source)
+        else:
+            raise RegistryError(
+                f"{source}:{lineno}: indentazione di {indent} spazi, attesi 0, 2 o 4"
+            )
+
+    if not seen_instances:
+        raise RegistryError(f"{source}: manca la chiave `instances`")
+    data["instances"] = instances
+    _validate(data, source)
+    return data
+
+
+def _validate(data: dict, source: str) -> None:
+    if "version" not in data:
+        raise RegistryError(f"{source}: manca la chiave `version`")
+    if data["version"] not in SUPPORTED_VERSIONS:
+        raise RegistryError(
+            f"{source}: version {data['version']} non supportata "
+            f"(questa build legge: {', '.join(str(v) for v in SUPPORTED_VERSIONS)})"
+        )
+    if not isinstance(data.get("instances"), dict):
+        raise RegistryError(f"{source}: `instances` non è un blocco di istanze")
+
+    for name, entry in data["instances"].items():
+        path = entry.get("path")
+        if not path or not isinstance(path, str):
+            raise RegistryError(f"{source}: istanza `{name}` senza campo `path`")
+        accepts = entry.get("accepts")
+        if accepts is None:
+            continue
+        if not isinstance(accepts, list):
+            raise RegistryError(f"{source}: `accepts` di `{name}` non è una lista")
+        for verb in accepts:
+            if verb not in VERBS:
+                raise RegistryError(
+                    f"{source}: `accepts` di `{name}` contiene il verbo sconosciuto `{verb}` "
+                    f"(ammessi: {', '.join(VERBS)})"
+                )
+
+
+def registry_path(arg: Optional[str]) -> Path:
+    if arg:
+        return Path(arg).expanduser()
+    env = os.environ.get("MAESTRO_INSTANCES")
+    if env:
+        return Path(env).expanduser()
+    return DEFAULT_REGISTRY
+
+
+def load_registry(arg: Optional[str]) -> Tuple[dict, Path]:
+    path = registry_path(arg)
+    if not path.is_file():
+        raise NetError(
+            E_NO_REGISTRY,
+            f"registry assente: {path}\n"
+            f"Popolalo con: maestro-net scan --write",
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise NetError(E_NO_REGISTRY, f"registry illeggibile: {path}: {exc}")
+    try:
+        return parse_registry(text, str(path)), path
+    except RegistryError as exc:
+        raise NetError(E_BAD_REGISTRY, f"registry malformato: {exc}")
+
+
+# --------------------------------------------------------------------------
+# Risoluzione del destinatario
+# --------------------------------------------------------------------------
+
+def resolve_instance(registry: dict, needle: str) -> Tuple[str, dict]:
+    instances: Dict[str, dict] = registry["instances"]
+    names = list(instances)
+    low = needle.lower()
+
+    exact = [n for n in names if n.lower() == low]
+    if exact:
+        return exact[0], instances[exact[0]]
+
+    prefix = [n for n in names if n.lower().startswith(low)]
+    if len(prefix) == 1:
+        return prefix[0], instances[prefix[0]]
+    if len(prefix) > 1:
+        raise NetError(
+            E_UNKNOWN_INSTANCE,
+            f"nome ambiguo `{needle}`: corrisponde a {', '.join(sorted(prefix))}. "
+            f"Usa il nome per esteso.",
+        )
+    known = ", ".join(sorted(names)) if names else "nessuna"
+    raise NetError(
+        E_UNKNOWN_INSTANCE,
+        f"istanza sconosciuta: `{needle}`. Nel registry: {known}.",
+    )
+
+
+def check_accepts(name: str, entry: dict, verb: str) -> None:
+    accepts = entry.get("accepts")
+    if accepts is None:
+        raise NetError(
+            E_VERB_REFUSED,
+            f"`{name}` non dichiara il campo `accepts`: nessun verbo è ammesso. "
+            f"Aggiungi `accepts: [{verb}]` al registry se il destinatario lo consente.",
+        )
+    if verb not in accepts:
+        allowed = ", ".join(accepts) if accepts else "nessuno"
+        raise NetError(
+            E_VERB_REFUSED,
+            f"`{name}` non accetta il verbo `{verb}` (accetta: {allowed}).",
+        )
+
+
+def check_reachable(name: str, entry: dict) -> Path:
+    path = Path(entry["path"]).expanduser()
+    if not path.is_dir():
+        raise NetError(
+            E_DEAD_PATH,
+            f"il path di `{name}` non esiste più: {path}. "
+            f"Correggi il registry o rilancia `maestro-net scan`.",
+        )
+    mem = path / "bin" / "mem"
+    if not mem.is_file():
+        raise NetError(
+            E_DEAD_PATH,
+            f"`{name}` non ha bin/mem in {path}: non è (più) un'istanza Maestro.",
+        )
+    return path
+
+
+# --------------------------------------------------------------------------
+# Comandi
+# --------------------------------------------------------------------------
+
+def cmd_list(args) -> int:
+    registry, path = load_registry(args.registry)
+    instances: Dict[str, dict] = registry["instances"]
+
+    if args.json:
+        json.dump(
+            {
+                "version": registry["version"],
+                "registry": str(path),
+                "instances": {
+                    name: {
+                        "path": entry.get("path"),
+                        "domain": entry.get("domain"),
+                        "accepts": entry.get("accepts", []),
+                    }
+                    for name, entry in instances.items()
+                },
+            },
+            sys.stdout, ensure_ascii=False, indent=2,
+        )
+        print()
+        return OK
+
+    if not instances:
+        print(f"registry {path}: nessuna istanza registrata")
+        return OK
+
+    print(f"# {len(instances)} istanze — {path}\n")
+    for name, entry in instances.items():
+        accepts = ", ".join(entry.get("accepts", [])) or "nessun verbo"
+        alive = "" if Path(entry["path"]).expanduser().is_dir() else "  [path assente]"
+        print(f"- {name}  ({accepts}){alive}")
+        if entry.get("domain"):
+            print(f"    dominio: {entry['domain']}")
+        print(f"    path: {entry['path']}")
+    return OK
+
+
+def sender_name(registry: dict, explicit: Optional[str], cwd: str) -> Tuple[str, str]:
+    """Chi firma il recap, e perché quel nome. Il mittente non è mai implicito."""
+    if explicit:
+        return slugify_name(explicit) or explicit, "indicato con --from"
+    here = os.path.realpath(cwd)
+    for name, entry in registry["instances"].items():
+        try:
+            if os.path.realpath(Path(entry["path"]).expanduser()) == here:
+                return name, "istanza da cui parte il comando"
+        except OSError:
+            continue
+    return slugify_name(Path(cwd).name) or "ignoto", "nome della cartella corrente"
+
+
+def clean_env() -> Dict[str, str]:
+    """L'ambiente per il processo remoto.
+
+    MEM_DB via: se la sessione chiamante ne dichiara uno, `bin/mem` del
+    destinatario scriverebbe nel db del mittente. PWD via: resta quello
+    del chiamante e confonde chi lo legge.
+    """
+    return {k: v for k, v in os.environ.items() if k not in ("MEM_DB", "PWD")}
+
+
+def run_remote(name: str, verb: str, cmd: List[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            cmd, cwd=str(cwd), env=clean_env(),
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise NetError(E_REMOTE_FAILED, f"{verb} a `{name}`: nessuna risposta entro {timeout}s.")
+    except OSError as exc:
+        raise NetError(
+            E_REMOTE_FAILED,
+            f"{verb} a `{name}`: non riesco a eseguire `{cmd[0]}` ({exc}).",
+        )
+
+
+def cmd_recap(args) -> int:
+    registry, _ = load_registry(args.registry)
+    name, entry = resolve_instance(registry, args.instance)
+    check_accepts(name, entry, "recap")
+    path = check_reachable(name, entry)
+    sender, why = sender_name(registry, args.sender, os.getcwd())
+
+    tags = [f"from:{sender}"] + [t.strip() for t in (args.tags or "").split(",") if t.strip()]
+    cmd = [str(path / "bin" / "mem"), "save", args.text, "-t", ",".join(tags)]
+    if args.description:
+        cmd += ["-d", args.description]
+
+    if args.dry_run:
+        print(f"[dry-run] cwd {path}\n[dry-run] {' '.join(shlex.quote(c) for c in cmd)}")
+        return OK
+
+    proc = run_remote(name, "recap", cmd, path, args.timeout)
+    if proc.returncode != 0:
+        raise NetError(
+            E_REMOTE_FAILED,
+            f"recap a `{name}` fallito (bin/mem exit {proc.returncode}):\n"
+            f"{proc.stderr.strip() or proc.stdout.strip()}",
+        )
+
+    print(f"→ {name}: memoria scritta, taggata `from:{sender}` ({why}).")
+    out = proc.stdout.strip()
+    if out:
+        print(out)
+    return OK
+
+
+ASK_PREAMBLE = """\
+Domanda da `{sender}` via maestro-net.
+
+{question}
+
+Vincolo del canale: questa è una richiesta in sola lettura. Rispondi e basta.
+Non scrivere file, non toccare memories.db, non aprire o chiudere task, non
+usare MCP che modificano stato. Rispondi conciso e senza preamboli.\
+"""
+
+
+def cmd_ask(args) -> int:
+    registry, _ = load_registry(args.registry)
+    name, entry = resolve_instance(registry, args.instance)
+    check_accepts(name, entry, "ask")
+    path = check_reachable(name, entry)
+    sender, _why = sender_name(registry, args.sender, os.getcwd())
+
+    prompt = ASK_PREAMBLE.format(sender=sender, question=args.question)
+    cmd = ["claude", "-p", prompt]
+
+    if args.dry_run:
+        print(f"[dry-run] cwd {path}\n[dry-run] {' '.join(shlex.quote(c) for c in cmd)}")
+        return OK
+
+    proc = run_remote(name, "ask", cmd, path, args.timeout)
+    if proc.returncode != 0:
+        raise NetError(
+            E_REMOTE_FAILED,
+            f"ask a `{name}` fallito (claude exit {proc.returncode}):\n"
+            f"{proc.stderr.strip() or proc.stdout.strip()}",
+        )
+
+    print(f"— {name} risponde:\n")
+    print(proc.stdout.strip())
+    return OK
+
+
+# --------------------------------------------------------------------------
+# Scanner
+#
+# I path delle istanze non stanno da nessuna parte in forma leggibile: le
+# directory di ~/.claude/projects/ sono slug ambigui (`-` sostituisce `/`,
+# `.` e gli spazi). Il cwd vero sta dentro i transcript, quindi lo scanner
+# legge quello e tiene le directory che hanno private/preferences.md più
+# bin/mem, cioè la firma di un'istanza Maestro operativa.
+# --------------------------------------------------------------------------
+
+IDENTITY_HEADING = re.compile(r"^#{1,6}\s+identit", re.IGNORECASE)
+IDENTITY_NAME = re.compile(r"^\s*[-*]\s*\*{0,2}(?:name|nome)\*{0,2}\s*:\s*(.+?)\s*$", re.IGNORECASE)
+
+
+def first_cwd(transcript: Path) -> Optional[str]:
+    """Primo `cwd` dichiarato in un transcript jsonl."""
+    try:
+        with transcript.open(encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh):
+                if i > 200:
+                    break
+                if '"cwd"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("cwd"):
+                    return rec["cwd"]
+    except OSError:
+        return None
+    return None
+
+
+def read_identity_name(prefs: Path) -> Optional[str]:
+    """Nome dell'orchestratore dal blocco Identity, tollerante al grassetto."""
+    try:
+        lines = prefs.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    inside = False
+    for line in lines:
+        if line.startswith("#"):
+            inside = bool(IDENTITY_HEADING.match(line))
+            continue
+        if not inside:
+            continue
+        m = IDENTITY_NAME.match(line)
+        if m:
+            return m.group(1)
+    return None
+
+
+def slugify_name(raw: str) -> str:
+    """`**Alfred** — il maggiordomo` → `alfred`. Stringa vuota se non resta nulla.
+
+    Il trattino ASCII non è un separatore: fa parte di nomi legittimi, di
+    persona (`Jean-Luc`) e di cartella (`mio-progetto`).
+    """
+    head = re.split(r"[—–,:(]", raw.strip(), maxsplit=1)[0]
+    return re.sub(r"[^a-z0-9]+", "-", head.strip().lower()).strip("-")
+
+
+def scan_instances(projects_root: Path) -> Tuple[List[dict], List[str]]:
+    """Censisce le istanze. Ritorna (istanze, note) — le note vanno all'owner."""
+    if not projects_root.is_dir():
+        raise NetError(
+            E_USAGE,
+            f"la root dei progetti non esiste: {projects_root}. "
+            f"Indicane un'altra con CLAUDE_PROJECTS_ROOT.",
+        )
+
+    seen: Dict[str, str] = {}
+    for d in sorted(projects_root.iterdir()):
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.jsonl")):
+            cwd = first_cwd(f)
+            if not cwd:
+                continue
+            key = os.path.realpath(cwd)
+            seen.setdefault(key, cwd)
+            break
+
+    notes: List[str] = []
+    found: List[dict] = []
+    for key in sorted(seen):
+        cwd = seen[key]
+        path = Path(cwd)
+        prefs = path / "private" / "preferences.md"
+        if not prefs.is_file() or not (path / "bin" / "mem").is_file():
+            continue
+        raw = read_identity_name(prefs)
+        name = slugify_name(raw) if raw else ""
+        if not name:
+            name = slugify_name(path.name) or "istanza"
+            notes.append(
+                f"`{name}` ({cwd}): nome non leggibile dal blocco Identity, "
+                f"ho usato il nome della cartella — da confermare a mano."
+            )
+        found.append({"name": name, "path": cwd})
+
+    taken: Dict[str, int] = {}
+    for entry in found:
+        base = entry["name"]
+        if base in taken:
+            taken[base] += 1
+            entry["name"] = f"{base}-{taken[base]}"
+            notes.append(
+                f"omonimia su `{base}`: la seconda istanza è entrata come "
+                f"`{entry['name']}` ({entry['path']}) — rinominala se preferisci."
+            )
+        else:
+            taken[base] = 1
+
+    found.sort(key=lambda e: e["name"])
+    return found, notes
+
+
+def render_registry(instances: List[dict], accepts: List[str]) -> str:
+    lines = [
+        "# maestro-net — registry delle istanze Maestro.",
+        "# Generato da `maestro-net scan`. Due campi restano all'owner:",
+        "#   domain  — a cosa serve l'istanza, usato per il routing quando il",
+        "#             destinatario non è nominato esplicitamente.",
+        f"#   accepts — i verbi che l'istanza ammette, fra: {', '.join(VERBS)}.",
+        "version: 1",
+        "instances:",
+    ]
+    if not instances:
+        lines.append("  # nessuna istanza censita")
+    for entry in instances:
+        path = entry["path"]
+        if '"' in path:
+            raise NetError(E_USAGE, f"path con virgolette, non rappresentabile: {path}")
+        rendered = f'"{path}"' if re.search(r"[\s:#\[\]{}]", path) else path
+        lines.append(f"  {entry['name']}:")
+        lines.append(f"    path: {rendered}")
+        lines.append('    domain: ""')
+        lines.append(f"    accepts: [{', '.join(accepts)}]")
+    return "\n".join(lines) + "\n"
+
+
+def cmd_scan(args) -> int:
+    accepts = [v.strip() for v in args.accepts.split(",") if v.strip()]
+    for verb in accepts:
+        if verb not in VERBS:
+            raise NetError(E_USAGE, f"verbo sconosciuto in --accepts: `{verb}` (ammessi: {', '.join(VERBS)})")
+
+    instances, notes = scan_instances(PROJECTS_ROOT)
+    text = render_registry(instances, accepts)
+
+    for note in notes:
+        print(f"maestro-net: {note}", file=sys.stderr)
+
+    if not instances:
+        print(
+            f"maestro-net: nessuna istanza Maestro trovata sotto {PROJECTS_ROOT} "
+            f"(cerco directory con private/preferences.md e bin/mem).",
+            file=sys.stderr,
+        )
+
+    if not args.write:
+        sys.stdout.write(text)
+        if instances:
+            print(
+                f"maestro-net: {len(instances)} istanze censite. "
+                f"Compila `domain`, rivedi `accepts`, poi scrivi con --write.",
+                file=sys.stderr,
+            )
+        return OK
+
+    if not instances:
+        print("maestro-net: non scrivo un registry vuoto.", file=sys.stderr)
+        return OK
+
+    dest = registry_path(args.registry)
+    if dest.exists() and not args.force:
+        print(
+            f"maestro-net: {dest} esiste già. Ripeti con --force per sovrascriverlo, "
+            f"oppure fondi a mano le righe nuove.",
+            file=sys.stderr,
+        )
+        return E_USAGE
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text, encoding="utf-8")
+    print(f"maestro-net: registry scritto in {dest} — {len(instances)} istanze.")
+    return OK
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="maestro-net",
+        description="Cross-talk fra istanze Maestro: recap e ask.",
+        epilog=(
+            "Il canale trasporta memorie, non permessi: nessun verbo tocca file, "
+            "MCP o task di un'altra istanza.\n"
+            "Exit code: 0 fatto, 2 uso, 3 registry assente, 4 registry malformato, "
+            "5 istanza sconosciuta o ambigua, 6 verbo non ammesso, 7 path non valido, "
+            "8 comando remoto fallito."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--registry", help="path del registry (default: ~/.claude/maestro-instances.yaml)")
+    sub = p.add_subparsers(dest="verb")
+
+    sp = sub.add_parser("list", help="Elenca le istanze registrate")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_list)
+
+    sp = sub.add_parser("recap", help="Scrive una memoria nel db di un'altra istanza")
+    sp.add_argument("instance")
+    sp.add_argument("text", help="il titolo della memoria")
+    sp.add_argument("-d", "--description", help="contesto lungo, opzionale")
+    sp.add_argument("-t", "--tags", help="tag aggiuntivi, separati da virgola (from:<mittente> è automatico)")
+    sp.add_argument("--from", dest="sender", help="nome del mittente (default: istanza corrente o cartella)")
+    sp.add_argument("--timeout", type=int, default=30, help="secondi di attesa (default: 30)")
+    sp.add_argument("--dry-run", action="store_true")
+    sp.set_defaults(func=cmd_recap)
+
+    sp = sub.add_parser("ask", help="Interroga un'altra istanza in headless")
+    sp.add_argument("instance")
+    sp.add_argument("question")
+    sp.add_argument("--from", dest="sender", help="nome del mittente (default: istanza corrente o cartella)")
+    sp.add_argument("--timeout", type=int, default=180, help="secondi di attesa (default: 180)")
+    sp.add_argument("--dry-run", action="store_true")
+    sp.set_defaults(func=cmd_ask)
+
+    sp = sub.add_parser("scan", help="Censisce le istanze Maestro sul disco")
+    sp.add_argument("--write", action="store_true", help="scrive il registry invece di stamparlo")
+    sp.add_argument("--force", action="store_true", help="sovrascrive un registry esistente")
+    sp.add_argument("--accepts", default=",".join(VERBS),
+                    help=f"verbi proposti per ogni istanza (default: {','.join(VERBS)})")
+    sp.set_defaults(func=cmd_scan)
+
+    return p
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not args.verb:
+        parser.print_usage(sys.stderr)
+        print("maestro-net: serve un verbo (list, recap, ask, scan)", file=sys.stderr)
+        return E_USAGE
+    try:
+        return args.func(args)
+    except NetError as exc:
+        print(f"maestro-net: {exc}", file=sys.stderr)
+        return exc.code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
