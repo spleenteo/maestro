@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.08.14.1
+maestro_version: v2026.09.05.1
 ---
 
 # Orchestrator
@@ -189,6 +189,19 @@ Your memory is a SQLite database at `private/memories.db` — the engine of the 
 - **task** — `status` ∈ {`todo`, `in_progress`, `done`, `cancelled`}, optional `due_date`, `priority` ∈ {`low`, `normal`, `high`}
 - **idea** — `status` ∈ {`open`, `done`, `dismissed`}
 
+### Idea or task
+
+Both types describe something that hasn't happened yet. What separates them is what's still missing:
+
+- **idea** — a question is still open: whether to do it at all, what shape it should take, which of several roads to take.
+- **task** — the question is settled, and only the execution is left, however far off that execution sits.
+
+A task with no date is still a task, and it belongs in the owner's task manager, in whatever "not now" bucket that tool offers, where the owner meets it while planning. Undated work kept in `memories.db` stays invisible to the place where work actually gets picked up, and it inflates the idea count until the real ideas stop being legible.
+
+When an idea's question closes, convert it: create the task in the task manager, then mark the idea `dismissed` with the new task's id written into the description, so the trail survives. The same logic applies when a batch of ideas turns out to be issues of a code repository — they go to that repository's backlog, with a memory recording where they went.
+
+Review the open ideas periodically. Each survivor should carry either the decision it's waiting for (tag `workbench`) or the condition that will wake it up (tag `dormant`).
+
 ### Proactive triggers
 
 Write to the db **proactively**, without waiting to be asked, when you detect:
@@ -248,6 +261,8 @@ If the machine has Ollama + uv installed, `bin/mem` exposes a semantic layer ove
 - **Announce every write, always** — never silent.
 - **Tags are multi-dimensional** — a row should be retrievable from any relevant angle.
 - **In doubt, ask** — if an event feels too small, or is ambiguous between task and idea, ask briefly instead of polluting the log or missing an entry.
+- **`idea-<id>` links a child to its parent** — a task born from an idea carries the tag `idea-<id>` (or the task manager's equivalent reference field), so an initiative can be reconstructed from either end.
+- **Ideas are not a parking lot** — an open idea older than three months either carries a live question, or it has already become a task somewhere else. Check which, and act.
 - **The db is the sole source for reports** — to cross with external sources (task manager, calendar, Basecamp), ask before consulting them.
 
 ## Preferences evolution

@@ -8,6 +8,28 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.09.05.1 — 2026-09-05
+
+**Theme**: `memories.db` learns to tell an **idea** from a **task**, and to stop hoarding. The two types have always been in the schema, but nothing said where the line falls, so undated work piled up as open ideas: things already decided, waiting only for a free afternoon, sitting in the one place the owner never looks while planning. The rule that closes the gap came from an instance owner during a backlog triage that took 56 open ideas down to 20.
+
+### Added
+
+- **`### Idea or task` in the Memory section of `CLAUDE.md`** — the criterion (an idea still holds an open question, a task holds only its execution), the corollary (a task with no date is still a task, and lives in the owner's task manager, not in `memories.db`), the conversion procedure (create the task, mark the idea `dismissed`, write the new id into the description so the trail survives), and the periodic review, where every surviving idea carries either the decision it waits for or the condition that wakes it up.
+
+### Changed
+
+- **`### Rules`** gains two lines: the `idea-<id>` convention that links a task to the idea that generated it, so an initiative can be read from either end; and the three-month check on open ideas, which either carry a live question or have already become a task elsewhere.
+
+### Why
+
+An idea backlog that grows without pruning stops being a backlog and becomes an archive: the owner scrolls past the same fifty rows and reads none of them. The decided work is the part that pollutes the most, because it looks like thinking while it's really just waiting. Sending it to the task manager empties the list of everything that has no question left in it, and what remains is short enough to be read in one pass.
+
+### Migration
+
+Nothing breaks: the schema is unchanged and existing rows stay valid. On the first sync, instances should run one pass over their open ideas and split them, moving anything already decided into their own task manager (with a reference back to the source id), and tagging what stays with its pending decision or its wake-up condition. Instances with no external task manager keep those rows as `task` with `status: todo` and no `due_date`.
+
+---
+
 ## v2026.08.26.2 — 2026-08-26
 
 **Theme**: **maestro-net**, the cross-talk channel between an owner's Maestro instances. An owner living in several contexts runs several instances, each with its own memory and its own domain, and the separation holds until something learned in one belongs in another. Two verbs cross that gap, `recap` and `ask`, under one constraint: the channel carries memories, never permissions.
