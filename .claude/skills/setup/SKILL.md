@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.04.30.1
+maestro_version: v2026.09.10.1
 name: setup
 description: Interactive first-launch setup for a new orchestrator instance. Asks the owner a short series of questions, writes `private/preferences.md`, initializes `private/memories.db`, and self-disables. Invoked automatically when `private/preferences.md` is missing or has `setup_completed: false`.
 ---
@@ -249,6 +249,29 @@ Read the script's stdout to confirm each step. Announce the first memory write t
 ```
 
 If the script exits non-zero, surface its stderr to the owner and stop — don't attempt to patch partial state by hand. The script refuses to overwrite an existing `private/preferences.md`, so a failed run can be re-attempted after fixing the cause.
+
+## Optional machine dependencies
+
+Some skills need a tool on the machine that Maestro cannot install for the
+owner. Check what is present, report what is missing, and install nothing.
+
+Run the checks in one Bash call and read the results:
+
+```bash
+command -v yap swiftc >/dev/null 2>&1; sw_vers -productVersion
+```
+
+| Skill | Needs | Install | Without it |
+|---|---|---|---|
+| `listen` | `yap` | `brew install yap` | no live call transcription at all |
+| `listen` | macOS 26 or later | — | `yap` will not run |
+| `listen` | `swiftc` (Xcode Command Line Tools) | `xcode-select --install` | captures still work, but stop surviving a change of audio input device |
+
+Report the outcome in one line per missing item, in the owner's language, with
+the command that installs it. Then move on: a missing optional dependency never
+blocks the setup, and the skill that needs it says so again when invoked.
+
+Skip the whole section silently when nothing is missing.
 
 ## Introduce yourself (with a recap of created files)
 

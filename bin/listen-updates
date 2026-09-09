@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+# origin: maestro
+# maestro_version: v2026.09.10.1
+"""listen-updates — one line every time the running capture produces new speech.
+
+Run as a background monitor while `bin/listen` is capturing. Each line on stdout
+wakes the orchestrator, which then reads only the new part and comments on it.
+Exits on its own when the capture stops, so it never outlives the call.
+
+Usage: bin/listen-updates [minutes]     (default: 10)
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+LISTEN = str(Path(__file__).resolve().parent / "listen")
+DEFAULT_MINUTES = 10.0
+
+
+def status() -> dict | None:
+    try:
+        out = subprocess.run([LISTEN, "status"], capture_output=True, text=True, timeout=20)
+        return json.loads(out.stdout)
+    except (subprocess.SubprocessError, json.JSONDecodeError, OSError):
+        return None
+
+
+def main() -> None:
+    minutes = DEFAULT_MINUTES
+    if len(sys.argv) > 1:
+        try:
+            minutes = max(1.0, float(sys.argv[1]))
+        except ValueError:
+            print(f"unusable interval: {sys.argv[1]}", flush=True)
+            return
+    interval = minutes * 60
+    seen = 0
+    while True:
+        time.sleep(interval)
+        state = status()
+        if state is None:
+            print("ERROR: capture state unreadable", flush=True)
+            continue
+        if not state.get("running"):
+            print("CAPTURE CLOSED", flush=True)
+            return
+        count = int(state.get("cues_deduped", 0))
+        if count > seen:
+            print(f"UPDATE: {count - seen} new exchanges, {count} total", flush=True)
+            seen = count
+
+
+if __name__ == "__main__":
+    main()

@@ -8,6 +8,34 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.09.10.1 — 2026-09-10
+
+**Theme**: the orchestrator learns to **listen to a call while it is happening**. Meeting tools transcribe and hand back a summary once everyone has hung up, which is the moment the transcript stops being useful for the conversation itself. The `listen` skill keeps a transcript growing on disk, so the owner can ask what was already said, what a name was, whether a topic from their own list has come up yet, while they are still in a position to act on the answer. Everything runs on the machine: nothing is uploaded, and no bot joins the call.
+
+### Added
+
+- **`.claude/skills/listen/SKILL.md`** — the skill. Opens a capture, works out what the call is from calendar, memory and vault instead of asking, answers in two or three lines while the owner is talking, and on close proposes where to file a note plus the transcript. Automatic updates exist but stay off until asked for during the call, and they are worth sending only when they name something the owner can still act on: a topic untouched, a number mentioned once, a contradiction with what was said earlier.
+- **`bin/listen`** — the capture. A machine-wide lock, so a second `/listen` from another instance is refused with the details of the one already running. A capture is a **sequence of segments**, each one a `yap` run with its own file and a known offset, merged back into one timeline on read.
+- **`bin/audiowatch.swift`** — a CoreAudio listener on the default input device, built on first use. It notifies by callback, so it costs nothing while idle.
+- **`bin/listen-updates`** — the monitor behind the automatic updates. Emits one line per block of new speech and exits on its own when the capture stops.
+- **`## Optional machine dependencies` in the `setup` skill** — a check for the tools an optional skill needs (`yap`, macOS 26, `swiftc`), reporting what is missing and the command that installs it. It installs nothing and never blocks the setup.
+
+### Why
+
+Two failures found on the first real call, both silent, both fixed here.
+
+`yap` binds to the input device it finds at launch. Plugging in headphones mid-call switches the system default, `yap` stays on the old device, and the microphone channel dies with no error: ten minutes of the owner's own voice vanished from a transcript that looked healthy. The segment model exists for this. When the input device changes, the supervisor closes the segment, opens a new one on the new device, and records the offset; the owner sees continuous timestamps and one transcript.
+
+The second is acoustic. Without headphones the far side's voice leaves the speakers and re-enters the microphone, so the same words land on both channels and half the lines end up attributed to the wrong person. Meet and Zoom cancel this because they know the signal they are playing; a tool that opens the microphone from outside receives it already mixed. `bin/listen` drops what it can with two rules tuned on a real call, and the attribution is settled by reading the raw two-channel transcript at close, where judgment beats a similarity ratio: the two channels segment the same words differently, so one channel's cue is often a fragment of the other's, which no comparison can pair.
+
+### Migration
+
+Nothing breaks and nothing is required. Instances that sync in get the skill, and it stops with a clear message when `yap` is missing rather than improvising a fallback. `swiftc` is the only soft dependency: without it captures still run, with a single segment and no rotation, and `status` says `rotation: off`.
+
+Two things to tell the owner rather than let them assume. macOS shows no persistent indicator for system-audio capture, and the microphone dot only appears when the microphone is part of the capture, so telling the other party is on them. And each segment boundary drops a second or two, the time of the restart.
+
+---
+
 ## v2026.09.05.1 — 2026-09-05
 
 **Theme**: `memories.db` learns to tell an **idea** from a **task**, and to stop hoarding. The two types have always been in the schema, but nothing said where the line falls, so undated work piled up as open ideas: things already decided, waiting only for a free afternoon, sitting in the one place the owner never looks while planning. The rule that closes the gap came from an instance owner during a backlog triage that took 56 open ideas down to 20.

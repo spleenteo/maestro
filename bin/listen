@@ -1,0 +1,670 @@
+#!/usr/bin/env python3
+# origin: maestro
+# maestro_version: v2026.09.10.1
+"""listen — live capture of a call through `yap`, for the orchestrator.
+
+A capture is a sequence of **segments**. Each segment is one `yap` run with its
+own VTT file and a known offset from the start of the call, so that changing the
+audio input device mid-call costs a restart the owner never sees instead of a
+dead microphone channel. Reads merge the segments back into one timeline.
+
+A detached supervisor owns the segments: it starts the first one, watches the
+default input device through `audiowatch`, and rotates when the device changes.
+Without `swiftc` the supervisor still runs, with a single segment and no
+rotation.
+
+Holds one capture at a time on the machine (machine-wide lock in
+~/.local/state/listen/), outside every worktree and outside the vault.
+
+Subcommands: start, status, stop, text.
+Output: JSON when piped, readable text on a terminal.
+"""
+
+from __future__ import annotations
+
+import argparse
+import difflib
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+STATE_DIR = Path.home() / ".local" / "state" / "listen"
+STATE_FILE = STATE_DIR / "current.json"
+TRANSCRIPT_DIR = STATE_DIR / "transcripts"
+BIN_DIR = STATE_DIR / "bin"
+
+EXIT_BUSY = 3
+EXIT_MISSING_DEP = 4
+EXIT_NOT_RUNNING = 5
+
+EMPTY_WORDS = 30
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+
+def emit(payload: dict[str, Any], human: str) -> None:
+    if sys.stdout.isatty():
+        print(human)
+    else:
+        print(json.dumps(payload, ensure_ascii=False))
+
+
+def fail(message: str, code: int, **extra: Any) -> None:
+    payload = {"ok": False, "error": message, **extra}
+    if sys.stdout.isatty():
+        print(f"error: {message}", file=sys.stderr)
+    else:
+        print(json.dumps(payload, ensure_ascii=False))
+    sys.exit(code)
+
+
+# ---------------------------------------------------------------------------
+# State
+# ---------------------------------------------------------------------------
+
+
+def load_state() -> dict[str, Any] | None:
+    if not STATE_FILE.exists():
+        return None
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def save_state(state: dict[str, Any]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2))
+    tmp.replace(STATE_FILE)
+
+
+def clear_state() -> None:
+    STATE_FILE.unlink(missing_ok=True)
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+    return True
+
+
+def active_state() -> dict[str, Any] | None:
+    """State only when the supervisor is alive. Clears orphan locks."""
+    state = load_state()
+    if state is None:
+        return None
+    if not pid_alive(int(state.get("supervisor_pid", -1))):
+        clear_state()
+        return None
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
+
+
+def instance_name() -> str:
+    """Name of the instance holding the lock.
+
+    Inside an ephemeral worktree (`<instance>/.claude/worktrees/<name>`) the
+    current directory is named after the worktree: walk up to the real instance
+    so the "already running" message stays readable.
+    """
+    cwd = Path.cwd().resolve()
+    parts = cwd.parts
+    for i in range(len(parts) - 2):
+        if parts[i] == ".claude" and parts[i + 1] == "worktrees":
+            return parts[i - 1] if i > 0 else cwd.name
+    return cwd.name
+
+
+def macos_major() -> int:
+    try:
+        out = subprocess.run(
+            ["sw_vers", "-productVersion"], capture_output=True, text=True, check=True
+        )
+        return int(out.stdout.strip().split(".")[0])
+    except (subprocess.CalledProcessError, ValueError, FileNotFoundError):
+        return 0
+
+
+def preflight() -> str:
+    yap = shutil.which("yap")
+    if yap is None:
+        fail(
+            "yap is not installed. Install it with: brew install yap",
+            EXIT_MISSING_DEP,
+            dependency="yap",
+        )
+    major = macos_major()
+    if major and major < 26:
+        fail(
+            f"yap needs macOS 26 or later, this machine is on {major}",
+            EXIT_MISSING_DEP,
+            dependency="macos>=26",
+        )
+    return yap
+
+
+def ensure_audiowatch() -> Path | None:
+    """Build the input-device watcher on first use. None when unavailable.
+
+    Its absence costs rotation, never the capture: the supervisor falls back to
+    a single segment.
+    """
+    src = Path(__file__).resolve().parent / "audiowatch.swift"
+    if not src.exists():
+        return None
+    binary = BIN_DIR / "audiowatch"
+    try:
+        if binary.exists() and binary.stat().st_mtime >= src.stat().st_mtime:
+            return binary
+    except OSError:
+        pass
+    swiftc = shutil.which("swiftc")
+    if swiftc is None:
+        return None
+    BIN_DIR.mkdir(parents=True, exist_ok=True)
+    built = subprocess.run(
+        [swiftc, "-O", str(src), "-o", str(binary)], capture_output=True, text=True
+    )
+    if built.returncode != 0 or not binary.exists():
+        return None
+    return binary
+
+
+# ---------------------------------------------------------------------------
+# VTT parsing
+# ---------------------------------------------------------------------------
+
+TIMING = re.compile(
+    r"(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s+-->\s+(\d{2}):(\d{2}):(\d{2})\.(\d{3})"
+)
+VOICE = re.compile(r"^<v\s+([^>]+)>(.*)$", re.DOTALL)
+NORMALIZE = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def _seconds(h: str, m: str, s: str, ms: str) -> float:
+    return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
+
+
+def parse_vtt(path: Path, offset: float = 0.0) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    cues: list[dict[str, Any]] = []
+    for block in path.read_text(errors="replace").split("\n\n"):
+        lines = [ln for ln in block.strip().splitlines() if ln.strip()]
+        if not lines:
+            continue
+        timing_at = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
+        if timing_at is None:
+            continue
+        match = TIMING.search(lines[timing_at])
+        if match is None:
+            continue
+        g = match.groups()
+        body = " ".join(lines[timing_at + 1 :]).strip()
+        speaker = ""
+        voice = VOICE.match(body)
+        if voice:
+            speaker = voice.group(1).strip()
+            body = voice.group(2).strip()
+        if not body:
+            continue
+        cues.append(
+            {
+                "start": _seconds(*g[:4]) + offset,
+                "end": _seconds(*g[4:]) + offset,
+                "speaker": speaker,
+                "text": body,
+            }
+        )
+    return cues
+
+
+def read_cues(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """All segments merged into one timeline."""
+    cues: list[dict[str, Any]] = []
+    for seg in state.get("segments", []):
+        cues.extend(parse_vtt(Path(seg["file"]), float(seg.get("offset", 0.0))))
+    cues.sort(key=lambda c: c["start"])
+    return cues
+
+
+def _norm(text: str) -> str:
+    return NORMALIZE.sub("", text.lower()).strip()
+
+
+def dedupe(
+    cues: list[dict[str, Any]],
+    mic_label: str,
+    lo: float = -0.5,
+    hi: float = 2.5,
+    ratio: float = 0.60,
+    overlap_frac: float = 0.9,
+) -> list[dict[str, Any]]:
+    """Drop the microphone's echo of the far side.
+
+    Without headphones the other party's voice leaves the speakers and re-enters
+    the microphone, so the same words land on both channels. The copy to discard
+    is the microphone one: keeping it would attribute the other party's words to
+    the owner.
+
+    Two rules, applied together, both tuned on a real call:
+
+    - text: a system cue starting shortly before (an echo never precedes its
+      original) whose wording is similar enough;
+    - time: a microphone cue sitting almost entirely inside the far side's
+      speech, which catches echoes the two channels transcribed too differently
+      to pair by text.
+    """
+    if not mic_label:
+        return cues
+    system_cues = [c for c in cues if c["speaker"] != mic_label]
+    if not system_cues:
+        return cues
+
+    def covered(cue: dict[str, Any]) -> float:
+        duration = max(0.01, cue["end"] - cue["start"])
+        total = sum(
+            max(0.0, min(cue["end"], o["end"]) - max(cue["start"], o["start"]))
+            for o in system_cues
+        )
+        return total / duration
+
+    kept: list[dict[str, Any]] = []
+    for cue in cues:
+        if cue["speaker"] != mic_label:
+            kept.append(cue)
+            continue
+        needle = _norm(cue["text"])
+        echo = False
+        for other in system_cues:
+            offset = cue["start"] - other["start"]
+            if not (lo <= offset <= hi):
+                continue
+            if difflib.SequenceMatcher(None, needle, _norm(other["text"])).ratio() >= ratio:
+                echo = True
+                break
+        if not echo and covered(cue) >= overlap_frac:
+            echo = True
+        if not echo:
+            kept.append(cue)
+    return kept
+
+
+def clock(seconds: float) -> str:
+    return f"{int(seconds) // 60:02d}:{int(seconds) % 60:02d}"
+
+
+# ---------------------------------------------------------------------------
+# Segments (supervisor side)
+# ---------------------------------------------------------------------------
+
+
+def spawn_yap(state: dict[str, Any], index: int) -> tuple[subprocess.Popen, Path, Path]:
+    yap = shutil.which("yap") or "yap"
+    stem = f"{state['stem']}-{index:02d}"
+    transcript = TRANSCRIPT_DIR / f"{stem}.vtt"
+    errlog = TRANSCRIPT_DIR / f"{stem}.err"
+    mode = "listen" if state.get("them_only") else "listen-and-dictate"
+    cmd = [
+        yap, mode, "--vtt",
+        "--locale", state["locale"],
+        "--max-length", str(state["max_length"]),
+    ]
+    if not state.get("them_only"):
+        cmd += ["--mic-label", state["mic_label"], "--system-label", state["system_label"]]
+    proc = subprocess.Popen(
+        cmd,
+        stdout=transcript.open("w"),
+        stderr=errlog.open("w"),
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return proc, transcript, errlog
+
+
+def stop_pid(pid: int, grace: float = 2.0) -> None:
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        if not pid_alive(pid):
+            return
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            return
+        deadline = time.time() + grace
+        while time.time() < deadline and pid_alive(pid):
+            time.sleep(0.1)
+
+
+def cmd_supervise(args: argparse.Namespace) -> None:
+    """Detached owner of the segments. Never called by hand."""
+    state = load_state()
+    if state is None:
+        return
+    call_start = time.time()
+    watcher_bin = ensure_audiowatch()
+    current: dict[str, Any] = {}
+
+    def open_segment(device: str) -> None:
+        nonlocal current
+        index = len(state["segments"]) + 1
+        proc, transcript, errlog = spawn_yap(state, index)
+        offset = 0.0 if index == 1 else round(time.time() - call_start, 2)
+        current = {"proc": proc}
+        state["segments"].append(
+            {
+                "file": str(transcript),
+                "errlog": str(errlog),
+                "offset": offset,
+                "started_at": datetime.now().isoformat(timespec="seconds"),
+                "device": device,
+                "pid": proc.pid,
+            }
+        )
+        save_state(state)
+
+    def close_segment() -> None:
+        proc = current.get("proc")
+        if proc is not None and proc.poll() is None:
+            stop_pid(proc.pid)
+
+    def shutdown(signum=None, frame=None):
+        close_segment()
+        watcher = current.get("watcher")
+        if watcher is not None and watcher.poll() is None:
+            stop_pid(watcher.pid, grace=1.0)
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
+
+    if watcher_bin is None:
+        state["rotation"] = "off: audiowatch unavailable"
+        open_segment("unknown")
+        while True:
+            time.sleep(3600)
+
+    state["rotation"] = "on"
+    watcher = subprocess.Popen(
+        [str(watcher_bin)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+    )
+    current["watcher"] = watcher
+    opened = False
+    # readline(), never `for line in`: iterating a pipe uses a read-ahead buffer
+    # that can hold a device-change event until the next one arrives.
+    while True:
+        line = watcher.stdout.readline()
+        if not line:
+            break
+        parts = line.strip().split("\t")
+        if len(parts) < 3:
+            continue
+        kind, _device_id, device = parts[0], parts[1], parts[2]
+        if kind == "start" and not opened:
+            open_segment(device)
+            opened = True
+        elif kind == "change" and opened:
+            close_segment()
+            open_segment(device)
+    shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+
+def cmd_start(args: argparse.Namespace) -> None:
+    preflight()
+    running = active_state()
+    if running is not None:
+        started = datetime.fromisoformat(running["started_at"])
+        fail(
+            "a capture has been running since {} (started by {}), {} segment(s) so far".format(
+                started.strftime("%H:%M"),
+                running.get("instance", "?"),
+                len(running.get("segments", [])),
+            ),
+            EXIT_BUSY,
+            already_running=running,
+        )
+
+    TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
+    now = datetime.now()
+    stem = now.strftime("%Y-%m-%d-%H%M")
+    if args.title:
+        slug = re.sub(r"[^\w]+", "-", args.title.lower()).strip("-")[:60]
+        stem = f"{stem}-{slug}"
+
+    state = {
+        "supervisor_pid": 0,
+        "started_at": now.isoformat(timespec="seconds"),
+        "stem": stem,
+        "locale": args.locale,
+        "mic_label": "" if args.them_only else args.mic_label,
+        "system_label": args.system_label,
+        "them_only": bool(args.them_only),
+        "max_length": args.max_length,
+        "title": args.title or "",
+        "context": args.context or "",
+        "instance": instance_name(),
+        "rotation": "pending",
+        "segments": [],
+    }
+    save_state(state)
+
+    supervisor_log = TRANSCRIPT_DIR / f"{stem}-supervisor.log"
+    proc = subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "_supervise"],
+        stdout=supervisor_log.open("w"),
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    state["supervisor_pid"] = proc.pid
+    save_state(state)
+
+    deadline = time.time() + 6.0
+    while time.time() < deadline:
+        time.sleep(0.3)
+        fresh = load_state() or {}
+        if fresh.get("segments"):
+            state = fresh
+            state["supervisor_pid"] = proc.pid
+            save_state(state)
+            break
+    else:
+        stop_pid(proc.pid, grace=1.0)
+        clear_state()
+        detail = supervisor_log.read_text(errors="replace").strip() or "no detail"
+        fail(f"the capture did not open: {detail}", EXIT_MISSING_DEP)
+
+    seg = state["segments"][0]
+    shape = "far side only" if args.them_only else "both channels"
+    emit(
+        {"ok": True, **state},
+        "listening ({}, locale {}, rotation {})\ninput: {}\ntranscript: {}".format(
+            shape, args.locale, state.get("rotation"), seg.get("device"), seg["file"]
+        ),
+    )
+
+
+def _snapshot(state: dict[str, Any]) -> tuple[list, list]:
+    cues = read_cues(state)
+    return cues, dedupe(cues, state.get("mic_label", ""))
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    state = active_state()
+    if state is None:
+        emit({"ok": True, "running": False}, "no capture running")
+        return
+    cues, clean = _snapshot(state)
+    started = datetime.fromisoformat(state["started_at"])
+    elapsed = int((datetime.now() - started).total_seconds())
+    last = clean[-1]["text"] if clean else ""
+    segments = state.get("segments", [])
+    payload = {
+        "ok": True,
+        "running": True,
+        "supervisor_pid": state["supervisor_pid"],
+        "started_at": state["started_at"],
+        "elapsed_seconds": elapsed,
+        "locale": state["locale"],
+        "them_only": state.get("them_only", False),
+        "context": state.get("context", ""),
+        "rotation": state.get("rotation", "unknown"),
+        "segments": len(segments),
+        "current_device": segments[-1].get("device") if segments else None,
+        "cues": len(cues),
+        "cues_deduped": len(clean),
+        "last_text": last,
+    }
+    emit(
+        payload,
+        "running for {} ({} cues, {} after de-echo, {} segment(s))\nlast: {}".format(
+            clock(elapsed), len(cues), len(clean), len(segments), last or "(silence)"
+        ),
+    )
+
+
+def cmd_stop(args: argparse.Namespace) -> None:
+    state = active_state()
+    if state is None:
+        fail("no capture to stop", EXIT_NOT_RUNNING, running=False)
+    stop_pid(int(state["supervisor_pid"]), grace=4.0)
+    state = load_state() or state
+    cues, clean = _snapshot(state)
+    started = datetime.fromisoformat(state["started_at"])
+    elapsed = int((datetime.now() - started).total_seconds())
+    clear_state()
+    speakers = sorted({c["speaker"] for c in clean if c["speaker"]})
+    words = sum(len(c["text"].split()) for c in clean)
+    segments = state.get("segments", [])
+    payload = {
+        "ok": True,
+        "running": False,
+        "segments": [
+            {"file": s["file"], "offset": s["offset"], "device": s.get("device")}
+            for s in segments
+        ],
+        "started_at": state["started_at"],
+        "elapsed_seconds": elapsed,
+        "cues": len(cues),
+        "cues_deduped": len(clean),
+        "words": words,
+        "empty": words < EMPTY_WORDS,
+        "speakers": speakers,
+        "locale": state["locale"],
+        "title": state.get("title", ""),
+        "context": state.get("context", ""),
+    }
+    files = "\n".join(f"  {s['file']} (+{s['offset']}s, {s.get('device')})" for s in segments)
+    emit(
+        payload,
+        "stopped after {} ({} usable cues, {} words, {} segment(s))\n{}".format(
+            clock(elapsed), len(clean), words, len(segments), files
+        ),
+    )
+
+
+def cmd_text(args: argparse.Namespace) -> None:
+    if args.file:
+        cues = parse_vtt(Path(args.file))
+        cues.sort(key=lambda c: c["start"])
+        mic_label = args.mic_label
+    else:
+        state = active_state() or load_state()
+        if state is None:
+            fail("no capture running and no --file given", EXIT_NOT_RUNNING)
+        cues = read_cues(state)
+        mic_label = state.get("mic_label", "")
+    if not args.raw:
+        cues = dedupe(cues, mic_label)
+    if args.since is not None:
+        cues = [c for c in cues if c["start"] >= args.since]
+    if args.last is not None:
+        cues = cues[-args.last :]
+    lines = [
+        f"[{clock(c['start'])}] {c['speaker']}: {c['text']}"
+        if c["speaker"]
+        else f"[{clock(c['start'])}] {c['text']}"
+        for c in cues
+    ]
+    body = "\n".join(lines)
+    if sys.stdout.isatty():
+        print(body)
+    else:
+        print(json.dumps({"ok": True, "count": len(cues), "text": body}, ensure_ascii=False))
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="listen", description="Live capture of a call through yap."
+    )
+    sub = parser.add_subparsers(dest="command", required=True, metavar="{start,status,stop,text}")
+
+    start = sub.add_parser("start", help="open the capture")
+    start.add_argument("--locale", default="en-US", help="language of the call (default: en-US)")
+    start.add_argument("--mic-label", default="Me", help="label for the microphone voice")
+    start.add_argument("--system-label", default="Them", help="label for the system-audio voice")
+    start.add_argument(
+        "--them-only",
+        action="store_true",
+        help="capture system audio only: no echo, and the owner's voice is not recorded",
+    )
+    start.add_argument("--max-length", type=int, default=200, help="longest cue, in characters")
+    start.add_argument("--title", default="", help="short title, used in the file names")
+    start.add_argument("--context", default="", help="what this call is for, kept in the state")
+    start.set_defaults(func=cmd_start)
+
+    status = sub.add_parser("status", help="state of the current capture")
+    status.set_defaults(func=cmd_status)
+
+    stop = sub.add_parser("stop", help="stop the capture and report the segments")
+    stop.set_defaults(func=cmd_stop)
+
+    text = sub.add_parser("text", help="readable transcript, segments merged, echo removed")
+    text.add_argument("--since", type=float, help="only cues from this second onward")
+    text.add_argument("--last", type=int, help="only the last N cues")
+    text.add_argument("--raw", action="store_true", help="keep the microphone echo")
+    text.add_argument("--file", help="read a single VTT file instead of the capture")
+    text.add_argument("--mic-label", default="Me", help="microphone label, when using --file")
+    text.set_defaults(func=cmd_text)
+
+    return parser
+
+
+def main() -> None:
+    # The supervisor is spawned by `start`, never typed by hand, so it stays out
+    # of the parser and out of the help.
+    if len(sys.argv) > 1 and sys.argv[1] == "_supervise":
+        cmd_supervise(argparse.Namespace())
+        return
+    args = build_parser().parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
