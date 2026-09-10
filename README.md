@@ -1,31 +1,30 @@
 ---
 tags: [maestro, template, orchestrator, bootstrap, claude-code]
-description: Bootstrap template for a personal Claude Code orchestrator — single interface to a team of agents and skills, configured via interactive first-launch setup.
+description: Bootstrap template for a personal Claude Code orchestrator, a single interface to a team of agents and skills, configured via interactive first-launch setup.
 ---
 
 # Maestro
 
-A bootstrap template to scaffold your own personal orchestrator — a Claude Code project that acts as a single interface to a team of agents and skills.
+A bootstrap template to scaffold your own personal orchestrator: a Claude Code project that acts as a single interface to a team of agents and skills.
 
-Like a conductor, *maestro* doesn't play the instruments. It coordinates the ones that do. The template distills a reusable pattern, written in English and owner-agnostic, configured through an interactive first-launch setup.
+Like a conductor, *maestro* doesn't play the instruments. It coordinates the ones that do. The template is a reusable, owner-agnostic pattern. It is written in English and configured through an interactive first-launch setup.
 
 ## What you get
 
 After cloning and running setup, you have an orchestrator that:
 
-- Introduces itself with the **name and personality** you chose
-- Reads your **profile** (role, nick, default language) at every session
-- Writes into a **vault you declare** (`vault_path`) with three note territories as subfolders by default — daily logbook, TIL notes, longer documents. Any filesystem path; Obsidian vault folders welcome but not required.
-- Keeps a **memory database** of what was done, what's to do, and ideas that emerged — as a log of your collaboration
-- Can **hire craft agents** through an HR agent that searches the filesystem, marketplaces, and GitHub for matches
-- Applies a **frontmatter discipline** so the files it writes are searchable by description and tags before anyone reads their body
+- Introduces itself with the name and personality you chose
+- Reads your profile (role, nick, default language) at every session
+- Writes into a vault you declare (`vault_path`) with three note territories as subfolders by default: daily logbook, TIL notes, longer documents. Any filesystem path; Obsidian vault folders welcome but not required.
+- Keeps a memory database of what was done, what's to do, and ideas that emerged, as a log of your collaboration
+- Can hire craft agents through an HR agent that searches the filesystem, marketplaces, and GitHub for matches
+- Applies a frontmatter discipline so the files it writes are searchable by description and tags before anyone reads their body
 
 ## What it doesn't do
 
-- No personal data, no hardcoded names, no integrations out of the box
-- No vault-specific lock-in — it's filesystem-agnostic
-- No domain-specific skills (finance, music, CRM, etc.) — you add those over time
-- No task-manager, calendar, or email integrations — you configure what you need via preferences
+- No personal data and no hardcoded names
+- No domain-specific skills (finance, music, CRM, etc.). You add those over time
+- No task-manager, calendar, or email integrations. You configure what you need via preferences
 
 ## Install
 
@@ -43,74 +42,75 @@ On first launch, the orchestrator should notice that `private/preferences.md` do
 /setup
 ```
 
-Either way, the `setup` skill asks you a short set of questions, starting with your preferred language — from that point on the whole setup runs in that language. In order:
+Either way, the `setup` skill asks you a short set of questions, starting with your preferred language. From that point on the whole setup runs in that language. In order:
 
-1. **Default language** — how the orchestrator talks to you by default (asked in English)
-2. **Project name** — the top-level scope this orchestrator is for (e.g. "Personal life", "Acme startup", "Novel draft"); a slug of it becomes the default vault folder name later
-3. **Project context and expectations** — a few lines about what this context looks like day to day and what you expect from an AI assistant
-4. **Name of your orchestrator** — what it should call itself
-5. **Inspiration** — a character or archetype (real or fictional) that captures the personality you want; the skill proposes 3–5 adjectives based on it, which you accept or tweak
-6. **Your nick** — how the orchestrator should refer to you
-7. **Your full name** — for context
-8. **Your role** — what you do
-9. **People you work with** (optional) — team, collaborators, family, clients — whoever's relevant
-10. **File territories** — where markdown notes should live. The setup writes four keys to preferences: `vault_path` (the root) plus `logbook_path`, `til_path`, `documents_path` as subfolders by default. Three options: **internal** (vault is `./<project-slug>/` inside the repo — the slug derived from Q2, gitignored), **external** (you give an absolute path to a vault on disk, e.g. an Obsidian vault — subfolders default to `<vault_path>/{logbook,til,documents}`), or **skip** (no territories for now)
+1. **Default language**: how the orchestrator talks to you by default (asked in English)
+2. **Project name**: the top-level scope this orchestrator is for (e.g. "Personal life", "Acme startup", "Novel draft"); a slug of it becomes the default vault folder name later
+3. **Project context and expectations**: a few lines about what this context looks like day to day and what you expect from an AI assistant
+4. **Name of your orchestrator**: what it should call itself
+5. **Inspiration**: a character or archetype (real or fictional) that captures the personality you want; the skill proposes 3–5 adjectives based on it, which you accept or tweak
+6. **Your nick**: how the orchestrator should refer to you
+7. **Your full name**: for context
+8. **Your role**: what you do
+9. **People you work with** (optional): team, collaborators, family, clients, whoever's relevant
+10. **File territories**: where markdown notes should live. The setup writes four keys to preferences: `vault_path` (the root) plus `logbook_path`, `til_path`, `documents_path` as subfolders by default. Three options: internal (vault is `./<project-slug>/` inside the repo, with the slug derived from Q2, gitignored), external (you give an absolute path to a vault on disk, e.g. an Obsidian vault: subfolders default to `<vault_path>/{logbook,til,documents}`), or skip (no territories for now)
 
-After the questions and a quick summary, a shipped script (`.claude/skills/setup/finalize.sh`) handles the mechanical work in one atomic step: writes `private/preferences.md`, copies `memories.db.template` into `private/memories.db`, copies `routines.example.yaml` into `private/routines.yaml`, inserts the first memory log row, removes the three root templates, and self-disables the skill (moves it to `.claude/skills/.disabled/setup/`). The first logbook entry and the first TIL are written just before that — creative content the orchestrator composes in your language. You're operational.
+After the questions and a quick summary, a shipped script (`.claude/skills/setup/finalize.sh`) handles the mechanical work in one atomic step: writes `private/preferences.md`, copies `memories.db.template` into `private/memories.db`, copies `routines.example.yaml` into `private/routines.yaml`, inserts the first memory log row, removes the three root templates, and self-disables the skill (moves it to `.claude/skills/.disabled/setup/`). The first logbook entry and the first TIL are written just before that: creative content the orchestrator composes in your language. You're operational.
 
-Any time you feel lost later, type `/guide` — the orchestrator will read its own docs and answer. (`/help` is a Claude Code built-in command and won't reach this skill.)
+Any time you feel lost later, type `/guide`, and the orchestrator will read its own docs and answer. (`/help` is a Claude Code built-in command and won't reach this skill.)
 
 ## The orchestrator pattern
 
 Every instance built from this template has:
 
-- **`CLAUDE.md`** — the brain. Defines the orchestrator role, routing, delegation, memory behavior, frontmatter discipline. Generic, not owner-specific.
-- **`private/preferences.md`** — identity + owner profile + customizations, loaded at every session start. Gitignored.
-- **`private/memories.db`** — SQLite log of memories, tasks, ideas. Gitignored.
-- **`memories.db.template`** — empty SQLite seed with the schema, copied into `private/` by the setup skill.
-- **`.claude/roster.yaml`** — registry of active craft agents (ships with `librarian` and `scheduler` enrolled).
-- **`.claude/agents/`** — the shipped craft agents: `hr` (recruiter and manager of the roster), `librarian` (vault research and frontmatter hygiene), `scheduler` (cold data layer for prospective/retrospective questions).
-- **`.claude/skills/`** — the hub skills: `setup` (first-launch configuration, self-disables), `logbook` (daily note in your configured `logbook_path`), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `maestro-sync` (pulls template updates from upstream).
-- **`bin/mem`** — CLI wrapper for `memories.db` (escape-safe writes, relative dates, reports).
-- **`bin/session-digest`** — pulls the owner's messages from the day's parallel sessions, for the `logbook` skill.
-- **`user-skills/`** — skills authored here but installed user-level, in `~/.claude/skills/`, because they are called from any session on the machine rather than from an instance. Currently `maestro-net`, the cross-talk channel between several Maestro instances (see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)).
-- **`.gitignore`** — covers `private/`, workspace artifacts, and local settings.
+- **`CLAUDE.md`**: defines the orchestrator role, routing, delegation, memory behavior, frontmatter discipline. Generic, with no owner-specific content.
+- **`private/preferences.md`**: identity + owner profile + customizations, loaded at every session start. Gitignored.
+- **`private/memories.db`**: SQLite log of memories, tasks, ideas. Gitignored.
+- **`memories.db.template`**: empty SQLite seed with the schema, copied into `private/` by the setup skill.
+- **`.claude/roster.yaml`**: registry of active craft agents (ships with `librarian` and `scheduler` enrolled).
+- **`.claude/agents/`**: the shipped craft agents `hr` (recruiter and manager of the roster), `librarian` (vault research and frontmatter hygiene), `scheduler` (cold data layer for prospective/retrospective questions).
+- **`.claude/skills/`**: the hub skills `setup` (first-launch configuration, self-disables), `logbook` (daily note in your configured `logbook_path`), `listen` (live capture of a call; the transcript and a note land in the vault), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (post-pass that enforces the prose register), `maestro-sync` (pulls template updates from upstream).
+- **`bin/mem`**: CLI wrapper for `memories.db` (escape-safe writes, relative dates, reports), backed by `bin/mem-vec` for the optional semantic layer.
+- **`bin/session-digest`**: pulls the owner's messages from the day's parallel sessions, for the `logbook` skill.
+- **`bin/register-check`**: mechanical check of the writing register prohibitions that carry a syntactic signature.
+- **`user-skills/`**: skills authored here but installed user-level, in `~/.claude/skills/`, because they are called from any session on the machine rather than from an instance. Currently `maestro-net`, the cross-talk channel between several Maestro instances (see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)).
+- **`.gitignore`**: covers `private/`, workspace artifacts, and local settings.
 
-Everything else grows organically as you use the orchestrator:
+Everything else you add as you use the orchestrator:
 
-- Add a sub-app? Symlink it into `apps/<name>/` and add a row in `CLAUDE.md`'s "Available apps" table.
-- Need a recurring task handled by a specialist? Ask your orchestrator; it invokes HR, which proposes an agent, and if you approve, installs it into `.claude/agents/` and the roster.
-- Want a skill your instance needs? Drop it in `.claude/skills/` — no ceremony.
+- To add a sub-app, invoke the `add-external-app` skill. It creates the symlink in `apps/<name>/`, generates a pointer skill, and updates the "Available apps" section in `private/preferences.md`.
+- For a recurring task handled by a specialist, ask your orchestrator. It invokes HR, which proposes an agent and, once you approve, installs it into `.claude/agents/` and the roster.
+- A skill your instance needs goes straight into `.claude/skills/`. No ceremony.
 
 ## Philosophy
 
 Three principles guide the pattern:
 
-1. **Single interface** — the owner talks only to the orchestrator. No agent speaks directly to the owner. Output from agents is always filtered or synthesized by the orchestrator.
-2. **Delegate when it fits, not always** — the orchestrator answers directly to conversational requests. Delegation is reserved for clear matches with registered agents.
-3. **Proactive on recurring patterns** — if the same kind of request keeps coming up without a dedicated agent, the orchestrator suggests hiring one. The owner decides.
+1. **Single interface**: the owner talks only to the orchestrator. No agent speaks directly to the owner. Output from agents is always filtered or synthesized by the orchestrator.
+2. **Delegate when it fits, not always**: the orchestrator answers directly to conversational requests. Delegation is reserved for clear matches with registered agents.
+3. **Proactive on recurring patterns**: if the same kind of request keeps coming up without a dedicated agent, the orchestrator suggests hiring one. The owner decides.
 
 These live in `CLAUDE.md` under "Role: orchestrator" and carry through every instance.
 
 ## Going deeper
 
-After setup, the `howto/` folder has eleven practical guides:
+After setup, the `howto/` folder has eleven guides:
 
-- [`howto/01-skills.md`](howto/01-skills.md) — add, invoke, write, retire skills
-- [`howto/02-agents-and-hr.md`](howto/02-agents-and-hr.md) — hire, use, retire agents via HR
-- [`howto/03-customization.md`](howto/03-customization.md) — customize identity, owner profile, context, communication style
-- [`howto/04-memory-and-integrations.md`](howto/04-memory-and-integrations.md) — memory db internals and how to integrate external tools (Basecamp, Google Calendar, reminders)
-- [`howto/05-backup-and-sync.md`](howto/05-backup-and-sync.md) — privacy, `.gitignore`, cloud-drive sync, symlinks to external apps/skills/agents
-- [`howto/06-configure-cal.md`](howto/06-configure-cal.md) — configure the `scheduler` agent: data channels, routines, question types
-- [`howto/07-warm-task-channel.md`](howto/07-warm-task-channel.md) — wire an external task manager as the warm layer, with `memories.db` as the cold layer
-- [`howto/08-markdown-discipline.md`](howto/08-markdown-discipline.md) — frontmatter, tags, descriptions, YAML safety, wikilinks
-- [`howto/09-memoria-semantica.md`](howto/09-memoria-semantica.md) — the optional semantic layer over `memories.db` and the vault
-- [`howto/10-writing-register.md`](howto/10-writing-register.md) — the seven prose prohibitions, the post-pass, and `bin/register-check`
-- [`howto/11-maestro-net.md`](howto/11-maestro-net.md) — cross-talk between several Maestro instances: `recap`, `ask`, and the instance registry
+- [`howto/01-skills.md`](howto/01-skills.md): add, invoke, write, retire skills
+- [`howto/02-agents-and-hr.md`](howto/02-agents-and-hr.md): hire, use, retire agents via HR
+- [`howto/03-customization.md`](howto/03-customization.md): customize identity, owner profile, context, communication style
+- [`howto/04-memory-and-integrations.md`](howto/04-memory-and-integrations.md): memory db internals and how to integrate external tools (Basecamp, Google Calendar, reminders)
+- [`howto/05-backup-and-sync.md`](howto/05-backup-and-sync.md): privacy, `.gitignore`, cloud-drive sync, symlinks to external apps/skills/agents
+- [`howto/06-configure-cal.md`](howto/06-configure-cal.md): configure the `scheduler` agent (data channels, routines, question types)
+- [`howto/07-warm-task-channel.md`](howto/07-warm-task-channel.md): wire an external task manager as the warm layer, with `memories.db` as the cold layer
+- [`howto/08-markdown-discipline.md`](howto/08-markdown-discipline.md): frontmatter, tags, descriptions, YAML safety, wikilinks
+- [`howto/09-memoria-semantica.md`](howto/09-memoria-semantica.md): the optional semantic layer over `memories.db` and the vault
+- [`howto/10-writing-register.md`](howto/10-writing-register.md): the seven prose prohibitions, the post-pass, and `bin/register-check`
+- [`howto/11-maestro-net.md`](howto/11-maestro-net.md): cross-talk between several Maestro instances (`recap`, `ask`, the instance registry)
 
 ## Status
 
-Actively evolving. Versions follow the date-based `vYYYY.MM.DD.N` scheme — see [`CHANGELOG.md`](CHANGELOG.md) for the full history and migration notes. Instances pull updates via the `maestro-sync` skill.
+Actively evolving. Versions follow the date-based `vYYYY.MM.DD.N` scheme. See [`CHANGELOG.md`](CHANGELOG.md) for the full history and migration notes. Instances pull updates via the `maestro-sync` skill.
 
 ## License
 
@@ -118,4 +118,4 @@ TBD.
 
 ## Contributing
 
-If you build your own orchestrator from this template and find improvements worth backporting, open a PR or issue. The pattern is meant to evolve.
+If you build your own orchestrator from this template and find improvements worth backporting, open a PR or issue.
