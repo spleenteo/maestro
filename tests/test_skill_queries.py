@@ -404,12 +404,13 @@ EXPECTERS = {"today": expected_today, "todo": expected_todo, "search": expected_
 
 _RAW_SQLITE_RE = re.compile(r"sqlite3.*\blog\b|INSERT INTO log|FROM log")
 
-# finalize.sh (V4 Task 3: moved from `.claude/skills/setup/` into the plugin
-# at `plugins/maestro/skills/new-instance/`) used to write the first memory
-# with a raw `sqlite3 INSERT INTO log`; it now calls the instance's own
-# `bin/mem save`. `plugins/` is `export-ignore`d (see `.gitattributes`), so
-# this path only exists inside the template repo itself — never inside a
-# shipped instance, where this file (not export-ignored) still runs.
+# finalize.sh (V4 Task 3: moved from `.claude/skills/setup/` into the
+# plugin's own skill tree, under new-instance) used to write the first
+# memory with a raw `sqlite3 INSERT INTO log`; it now calls the instance's
+# own `bin/mem save`. The plugin tree is `export-ignore`d (see
+# `.gitattributes`), so this path only exists inside the template repo
+# itself — never inside a shipped instance, where this file (not
+# export-ignored) still runs.
 PLUGIN_SOURCE_FILES = [
     ROOT / "plugins" / "maestro" / "skills" / "new-instance" / "finalize.sh",
 ]
@@ -425,7 +426,7 @@ class TestNoRawSqlite3(unittest.TestCase):
 
     def test_moved_finalize_script_touches_no_raw_sqlite3(self):
         if not (ROOT / "plugins").is_dir():
-            self.skipTest("plugins/ is export-ignore'd: absent in a shipped instance")
+            self.skipTest("the plugin tree is export-ignore'd: absent in a shipped instance")
         for path in PLUGIN_SOURCE_FILES:
             with self.subTest(file=path.relative_to(ROOT)):
                 self.assertTrue(path.is_file(), f"{path} missing")
