@@ -13,7 +13,7 @@ This skill keeps the orchestrator instance aligned with the **Maestro template**
 
 Two paths, two roles (decided 2026-04-30):
 
-- **`~/Sites/me/maestro/`** — primary working tree. Where the owner promotes new patterns from this instance to the template (modify, commit, push). This skill **never writes here**. It only reads its git status to warn the owner if there are uncommitted changes that should be pushed before syncing.
+- **Primary working tree** (optional, `maestro_worktree_path:` in preferences) — a clone of the template where the owner promotes new patterns from this instance to the template (modify, commit, push). This skill **never writes here**. It only reads its git status to warn the owner if there are uncommitted changes that should be pushed before syncing.
 - **`~/.maestro/`** — read-only mirror used by this skill as a stable comparison point. The mirror is updated only by this skill, with `git fetch origin && git reset --hard origin/main`. Never committed to, never modified by hand.
 
 The skill scans the **instance** (the orchestrator that invokes the skill) for files with `origin: maestro` in their frontmatter, compares each with the mirror version, and proposes a diff per file with confirmation. It also scans the **mirror** in the opposite direction: files marked `origin: maestro` that exist upstream but not in the instance are proposed as **new files**, with the same per-file confirmation.
@@ -32,6 +32,7 @@ Files **never** in scope:
 - `apps/*` (sub-apps and their internals)
 - Custom skills/agents added by the instance (no `origin: maestro` marker)
 - `.claude/roster.yaml` (instance-specific list of active agents — Maestro doesn't choose which agents an instance enrolls)
+- `docs/`, `plugins/`, `.claude-plugin/` and `user-skills/` (template-only and plugin-distributed material — the same exclusion list the reverse scan applies in Phase 4b)
 
 ## When this skill runs
 
@@ -51,18 +52,20 @@ Six phases. Stop and report on the first error — never continue past a failure
 Resolve from preferences (or use sensible defaults):
 
 - **Mirror path**: `~/.maestro/` (default). If preferences declare `maestro_mirror_path:`, use that.
-- **Working tree path**: `~/Sites/me/maestro/` (default). If preferences declare `maestro_worktree_path:`, use that.
+- **Working tree path**: the value of `maestro_worktree_path:` in preferences. No default: an instance that doesn't declare it has no primary working tree.
+
+Paths are written with `~` for readability only. Before substituting a path into any `<mirror-path>`, `<worktree-path>` or `<instance-path>` placeholder in the commands below, expand it to an absolute path with `$HOME` resolved (e.g. `/Users/<name>/.maestro`) — **never** the literal `~`. Every placeholder in this skill's commands is quoted (`"<mirror-path>"`), and a quoted `~` is not a home-directory shortcut to the shell: it's just two characters, `cd`/`git -C` fail on a path that doesn't exist, and — for the piped commands in Phase 4b and 5b — that failure would otherwise go unnoticed (see the `set -o pipefail` note there).
 
 If the **mirror** doesn't exist yet, bootstrap it: `git clone git@github.com:spleenteo/maestro <mirror-path>`. Tell the owner: *"First run: I'm cloning the Maestro mirror at <mirror-path>."*
 
-If the **working tree** doesn't exist, that's fine — promotions can still be done by cloning it on demand. Skip Phase 2 with a soft note: *"No primary working tree at <worktree-path>; skipping the uncommitted-changes check. Nothing to lose."*
+If preferences declare no working tree, or the **working tree** doesn't exist, that's fine — promotions can still be done by cloning it on demand. Skip Phase 2 with a soft note: *"No primary working tree at <worktree-path>; skipping the uncommitted-changes check. Nothing to lose."*
 
 ### Phase 2 — Pre-sync check on the working tree
 
 This is the hook that catches in-flight promotions before they get clobbered by a sync. Run on the **primary working tree**, never on the mirror.
 
 ```bash
-cd <worktree-path>
+cd "<worktree-path>"
 git status --porcelain          # any uncommitted changes?
 git log @{u}..HEAD --oneline    # any local commits not yet pushed?
 ```
@@ -88,7 +91,7 @@ Wait for the owner. If `push`, run `git push origin main` from the working tree.
 ### Phase 3 — Refresh the read-only mirror
 
 ```bash
-cd <mirror-path>
+cd "<mirror-path>"
 git fetch origin
 git reset --hard origin/main
 ```
@@ -97,7 +100,7 @@ This is the only write operation on the mirror — it brings it to whatever `ori
 
 After this, capture:
 
-- `MIRROR_HEAD` = `git -C <mirror-path> rev-parse HEAD` (commit SHA at the mirror)
+- `MIRROR_HEAD` = `git -C "<mirror-path>" rev-parse HEAD` (commit SHA at the mirror)
 - `MIRROR_VERSION` = the latest `## v...` heading in `<mirror-path>/CHANGELOG.md`
 
 ### Phase 4 — Scan the instance
@@ -123,11 +126,24 @@ If `maestro_version` is missing in a file that has `origin: maestro`, treat it a
 
 ### Phase 4b — Reverse scan: new files from upstream
 
-Walk the **mirror** for `*.md` files (excluding `.git/`) with `origin: maestro` in their frontmatter. Any such file whose path does **not** exist in the instance is a **new upstream file** — the instance-side scan cannot see it, so without this step it would never be delivered.
+Walk the **mirror** for `*.md` files with `origin: maestro` in their frontmatter, excluding the folders that hold template-only or plugin-distributed material: `docs/` (shaping and devflow material for the template itself), `plugins/` and `.claude-plugin/` (the Maestro Claude Code plugin, distributed separately, never through this skill), `user-skills/` (skills installed at user level, outside `maestro-sync`). Any remaining file whose path does **not** exist in the instance is a **new upstream file** — the instance-side scan cannot see it, so without this step it would never be delivered.
 
 The reverse scan is glob-based on purpose (the whole mirror, not just the Phase 4 path list): future distributed files may live in paths that don't exist yet in older instances (e.g. a marked `howto/` guide).
 
-Build a second list:
+List the candidates, then keep only the ones whose frontmatter (the lines between the first two `---` markers) declares `origin: maestro`:
+
+```bash
+set -o pipefail
+git -C "<mirror-path>" ls-files -- '*.md' ':!:docs/**' ':!:plugins/**' ':!:.claude-plugin/**' ':!:user-skills/**' | while read -r f; do
+  if awk 'NR==1 && !/^---$/{exit} /^---$/{n++; print; if(n==2) exit; next} {print}' "<mirror-path>/$f" | grep -q '^origin: maestro$'; then
+    echo "$f"
+  fi
+done
+```
+
+`set -o pipefail` (works in both bash and zsh) makes the pipeline's exit status reflect a failing `git` on the left, instead of the `while read` loop's own status on normal EOF (0, regardless of what `git` did) — without it, a bad `<mirror-path>` reports "no new files" instead of erroring. The `awk` script now also bails with no output as soon as it sees the first line isn't `---`: a file with no frontmatter at all has nothing to extract, and its body is never scanned for a line that merely looks like the marker.
+
+Build a second list from the output:
 
 ```
 new_from_upstream: [
@@ -150,7 +166,7 @@ Format:
 🔍 Maestro changelog from your version to upstream:
 
 ## v2026.04.30.2 — 2026-04-30
-**Theme**: Promote three patterns proven in the Alfred instance into the template.
+**Theme**: Promote three patterns proven in a personal instance into the template.
 - (Added) early-morning rule, YAML safety, wikilinks discipline
 
 ## v2026.04.30.1 — 2026-04-30
@@ -164,12 +180,35 @@ Upstream is at: v2026.04.30.2.
 
 This is **context** before the diff, not a confirmation prompt yet.
 
+### Phase 5b — Compare `bin/*` against the mirror
+
+Skills may call `bin/mem` options an older `bin/*` copy doesn't have yet: applying a skill diff before the instance's `bin/*` is current can point the owner at a flag their `bin/mem` doesn't support. Compare each tracked file under `bin/` in the mirror against the instance's copy by checksum (`<instance-path>`: the instance's repository root, as in Phase 4):
+
+```bash
+set -o pipefail
+git -C "<mirror-path>" ls-files bin/ | while read -r f; do
+  if [ ! -f "<instance-path>/$f" ]; then
+    echo "missing $f"
+  elif [ "$(shasum "<mirror-path>/$f" | awk '{print $1}')" != "$(shasum "<instance-path>/$f" | awk '{print $1}')" ]; then
+    echo "differs $f"
+  fi
+done
+```
+
+`set -o pipefail` guards this pipeline the same way as the Phase 4b one, above — a bad `<mirror-path>` fails the block instead of silently reporting no drift.
+
+Each line is `differs bin/<name>` or `missing bin/<name>`; a file that matches prints nothing. If the command produced any output, tell the owner before Phase 6 starts:
+
+> ⚠ Your `bin/` is behind the mirror: <list of `differs`/`missing` lines>. Copy these from `<mirror-path>/bin/` before applying skill diffs — a skill may call an option your current `bin/mem` doesn't support yet.
+
+This phase only warns — it never copies `bin/*` on its own; `bin/` files carry no `origin: maestro` frontmatter and stay outside the diff-and-apply flow of Phase 6.
+
 ### Phase 6 — Per-file diff and confirmation
 
 For each file in the scan list, compute the diff between the instance's version and the mirror's version of the same file path.
 
 ```bash
-diff -u <instance-path>/<file> <mirror-path>/<file>
+diff -u "<instance-path>/<file>" "<mirror-path>/<file>"
 ```
 
 Skip files that are byte-identical (already up to date — common when the instance is mostly aligned).
@@ -277,23 +316,17 @@ The skill itself does not auto-mark files — that would risk misclassifying ins
 
 ## What this skill does NOT do
 
-- Push to upstream. Promotions happen in the primary working tree (`~/Sites/me/maestro/`), not from this skill.
+- Push to upstream. Promotions happen in the primary working tree (`maestro_worktree_path`), not from this skill.
 - Edit files in `private/`, `apps/`, or any file without `origin: maestro` marker.
 - Resolve conflicts when the owner has hand-edited a file marked `origin: maestro` and upstream also changed it. The diff is shown, the owner decides per file. Hand-editing `origin: maestro` files is discouraged in `CLAUDE.md` → "Distribution and modifications" precisely to avoid this.
 - Run silently. Every phase that touches state (mirror reset, file copy, log append) reports to the owner.
 
 ## Memory log
 
-Per the "Announce every write" rule, after the sync, insert one memory entry summarizing the run. Prefer `bin/mem` when the instance has it:
+Per the "Announce every write" rule, after the sync, insert one memory entry summarizing the run:
 
 ```bash
 bin/mem save "Maestro sync: <FROM_VERSION> → <TO_VERSION> (<N> files updated, <M> added)" -t maestro,sync,upstream -d "<list of updated/added files, comma-separated>. Skipped: <list>. Log: private/maestro-sync.log."
-```
-
-Fallback for instances without `bin/mem`:
-
-```bash
-sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type) VALUES (date('now'), 'Maestro sync: <FROM_VERSION> → <TO_VERSION> (<N> files updated)', '<list of updated files, comma-separated>. Skipped: <list>. Log: private/maestro-sync.log.', 'maestro,sync,upstream', 'memory');"
 ```
 
 Announce:
