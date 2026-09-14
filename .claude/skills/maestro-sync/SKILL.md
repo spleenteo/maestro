@@ -14,7 +14,7 @@ This skill keeps the orchestrator instance aligned with the **Maestro template**
 Two paths, two roles (decided 2026-04-30):
 
 - **Primary working tree** (optional, `maestro_worktree_path:` in preferences) — a clone of the template where the owner promotes new patterns from this instance to the template (modify, commit, push). This skill **never writes here**. It only reads its git status to warn the owner if there are uncommitted changes that should be pushed before syncing.
-- **`~/.maestro/`** — read-only mirror used by this skill as a stable comparison point. The mirror is updated only by this skill, with `git fetch origin && git reset --hard origin/main`. Never committed to, never modified by hand.
+- **`~/.maestro/`** — read-only mirror used by this skill as a stable comparison point. This skill updates it with `git fetch origin && git reset --hard origin/main`. The Maestro plugin's `new-instance` skill also touches it, to clone it when missing or fetch it when present, so it holds the commit a new instance is built from; it never moves the mirror's `HEAD`, so `main` stays what this skill compares against. Never committed to, never modified by hand.
 
 The skill scans the **instance** (the orchestrator that invokes the skill) for files with `origin: maestro` in their frontmatter, compares each with the mirror version, and proposes a diff per file with confirmation. It also scans the **mirror** in the opposite direction: files marked `origin: maestro` that exist upstream but not in the instance are proposed as **new files**, with the same per-file confirmation.
 
