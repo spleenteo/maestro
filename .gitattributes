@@ -1,0 +1,31 @@
+# Template-only paths, dropped from every instance built with
+# `git archive <sha> | tar -x` (see the `new-instance` skill). Nothing is
+# deleted after extraction: this file is what keeps the archive clean.
+# tests/test_template_archive.py verifies it.
+
+# Shaping and devflow material for the template repo itself; never
+# meaningful inside an instance.
+docs/ export-ignore
+
+# The Claude Code plugin's own source: distributed via the plugin
+# marketplace/GitHub at its commit SHA, not copied into instances.
+plugins/ export-ignore
+
+# The template repo's own marketplace manifest.
+.claude-plugin/ export-ignore
+
+# devflow config for working on the template repo itself.
+.devflow.yml export-ignore
+
+# This file: export-ignore excludes itself from the archive too.
+.gitattributes export-ignore
+
+# Tests that assert on the template's own plugin/docs layout: the paths
+# they reference don't exist in an archived instance.
+tests/test_plugin_layout.py export-ignore
+tests/test_maestro_net.py export-ignore
+tests/test_maestro_sync.py export-ignore
+
+# This test clones the template's own .git to build the archive it
+# checks: an archived instance never has that .git to clone.
+tests/test_template_archive.py export-ignore
