@@ -26,7 +26,7 @@ Do not remove this line unless you are absolutely sure what you're doing. `prefe
 
 Sometimes the structure of `preferences.md` is worth sharing (with a colleague, with yourself across machines). Do not push it anywhere public. If you want to version it in a private repository, consider two cleaner alternatives:
 
-- **Keep the main repo public** and store `private/` separately in an encrypted store (e.g., a dotfiles repo with [chezmoi](https://www.chezmoi.io/) + age encryption)
+- **Keep the main repo public** and store `private/` separately in an encrypted store (e.g., a separate repository managed with [chezmoi](https://www.chezmoi.io/) + age encryption)
 - **Make the main repo private** entirely, and keep `private/` tracked — but then the whole orchestrator is non-public
 
 Never mix a public main repo with `private/` tracked.
@@ -55,7 +55,7 @@ Trade-off: the git repo itself is now synced by two systems (git + cloud). It's 
 - If a `git` operation is mid-flight while the cloud tries to sync, you may get transient file-state glitches. Run `git status` again and they usually resolve.
 - Cloud conflict copies (`file (conflict from Your Mac).md`) can creep in. Spot them with `find . -name "*conflict*"` periodically.
 
-The cleaner alternative: keep the repo under a normal location (e.g., `~/Sites/me/my-orchestrator/`) and sync **only** `private/` via the cloud by symlinking it into the drive.
+The cleaner alternative: keep the repo under a normal location (e.g., `~/Code/my-orchestrator/`) and sync **only** `private/` via the cloud by symlinking it into the drive.
 
 ## Backing up `private/`
 
@@ -63,7 +63,7 @@ Since `private/` is not in git, it needs its own backup. Pick one (or combine):
 
 - **Cloud drive** — if the repo lives in iCloud/Dropbox/GDrive, `private/` is already synced.
 - **Time Machine** (macOS) — covers the whole repo, including `private/`. Simple, default good.
-- **chezmoi + age encryption** — track `private/` in a separate encrypted dotfiles repo. Offers cross-machine sync with encrypted-at-rest history. Higher setup cost, higher privacy guarantees.
+- **chezmoi + age encryption** — track `private/` in a separate encrypted repository managed by chezmoi. Offers cross-machine sync with encrypted-at-rest history. Higher setup cost, higher privacy guarantees.
 - **Manual periodic snapshot** — `tar czf private-$(date +%F).tgz private/` to an encrypted external drive or a private cloud bucket.
 
 Restore procedure, in all cases: clone the main repo, put `private/` back where it was, launch Claude Code.
@@ -76,10 +76,10 @@ Even with `private/` locked down, **Claude Code maintains its own per-project da
 ~/.claude/projects/<slugified-project-path>/
 ```
 
-The slug is derived from the absolute path of the project, with slashes replaced by dashes. For an orchestrator at `/Users/you/Sites/me/my-orchestrator/`, the folder is:
+The slug is derived from the absolute path of the project, with slashes replaced by dashes. For an orchestrator at `/Users/you/Code/my-orchestrator/`, the folder is:
 
 ```
-~/.claude/projects/-Users-you-Sites-me-my-orchestrator/
+~/.claude/projects/-Users-you-Code-my-orchestrator/
 ```
 
 Inside it Claude keeps session transcripts, an auto-memory system (`memory/MEMORY.md` plus individual memory files), and other state. You don't control what goes there — Claude writes to it as a natural side-effect of running. Even if you're meticulous about not committing personal info, notes Claude took during a session live here too, and they can be just as sensitive as `memories.db` or `preferences.md`.
@@ -178,10 +178,10 @@ For **agents**, the same pattern applies — symlink into `.claude/agents/`. Mak
 
 A production-ready setup that balances privacy, portability, and sanity:
 
-- `~/Sites/me/my-orchestrator/` — main repo, tracked in git (private or public), no `private/` committed
-- `~/Sites/me/my-orchestrator/private/` — a symlink to `~/iCloud Drive/orchestrators/my-orchestrator/private/`, synced across your machines
-- `~/Sites/me/my-orchestrator/apps/*` — symlinks to other project folders on the machine
-- `~/Sites/me/my-orchestrator/.claude/skills/<shared-skill>` — symlink to a shared `claude-skills/` repo for anything reused across orchestrators
+- `~/Code/my-orchestrator/` — main repo, tracked in git (private or public), no `private/` committed
+- `~/Code/my-orchestrator/private/` — a symlink to `~/iCloud Drive/orchestrators/my-orchestrator/private/`, synced across your machines
+- `~/Code/my-orchestrator/apps/*` — symlinks to other project folders on the machine
+- `~/Code/my-orchestrator/.claude/skills/<shared-skill>` — symlink to a shared `claude-skills/` repo for anything reused across orchestrators
 - Time Machine + the cloud drive provide two independent backup layers for `private/` and for `~/.claude/projects/<slug>/`
 
 You don't have to start here. Start simple — a plain repo with `private/` inside, backed up by Time Machine (which also catches `~/.claude/` by default) — and add sync/symlinks as your setup grows.

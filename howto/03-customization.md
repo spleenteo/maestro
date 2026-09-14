@@ -119,7 +119,7 @@ External services:
 ## Integrations
 
 - Basecamp: account 1234567, project 9876543
-- MCP servers: slacky, gmail, gcal
+- MCP servers: acme, gmail, gcal
 - Other: a CRM, a shared inbox tool
 ```
 

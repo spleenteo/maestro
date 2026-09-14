@@ -1,11 +1,11 @@
 ---
-tags: [howto, tasks, warm-channel, cold-layer, gc, slacky, basecamp, integrations]
+tags: [howto, tasks, warm-channel, cold-layer, gc, acme, basecamp, integrations]
 description: Configure an optional external task system as the "warm" layer of the orchestrator, with the memory db as the "cold" layer and a lazy garbage collector that archives done tasks at session start.
 ---
 
 # How to wire an external task channel (warm/cold pattern)
 
-Some owners use a dedicated task manager — Slacky, Basecamp todos, Todoist, Linear, custom — and want the orchestrator to treat that as the source of truth for "things to do" instead of the memory db. This guide explains the pattern: a **warm layer** outside the orchestrator, a **cold layer** in `memories.db`, and a **lazy garbage collector** that bridges them.
+Some owners use a dedicated task manager — Acme, Basecamp todos, Todoist, Linear, custom — and want the orchestrator to treat that as the source of truth for "things to do" instead of the memory db. This guide explains the pattern: a **warm layer** outside the orchestrator, a **cold layer** in `memories.db`, and a **lazy garbage collector** that bridges them.
 
 It's optional. If you don't declare a warm task channel, the orchestrator keeps using `type='task'` in `memories.db` as documented in [04 — Memory and integrations](04-memory-and-integrations.md).
 
@@ -13,7 +13,7 @@ It's optional. If you don't declare a warm task channel, the orchestrator keeps 
 
 | Piece | What it is | Where it lives |
 |---|---|---|
-| **Warm layer** | The external task system. Tasks are created, scheduled, completed, deleted here. Authoritative for what is *in flight*. | Outside the repo — Slacky (Supabase + React client), Basecamp todos, Todoist, etc. Reached via MCP, CLI, or HTTP. |
+| **Warm layer** | The external task system. Tasks are created, scheduled, completed, deleted here. Authoritative for what is *in flight*. | Outside the repo — Acme (a custom web app), Basecamp todos, Todoist, etc. Reached via MCP, CLI, or HTTP. |
 | **Cold layer** | `memories.db`, table `log`, `type='memory'`. Authoritative for what *was done*, as an archived flat record. | `private/memories.db`, queried via `bin/mem`. |
 | **Garbage collector** | A short routine that runs at session start (and on a few other triggers): reads tasks closed since the last flush, writes them to the cold layer in bulk, deletes them from the warm layer, updates a marker. | Inside a skill named `<channel>-task-manager`, in the section `## Garbage Collector`. |
 
@@ -26,23 +26,23 @@ To enable a warm task channel, add a block to `private/preferences.md`:
 ```yaml
 ## Warm task channel
 
-channel: slacky                    # or basecamp, todoist, none
-skill: slacky-task-manager         # the skill that implements the contract
-archive_tag: slacky-archive        # tag prepended to every archived memory
-marker_name: last-slacky-flush     # marker key in memories.db for the watermark
+channel: acme                      # or basecamp, todoist, none
+skill: acme-task-manager           # the skill that implements the contract
+archive_tag: acme-archive          # tag prepended to every archived memory
+marker_name: last-acme-flush       # marker key in memories.db for the watermark
 ```
 
 If the block is absent or `channel: none`, the orchestrator does not invoke any GC and treats `memories.db` as the only task store.
 
 The channel name is free-form but conventionally matches a known integration. Suggested values:
 
-- `slacky` — custom Slacky task manager (MCP-based)
+- `acme` — a custom task manager reached through its own MCP server
 - `basecamp` — Basecamp todos (Basecamp CLI / MCP)
 - `todoist`, `linear`, etc. — any external system with a programmable interface
 
 ## The skill contract
 
-The skill named in `skill:` (e.g. `slacky-task-manager`, `basecamp-task-manager`) must expose, at minimum, a `## Garbage Collector` section that the orchestrator can invoke. The section describes how the skill:
+The skill named in `skill:` (e.g. `acme-task-manager`, `basecamp-task-manager`) must expose, at minimum, a `## Garbage Collector` section that the orchestrator can invoke. The section describes how the skill:
 
 1. Reads the watermark — `bin/mem marker get <marker_name>` (fallback: 7 days ago).
 2. Lists tasks closed in the warm layer since that watermark.
@@ -107,26 +107,26 @@ If you don't have those affordances or don't need them, plain memory tasks are f
 
 ## Why use `memories.db` instead of pulling history from the warm tool
 
-Because the warm tool is allowed to forget. Slacky deletes done tasks after a window; Basecamp archives todos out of the active project; Todoist hides completed items. The cold layer in `memories.db` is the orchestrator's own copy of what was done — durable, searchable, and under your control.
+Because the warm tool is allowed to forget. Acme deletes done tasks after a window; Basecamp archives todos out of the active project; Todoist hides completed items. The cold layer in `memories.db` is the orchestrator's own copy of what was done — durable, searchable, and under your control.
 
 ## Anti-patterns
 
 - **Two writers**: the warm layer and `memories.db` both having `type='task'` rows for the same thing. Pick one. With a warm channel, `memories.db` does not hold open tasks — only their archived form after GC.
 - **Eager sync**: trying to mirror the warm layer in real time. The point of the GC is laziness — it runs at session start, not continuously.
 - **Silent writes**: archiving without the one-line announcement. The owner must always see what landed.
-- **Hardcoding the channel name in `CLAUDE.md`**: the channel name comes from preferences, the orchestrator never hardcodes "Slacky" or "Basecamp" in its top-level instructions.
+- **Hardcoding the channel name in `CLAUDE.md`**: the channel name comes from preferences, the orchestrator never hardcodes "Acme" or "Basecamp" in its top-level instructions.
 
-## Example — Slacky
+## Example — Acme
 
 ```yaml
 ## Warm task channel
-channel: slacky
-skill: slacky-task-manager
-archive_tag: slacky-archive
-marker_name: last-slacky-flush
+channel: acme
+skill: acme-task-manager
+archive_tag: acme-archive
+marker_name: last-acme-flush
 ```
 
-The skill `.claude/skills/slacky-task-manager/SKILL.md` wraps the Slacky MCP (`slacky_list_done_since`, `slacky_delete_task`, etc.), implements the GC flow, and optionally adds read/write tools (`slacky_get_today`, `slacky_create_task`).
+The skill `.claude/skills/acme-task-manager/SKILL.md` wraps the Acme MCP (`acme_list_done_since`, `acme_delete_task`, etc.), implements the GC flow, and optionally adds read/write tools (`acme_get_today`, `acme_create_task`).
 
 ## Example — Basecamp
 
@@ -142,18 +142,18 @@ The skill `.claude/skills/basecamp-task-manager/SKILL.md` wraps the Basecamp CLI
 
 - A todo's **assignee** maps to a tag.
 - A todo's **list** (within a project) maps to the `list` field of the archive description.
-- A todo's **parent message** or **card** can be referenced as `ref:` in the description (analog to Slacky's `parent_idea_ref`).
+- A todo's **parent message** or **card** can be referenced as `ref:` in the description (analog to Acme's `parent_idea_ref`).
 - **Comments** on the todo at completion time are flattened into the `notes:` field of the description (whitespace collapsed, `|` escaped).
 
 The same skill contract holds: the orchestrator at session start calls the GC, the GC reads since the marker, writes to the cold layer in bulk via `bin/mem save --bulk`, updates the marker, and announces.
 
 ## Reusing across instances
 
-The pattern is identical across Maestro instances. If you have multiple instances (Pam, Alfred, Claudio, Luigi), each one can declare its own channel:
+The pattern is identical across Maestro instances. If you have multiple instances (for example `home`, `work`, `side`, `client`), each one can declare its own channel:
 
-- Alfred → `slacky` (personal life)
-- Pam → `basecamp` (DatoCMS work)
-- Claudio → `basecamp` (DSM / Acacia)
-- Luigi → another channel or none
+- `home` → `acme` (personal life)
+- `work` → `basecamp` (the employer's projects)
+- `side` → `basecamp` (a side project)
+- `client` → another channel or none
 
 Each instance has its own `memories.db`, its own marker, and its own archived rows. The channels never cross.

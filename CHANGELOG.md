@@ -198,7 +198,7 @@ Nothing breaks: the schema is unchanged and existing rows stay valid. On the fir
 
 ## v2026.07.16.1 — 2026-07-16
 
-**Theme**: Optional semantic layer for `memories.db` — recall by meaning, duplicate detection, pattern discovery — built and calibrated on a real instance (Alfred), then upstreamed. Strictly opt-in per machine and fully additive: an instance without Ollama/uv behaves exactly as before.
+**Theme**: Optional semantic layer for `memories.db` — recall by meaning, duplicate detection, pattern discovery — built and calibrated on a real instance, then upstreamed. Strictly opt-in per machine and fully additive: an instance without Ollama/uv behaves exactly as before.
 
 ### Added
 
@@ -281,7 +281,7 @@ Nothing breaks: the schema is unchanged and existing rows stay valid. On the fir
 
 ## v2026.05.28.1 — 2026-05-28
 
-**Theme**: Promote two librarian disciplines proven in the Luigi instance into the base agent — tag parsimony and a symlink safety rail — generalized to be instance-agnostic.
+**Theme**: Promote two librarian disciplines proven in a client instance into the base agent — tag parsimony and a symlink safety rail — generalized to be instance-agnostic.
 
 ### Changed
 
@@ -292,12 +292,12 @@ Nothing breaks: the schema is unchanged and existing rows stay valid. On the fir
 
 ### Why
 
-Both patterns surfaced in the Luigi instance (Gestart) as hand-edits to the librarian: a tag-hygiene rule and a safety rail against writing through symlinks into application code. They are generic and benefit every instance, so they belong in the template rather than living as an instance fork.
+Both patterns surfaced in a client instance as hand-edits to the librarian: a tag-hygiene rule and a safety rail against writing through symlinks into application code. They are generic and benefit every instance, so they belong in the template rather than living as an instance fork.
 
 ### Migration
 
 - Instances that had **not** customized `librarian.md`: pull via `maestro-sync` and apply the diff. No data migration.
-- The Luigi instance carried these two sections as a local fork; after this promotion it re-aligns to the upstream (generalized) librarian and rejoins `maestro-sync` scope.
+- The client instance carried these two sections as a local fork; after this promotion it re-aligns to the upstream (generalized) librarian and rejoins `maestro-sync` scope.
 
 ---
 
@@ -307,7 +307,7 @@ Both patterns surfaced in the Luigi instance (Gestart) as hand-edits to the libr
 
 ### Added
 
-- **`howto/07-warm-task-channel.md`** — new how-to that describes the warm (external task system) / cold (`memories.db`) / GC (skill `<channel>-task-manager`) pattern, the skill contract, the archive-memory format, optional weekly trend, and reusability across instances. Includes worked examples for Slacky and Basecamp.
+- **`howto/07-warm-task-channel.md`** — new how-to that describes the warm (external task system) / cold (`memories.db`) / GC (skill `<channel>-task-manager`) pattern, the skill contract, the archive-memory format, optional weekly trend, and reusability across instances. Includes worked examples for Acme and Basecamp.
 - **`preferences.example.md` → `## Warm task channel`** — new optional block with `channel`, `skill`, `archive_tag`, `marker_name`. Skip the block entirely (or set `channel: none`) to keep `memories.db` as the only task store.
 
 ### Changed
@@ -319,14 +319,14 @@ Both patterns surfaced in the Luigi instance (Gestart) as hand-edits to the libr
 
 ### Why
 
-- Pre-2026.05.23.2 instances that used a warm task channel (e.g. Alfred with Slacky) hardcoded the channel name in their own copy of `CLAUDE.md`, drifting from the template and making the same pattern hard to reuse on other instances (Pam with Basecamp, Claudio with Basecamp).
+- Pre-2026.05.23.2 instances that used a warm task channel (e.g. `home` with Acme) hardcoded the channel name in their own copy of `CLAUDE.md`, drifting from the template and making the same pattern hard to reuse on other instances (`work` with Basecamp, `side` with Basecamp).
 - Extracting the pattern lets every instance opt-in by editing `preferences.md` alone, without touching `CLAUDE.md`. New channels are added by writing a skill that conforms to the GC contract — the orchestrator's top-level behavior stays unchanged.
-- The howto is the single source of truth for the contract, so each `<channel>-task-manager` skill (Slacky, Basecamp, etc.) can point at it instead of redefining the flow.
+- The howto is the single source of truth for the contract, so each `<channel>-task-manager` skill (Acme, Basecamp, etc.) can point at it instead of redefining the flow.
 
 ### Migration
 
 - Instances with no warm task channel: **no action needed**. The new session-start step is a no-op when the preferences block is absent.
-- Instances that already hardcoded a channel (e.g. Alfred): pull this version via `maestro-sync`, then move the channel declaration into a `## Warm task channel` block in `private/preferences.md` and delete any instance-level edits to `CLAUDE.md`'s session-start section. The existing `<channel>-task-manager` skill keeps working as-is — only the entry point moves from CLAUDE.md to preferences.
+- Instances that already hardcoded a channel (e.g. `home`): pull this version via `maestro-sync`, then move the channel declaration into a `## Warm task channel` block in `private/preferences.md` and delete any instance-level edits to `CLAUDE.md`'s session-start section. The existing `<channel>-task-manager` skill keeps working as-is — only the entry point moves from CLAUDE.md to preferences.
 
 ---
 
@@ -377,11 +377,11 @@ This is a one-shot step per instance (idempotent — running it again just overw
 
 ### Roadmap (open)
 
-The work behind this release is part of a larger shaping (see Alfred's `memories.db` idea #408). What's deferred for now:
+The work behind this release is part of a larger shaping, tracked as an idea in the instance's `memories.db`. What's deferred for now:
 
 - **FTS5 + indexes + views** — relevant when the row count grows past a few thousand
-- **`sqlite-vec` + semantic similarity** — `bin/mem similar <id-or-query>` k-NN search (idea #407 in Alfred)
-- **MCP server layer** — would eliminate the Bash round-trip the CLI still incurs; deferred because the dominant cost was verbosity (now solved) and an MCP server reopens the multi-instance isolation question (idea #455)
+- **`sqlite-vec` + semantic similarity** — `bin/mem similar <id-or-query>` k-NN search
+- **MCP server layer** — would eliminate the Bash round-trip the CLI still incurs; deferred because the dominant cost was verbosity (now solved) and an MCP server reopens the multi-instance isolation question
 - **Scope extension of `maestro-sync`** to handle `bin/*` with comment-style markers — would remove the manual copy step above
 
 ### Commit
@@ -396,7 +396,7 @@ The work behind this release is part of a larger shaping (see Alfred's `memories
 
 ### Changed
 
-- **`CLAUDE.md` → "Distribution and modifications"** gets a new "Single exception" paragraph. Each instance can extend the `tools:` whitelist of a skill or agent marked `origin: maestro` with its own MCPs/tools, without violating the no-in-place-edits rule. This is necessary because MCP installations are per-instance: an agent that needs to call Slacky tools needs `mcp__slacky__*` in its `tools:`, but Slacky may not exist on every instance. The `maestro-sync` skill ignores diffs limited to the `tools:` field — only the body and other frontmatter keys are diffed for sync.
+- **`CLAUDE.md` → "Distribution and modifications"** gets a new "Single exception" paragraph. Each instance can extend the `tools:` whitelist of a skill or agent marked `origin: maestro` with its own MCPs/tools, without violating the no-in-place-edits rule. This is necessary because MCP installations are per-instance: an agent that needs to call Acme tools needs `mcp__acme__*` in its `tools:`, but Acme may not exist on every instance. The `maestro-sync` skill ignores diffs limited to the `tools:` field — only the body and other frontmatter keys are diffed for sync.
 
 ### Why
 
@@ -415,7 +415,7 @@ Without this exception, an instance that wants to use the base `scheduler` agent
 ### Added
 
 - **`.claude/skills/maestro-sync/SKILL.md`** new hub skill. Implements the full sync flow:
-  1. Locate mirror (`~/.maestro/`) and primary working tree (`~/Sites/me/maestro/`)
+  1. Locate mirror (`~/.maestro/`) and primary working tree
   2. Pre-sync check on the working tree (warn on uncommitted changes / unpushed commits)
   3. Refresh the read-only mirror with `git fetch origin && git reset --hard origin/main`
   4. Scan the instance for files marked `origin: maestro`, read each `maestro_version`
@@ -441,7 +441,7 @@ Without this exception, an instance that wants to use the base `scheduler` agent
 
 ## v2026.04.30.2 — 2026-04-30
 
-**Theme**: Promote three patterns proven in the Alfred instance into the template.
+**Theme**: Promote three patterns proven in a personal instance into the template.
 
 ### Added
 

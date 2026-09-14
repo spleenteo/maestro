@@ -71,7 +71,7 @@ If the owner's vault is a plain filesystem folder (no Obsidian), this section do
 
 **What stays in monospace** (these are NOT wikilinks):
 
-- Folder paths (e.g. `Projects/Slacky/`)
+- Folder paths (e.g. `Projects/Acme/`)
 - Files outside the vault (e.g. `private/memories.db`, `.claude/skills/<name>/SKILL.md`)
 - Code identifiers (e.g. `type='task'`, function names)
 - Domain names, URLs
