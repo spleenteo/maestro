@@ -1,8 +1,8 @@
 # Recurring routines — input for the `scheduler` agent (Cal)
 #
-# The `setup` skill copies this file to `private/routines.yaml` on first
-# launch. Edit the private copy, not this template — the template is a
-# reference that gets removed after setup.
+# The `new-instance` skill copies this file to `private/routines.yaml` on
+# first launch. Edit the private copy, not this template — the template is
+# a reference that gets removed once `new-instance` finishes.
 #
 # Cal reads `private/routines.yaml` only when a `question_type` in
 # `.claude/agents/data/channels.yaml` has `include_routines: true`

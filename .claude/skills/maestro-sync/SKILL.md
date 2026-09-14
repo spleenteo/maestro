@@ -23,7 +23,7 @@ The skill scans the **instance** (the orchestrator that invokes the skill) for f
 The skill operates on files marked with both `origin: maestro` and `maestro_version: vYYYY.MM.DD.N` in their frontmatter. Typical inheritable files:
 
 - `CLAUDE.md` (top-level)
-- `.claude/skills/<name>/SKILL.md` for hub skills distributed by Maestro (e.g. `setup`, `logbook`, `add-external-app`, `guide`, `maestro-sync` itself)
+- `.claude/skills/<name>/SKILL.md` for hub skills distributed by Maestro (e.g. `logbook`, `add-external-app`, `guide`, `maestro-sync` itself)
 - `.claude/agents/<name>.md` for craft agents distributed by Maestro (e.g. `librarian`, `scheduler`, `hr`)
 
 Files **never** in scope:
@@ -115,9 +115,9 @@ For each match, read the file's `maestro_version` value. Build a list:
 
 ```
 [
-  { path: "CLAUDE.md",                       version: "v2026.04.29.1" },
-  { path: ".claude/skills/setup/SKILL.md",   version: "v2026.04.30.1" },
-  { path: ".claude/agents/librarian.md",     version: "v2026.04.30.1" },
+  { path: "CLAUDE.md",                              version: "v2026.04.29.1" },
+  { path: ".claude/skills/add-external-app/SKILL.md", version: "v2026.04.30.1" },
+  { path: ".claude/agents/librarian.md",            version: "v2026.04.30.1" },
   ...
 ]
 ```
@@ -239,7 +239,7 @@ For files where the owner answers `a` or `A`:
 
 ```
 2026-04-30T18:42:13Z  v2026.04.29.1 → v2026.04.30.2  CLAUDE.md (applied)
-2026-04-30T18:42:13Z  v2026.04.30.1 → v2026.04.30.2  .claude/skills/setup/SKILL.md (skipped by owner)
+2026-04-30T18:42:13Z  v2026.04.30.1 → v2026.04.30.2  .claude/skills/add-external-app/SKILL.md (skipped by owner)
 ```
 
 If the owner answers `n` (abort), stop immediately. Files already applied stay applied; files not yet shown are not touched. Log a final entry: `2026-04-30T18:42:13Z  ABORTED by owner after <N> files`.
@@ -274,7 +274,7 @@ After all files are processed (or the owner picked `A`), summarize:
 ```
 ✅ Maestro sync complete
 
-Updated:  3 files  (CLAUDE.md, .claude/skills/setup/SKILL.md, .claude/agents/librarian.md)
+Updated:  3 files  (CLAUDE.md, .claude/skills/add-external-app/SKILL.md, .claude/agents/librarian.md)
 Added:    1 file   (howto/08-markdown-discipline.md — new from upstream)
 Skipped:  1 file   (.claude/skills/logbook/SKILL.md — owner declined)
 Identical: 4 files (no change in upstream)

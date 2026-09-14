@@ -40,7 +40,7 @@ Validate:
 
 - Not empty, lowercase letters + digits + dashes only
 - Not already used in `apps/` or `.claude/skills/` — if it is, explain the clash and ask for a different name
-- Not a reserved name like `setup`, `logbook`, `add-external-app`, `hr`, `data`, `.disabled`
+- Not a reserved name like `logbook`, `add-external-app`, `hr`, `data`, `.disabled`
 
 ### Question 3/6 — One-line description
 

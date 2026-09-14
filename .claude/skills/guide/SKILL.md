@@ -69,7 +69,7 @@ If the owner picks "save as idea", insert an entry in the memory db with `type='
 
 ## Language
 
-Always respond in the owner's **default language** from `private/preferences.md`. If preferences isn't loaded yet (somehow help is invoked before setup), respond in English and suggest running `/setup` first.
+Always respond in the owner's **default language** from `private/preferences.md`. If preferences isn't loaded yet (this folder isn't a configured Maestro instance), respond in English and point to `/maestro:new-instance`, which creates one in a new folder.
 
 ## Rules
 

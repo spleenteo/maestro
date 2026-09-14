@@ -14,7 +14,7 @@ Out of the box Cal reads only one channel: `memories_db` (your orchestrator's me
 | File | Role | Gitignored |
 |------|------|:---:|
 | `.claude/agents/data/channels.yaml` | Channels + `question_types`. Read by Cal at every invocation. Shared, versioned. | no |
-| `private/routines.yaml` | Your recurring routines. Seeded from `routines.example.yaml` at setup. Edit freely. | **yes** |
+| `private/routines.yaml` | Your recurring routines. Seeded from `routines.example.yaml` by `new-instance`. Edit freely. | **yes** |
 | `private/preferences.md` | Owner profile, including `timezone` (optional; Cal falls back to system TZ). | **yes** |
 | Tool-specific configs | Where the tool expects them. Example: `.basecamp/config.json` if you use the Basecamp CLI. | varies |
 
@@ -123,7 +123,7 @@ If a declared channel's backing tool is unavailable (SQLite file missing, Baseca
 
 ## Routines
 
-Routines are recurring items you keep outside your task tracker: think "review invoices at month end", "weekly retro on Friday afternoon", "check X every 15th". They live in `private/routines.yaml`, seeded at setup from `routines.example.yaml`. Cal reads them only when the matched `question_type` has `include_routines: true` (e.g. `prospective_today`, `prospective_week`, `weekly_plan`).
+Routines are recurring items you keep outside your task tracker: think "review invoices at month end", "weekly retro on Friday afternoon", "check X every 15th". They live in `private/routines.yaml`, seeded by `new-instance` from `routines.example.yaml`. Cal reads them only when the matched `question_type` has `include_routines: true` (e.g. `prospective_today`, `prospective_week`, `weekly_plan`).
 
 A routine is one YAML item under `routines:`:
 
@@ -157,7 +157,7 @@ Cal resolves time windows ("today", "this week") using:
 1. `timezone` key in `private/preferences.md` if present (IANA name, e.g. `Europe/Rome`, `America/New_York`, `Asia/Tokyo`).
 2. System timezone via `date +%Z` as fallback.
 
-No question about this in setup: it's an advanced preference. Add the key to `preferences.md` only if you want to override the system TZ.
+No question about this in the `new-instance` interview: it's an advanced preference. Add the key to `preferences.md` only if you want to override the system TZ.
 
 ## Common workflows
 

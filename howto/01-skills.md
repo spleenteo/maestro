@@ -90,8 +90,6 @@ Put this at `.claude/skills/weekly-report/SKILL.md`. Restart the Claude Code ses
 
 Move the skill folder to `.claude/skills/.disabled/<name>/`. It's preserved but no longer available to the orchestrator. Restore by moving it back.
 
-The `setup` skill uses this pattern after first launch: it self-disables but stays recoverable.
-
 ## Skill vs agent — quick heuristic
 
 | If you want... | Use a... |

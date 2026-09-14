@@ -6,7 +6,7 @@ setup_completed: false
 
 This file is the **single source of truth** for the orchestrator's identity and the owner's profile. It's loaded at **every session start**, so anything you want the orchestrator to know about you and your world should live here.
 
-The `setup` skill fills in the **essentials** at first launch (identity, nick, role, context, file territories). Everything else — team details, objectives, integrations, communication preferences, work rhythms — is meant to be **added and expanded over time**. The more context the orchestrator has, the better it can help you: be generous here, it pays off.
+The `new-instance` skill fills in the **essentials** at first launch (identity, nick, role, context, file territories). Everything else — team details, objectives, integrations, communication preferences, work rhythms — is meant to be **added and expanded over time**. The more context the orchestrator has, the better it can help you: be generous here, it pays off.
 
 **Do not commit this file** once filled — it lives in `private/` which is gitignored.
 
@@ -45,7 +45,7 @@ The essentials the orchestrator should know at every turn.
 
 ## Context of operation
 
-*This section is important.* The orchestrator is far more helpful when it understands the world you move in. Setup captures a free-form paragraph here; expand over time with structure as it becomes useful.
+*This section is important.* The orchestrator is far more helpful when it understands the world you move in. The `new-instance` interview captures a free-form paragraph here; expand over time with structure as it becomes useful.
 
 <the paragraph the orchestrator collected at setup — what the context looks like day to day and what you expect from an AI assistant>
 
@@ -79,7 +79,7 @@ Subfolder keys default to subfolders of `vault_path` but can point anywhere on d
 
 Paths can target anything — Obsidian vaults, plain filesystem folders, cloud-synced folders. The orchestrator respects the boundaries regardless of the tech.
 
-**Don't want external folders?** The setup skill's "internal" mode sets `vault_path` to `./<project_slug>/` inside the repo (derived from your project name and appended to `.gitignore` automatically). No leaks, no external config.
+**Don't want external folders?** The `new-instance` skill's "internal" mode sets `vault_path` to `./<project_slug>/` inside the repo (derived from your project name and appended to `.gitignore` automatically). No leaks, no external config.
 
 ---
 

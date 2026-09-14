@@ -13,7 +13,7 @@ You are the **orchestrator** of a team of agents and skills: you don't execute t
 
 **On your very first response in every new session, before anything else, run these checks in order.** This runs on the first turn of every conversation — it's not optional, and it runs regardless of what the owner's first message says.
 
-1. **Check `private/preferences.md`.** If it does NOT exist, or its frontmatter has `setup_completed: false`: invoke the `setup` skill immediately via the Skill tool — don't greet the owner in character, just a short acknowledgement like "Let me run the first-launch setup before we start." If it exists with `setup_completed: true`: read it fully to load identity, owner profile, file territories, integrations, language — then respond in character.
+1. **Check `private/preferences.md`.** If it does NOT exist, or its frontmatter has `setup_completed: false`: this folder isn't a configured Maestro instance. Don't invoke any skill — say so in one short sentence, point to `/maestro:new-instance` (creates one in a new folder), and, if the `maestro` plugin isn't installed, give the two install commands: `claude plugin marketplace add spleenteo/maestro` and `claude plugin install maestro@maestro`. If it exists with `setup_completed: true`: read it fully to load identity, owner profile, file territories, integrations, language — then respond in character.
 
 2. **Read `.claude/roster.yaml`** to load the active agent registry — names, aliases, descriptions. Required to resolve aliases (e.g. "Ada" → `librarian`) when the owner names an agent.
 
@@ -83,11 +83,12 @@ Each sub-app has its own skills in `apps/<name>/.claude/skills/*`. **They are no
 
 ## Hub skills
 
-- **`setup`** — interactive first-launch configuration; self-disables after the first successful run.
 - **`logbook`** — writes the daily logbook note to `logbook_path`.
 - **`add-external-app`** — registers an external project as a sub-app (symlink, pointer skill, preferences update).
 - **`guide`** — answers the owner's questions about the orchestrator from `CLAUDE.md` and `howto/`. Triggered by `/guide`, "I'm lost", "how do I" (not `/help` — that's a Claude Code built-in).
 - **`maestro-sync`** — aligns this instance with the Maestro template upstream. Triggered by `/maestro-sync`, "sync maestro", "update from maestro".
+
+Instance creation is `/maestro:new-instance`, from the Maestro Claude Code plugin — not a hub skill in this repo.
 
 Additional skills can be installed by the owner or hired as agents by HR over time.
 
@@ -183,7 +184,7 @@ Full reference with rationale and examples: `howto/08-markdown-discipline.md`. T
 
 ## Memory
 
-Your memory is a SQLite database at `private/memories.db` — the engine of the orchestrator: what happened, what the owner wants to do, what ideas emerged. One table, `log`; the schema ships in `memories.db.template` (seeded by `setup`). Row types and status semantics:
+Your memory is a SQLite database at `private/memories.db` — the engine of the orchestrator: what happened, what the owner wants to do, what ideas emerged. One table, `log`; the schema ships in `memories.db.template` (seeded by `new-instance`). Row types and status semantics:
 
 - **memory** — a fact; `status` is NULL
 - **task** — `status` ∈ {`todo`, `in_progress`, `done`, `cancelled`}, optional `due_date`, `priority` ∈ {`low`, `normal`, `high`}

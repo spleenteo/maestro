@@ -11,7 +11,7 @@ Like a conductor, *maestro* doesn't play the instruments. It coordinates the one
 
 ## What you get
 
-After cloning and running setup, you have an orchestrator that:
+After running `/maestro:new-instance`, you have an orchestrator that:
 
 - Introduces itself with the name and personality you chose
 - Reads your profile (role, nick, default language) at every session
@@ -28,21 +28,22 @@ After cloning and running setup, you have an orchestrator that:
 
 ## Install
 
-You need a working installation of [Claude Code](https://claude.com/claude-code).
+You need a working installation of [Claude Code](https://claude.com/claude-code) and the `maestro` plugin, which ships `new-instance` (creates an instance) and `maestro-net` (cross-talk between instances, see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)):
 
 ```bash
-git clone https://github.com/<your-fork>/maestro.git my-orchestrator
-cd my-orchestrator
-claude
+claude plugin marketplace add spleenteo/maestro
+claude plugin install maestro@maestro
 ```
 
-On first launch, the orchestrator should notice that `private/preferences.md` doesn't exist and trigger the `setup` skill automatically. If it doesn't (Claude Code sometimes waits for an explicit signal), just type:
+User scope, auto-update off.
+
+From any folder, run:
 
 ```
-/setup
+/maestro:new-instance
 ```
 
-Either way, the `setup` skill asks you a short set of questions, starting with your preferred language. From that point on the whole setup runs in that language. In order:
+`new-instance` asks for a new or empty destination folder, takes the template at the plugin's commit, and interviews you with a short set of questions, starting with your preferred language. From that point on the whole interview runs in that language. In order:
 
 1. **Default language**: how the orchestrator talks to you by default (asked in English)
 2. **Project name**: the top-level scope this orchestrator is for (e.g. "Personal life", "Acme startup", "Novel draft"); a slug of it becomes the default vault folder name later
@@ -53,22 +54,17 @@ Either way, the `setup` skill asks you a short set of questions, starting with y
 7. **Your full name**: for context
 8. **Your role**: what you do
 9. **People you work with** (optional): team, collaborators, family, clients, whoever's relevant
-10. **File territories**: where markdown notes should live. The setup writes four keys to preferences: `vault_path` (the root) plus `logbook_path`, `til_path`, `documents_path` as subfolders by default. Three options: internal (vault is `./<project-slug>/` inside the repo, with the slug derived from Q2, gitignored), external (you give an absolute path to a vault on disk, e.g. an Obsidian vault: subfolders default to `<vault_path>/{logbook,til,documents}`), or skip (no territories for now)
+10. **File territories**: where markdown notes should live. `new-instance` writes four keys to preferences: `vault_path` (the root) plus `logbook_path`, `til_path`, `documents_path` as subfolders by default. Three options: internal (vault is `./<project-slug>/` inside the repo, with the slug derived from Q2, gitignored), external (you give an absolute path to a vault on disk, e.g. an Obsidian vault: subfolders default to `<vault_path>/{logbook,til,documents}`), or skip (no territories for now)
 
-After the questions and a quick summary, a shipped script (`.claude/skills/setup/finalize.sh`) handles the mechanical work in one atomic step: writes `private/preferences.md`, copies `memories.db.template` into `private/memories.db`, copies `routines.example.yaml` into `private/routines.yaml`, inserts the first memory log row, removes the three root templates, and self-disables the skill (moves it to `.claude/skills/.disabled/setup/`). The first logbook entry and the first TIL are written just before that: creative content the orchestrator composes in your language. You're operational.
+After the questions and a quick summary, `finalize.sh` (shipped inside the plugin) handles the mechanical work in one atomic step: writes `private/preferences.md`, copies `memories.db.template` into `private/memories.db`, copies `routines.example.yaml` into `private/routines.yaml`, inserts the first memory log row, and removes the three root templates. The first logbook entry and the first TIL are written just before that: creative content the orchestrator composes in your language. `new-instance` then registers the instance in `~/.claude/maestro-instances.yaml`, so `maestro-net` can reach it.
 
-Any time you feel lost later, type `/guide`, and the orchestrator will read its own docs and answer. (`/help` is a Claude Code built-in command and won't reach this skill.)
-
-### Cross-instance skills (optional)
-
-An owner running more than one Maestro instance gets `maestro-net`, the channel that lets one instance recap a memory or ask a question of another, through the `maestro` Claude Code plugin:
+`cd` into the new folder and start working with your orchestrator:
 
 ```bash
-claude plugin marketplace add spleenteo/maestro
-claude plugin install maestro@maestro
+cd "<destination>" && claude
 ```
 
-User scope, auto-update off. Details in [`howto/11-maestro-net.md`](howto/11-maestro-net.md).
+Any time you feel lost later, type `/guide`, and the orchestrator will read its own docs and answer. (`/help` is a Claude Code built-in command and won't reach this skill.)
 
 ## The orchestrator pattern
 
@@ -77,14 +73,14 @@ Every instance built from this template has:
 - **`CLAUDE.md`**: defines the orchestrator role, routing, delegation, memory behavior, frontmatter discipline. Generic, with no owner-specific content.
 - **`private/preferences.md`**: identity + owner profile + customizations, loaded at every session start. Gitignored.
 - **`private/memories.db`**: SQLite log of memories, tasks, ideas. Gitignored.
-- **`memories.db.template`**: empty SQLite seed with the schema, copied into `private/` by the setup skill.
+- **`memories.db.template`**: empty SQLite seed with the schema, copied into `private/` by `new-instance`.
 - **`.claude/roster.yaml`**: registry of active craft agents (ships with `librarian` and `scheduler` enrolled).
 - **`.claude/agents/`**: the shipped craft agents `hr` (recruiter and manager of the roster), `librarian` (vault research and frontmatter hygiene), `scheduler` (cold data layer for prospective/retrospective questions).
-- **`.claude/skills/`**: the hub skills `setup` (first-launch configuration, self-disables), `logbook` (daily note in your configured `logbook_path`), `listen` (live capture of a call; the transcript and a note land in the vault), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (post-pass that enforces the prose register), `maestro-sync` (pulls template updates from upstream).
+- **`.claude/skills/`**: the hub skills `logbook` (daily note in your configured `logbook_path`), `listen` (live capture of a call; the transcript and a note land in the vault), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (post-pass that enforces the prose register), `maestro-sync` (pulls template updates from upstream).
 - **`bin/mem`**: CLI wrapper for `memories.db` (escape-safe writes, relative dates, reports), backed by `bin/mem-vec` for the optional semantic layer.
 - **`bin/session-digest`**: pulls the owner's messages from the day's parallel sessions, for the `logbook` skill.
 - **`bin/register-check`**: mechanical check of the writing register prohibitions that carry a syntactic signature.
-- **`.claude-plugin/marketplace.json`** and **`plugins/`**: the `maestro` Claude Code plugin, installed separately (see Install above) rather than through `maestro-sync`, because it's meant to be visible from every session on the machine, not carried per instance. Currently `plugins/maestro/skills/maestro-net`, the cross-talk channel between several Maestro instances (see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)).
+- **`.claude-plugin/marketplace.json`** and **`plugins/`**: the `maestro` Claude Code plugin, installed separately (see Install above) rather than through `maestro-sync`, because it's meant to be visible from every session on the machine, not carried per instance. Currently `plugins/maestro/skills/new-instance` (creates a new instance) and `plugins/maestro/skills/maestro-net` (the cross-talk channel between several Maestro instances, see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)).
 - **`.gitignore`**: covers `private/`, workspace artifacts, and local settings.
 
 Everything else you add as you use the orchestrator:

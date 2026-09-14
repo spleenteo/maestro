@@ -227,7 +227,7 @@ suspended: [4, 6]     # prohibitions to suspend, empty for the full register
 post_pass: on         # on | off
 ```
 
-The block is optional. Absent, the register applies in full with the post-pass on. `setup` does not write it; `preferences.example.md` documents it commented out.
+The block is optional. Absent, the register applies in full with the post-pass on. `new-instance` does not write it; `preferences.example.md` documents it commented out.
 
 ## Reference
 

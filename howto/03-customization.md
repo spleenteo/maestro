@@ -7,7 +7,7 @@ description: How to customize your orchestrator — identity, owner profile, con
 
 Everything that makes your orchestrator *yours* lives in **`private/preferences.md`**. This file is the single source of truth: it's loaded at every session start, and any change takes effect on the next session.
 
-The `setup` skill fills in the essentials at first launch. This document explains how to expand, refine, and reset the customization over time.
+The `new-instance` skill fills in the essentials at first launch. This document explains how to expand, refine, and reset the customization over time.
 
 ## The sections
 
@@ -24,7 +24,7 @@ The top-level scope this orchestrator is for. Shapes what "context" means in the
 - project_slug: acme-partnership
 ```
 
-The **slug** is a filesystem-safe version of the name (lowercase, non-alphanumeric replaced by `-`). Setup computes it automatically. You can rename the project later, but if you do and you're in internal mode, remember to rename the vault folder on disk and update the `vault_path` / subfolder keys to match.
+The **slug** is a filesystem-safe version of the name (lowercase, non-alphanumeric replaced by `-`). `new-instance` computes it automatically. You can rename the project later, but if you do and you're in internal mode, remember to rename the vault folder on disk and update the `vault_path` / subfolder keys to match.
 
 ### 2. Identity (the orchestrator)
 
@@ -158,14 +158,7 @@ The trigger for writing to preferences is **patterns**, not topic transitions. T
 
 Edit the `Name` field in the Identity block. Next session the orchestrator introduces itself with the new name.
 
-If you want a full re-setup (new identity, new adjectives, new paths), move the `setup` skill back out of `.disabled/` and flip `setup_completed: false`:
-
-```bash
-mv .claude/skills/.disabled/setup .claude/skills/setup
-# Then edit private/preferences.md and set setup_completed: false in frontmatter
-```
-
-The setup skill will re-trigger on the next launch.
+For a full re-setup (new identity, new adjectives, new paths), there is no in-place trigger: `new-instance` never edits an existing instance, only a new or empty folder. Either edit `private/preferences.md` by hand, field by field, or run `/maestro:new-instance` in a new or empty folder for a fresh interview end to end. To keep your accumulated history in the new instance, move `private/memories.db` into it once `new-instance` finishes — its `finalize.sh` refuses to run over an existing db, so the move happens after, never during.
 
 ## Changing language
 
@@ -173,12 +166,10 @@ Change `Default language` in the Owner block. Next session, the orchestrator use
 
 ## How to reset completely
 
-To start over from zero while preserving memory:
+There is no in-place reset: `new-instance` always creates a fresh instance in a new or empty folder, never edits this one. To start over from zero while preserving memory:
 
-1. Back up `private/memories.db` (it's the log you've accumulated).
-2. Delete `private/preferences.md`.
-3. Restore the `setup` skill: `mv .claude/skills/.disabled/setup .claude/skills/setup`.
-4. Restore the templates from git if needed: `git checkout HEAD -- preferences.example.md memories.db.template`.
-5. Launch `claude` — setup runs again.
+1. Run `/maestro:new-instance` in a new or empty folder and answer the interview again.
+2. Once it finishes, move `private/memories.db` from this instance into the new one — its `finalize.sh` refuses to run over an existing db, so this always happens after, never during.
+3. This folder is yours to delete or keep as a backup once you're happy with the new instance.
 
-To start over *completely* (fresh memory too), also delete `private/memories.db` before step 3. You'll lose your history.
+To start over *completely* (fresh memory too), skip step 2. You'll lose your history.

@@ -83,7 +83,7 @@ You don't know them statically. The YAML declares how to reach them (`access.ski
 
 ## Routines
 
-Routines are recurring items the owner keeps outside task trackers or calendars. They live in `private/routines.yaml`. Schema and examples: `routines.example.yaml` at the repo root (the file setup copies into `private/routines.yaml`) — the example file is the source of truth for the routine schema. This prompt describes only semantics.
+Routines are recurring items the owner keeps outside task trackers or calendars. They live in `private/routines.yaml`. Schema and examples: `routines.example.yaml` at the repo root (the file `new-instance` copies into `private/routines.yaml`) — the example file is the source of truth for the routine schema. This prompt describes only semantics.
 
 Filter rules at invocation time:
 
