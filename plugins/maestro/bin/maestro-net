@@ -12,6 +12,10 @@ Due verbi soli, `recap` e `ask`, più i comandi di servizio sul registry.
     scan                           censisce le istanze Maestro sul disco e
                                    propone il registry.
     list                           elenca le istanze registrate.
+    register <nome> --path P       aggiunge un'istanza al registry senza
+                                   toccare le altre (a differenza di
+                                   `scan --write --force`).
+    unregister <nome>              toglie un'istanza dal registry.
 
 VINCOLO CARDINE: il canale trasporta memorie, non permessi. Nessun verbo
 tocca file, MCP o task di un'altra istanza. Il campo `accepts` del registry
@@ -30,6 +34,7 @@ Exit code — la degradazione è sempre esplicita, mai silenziosa:
     6  verbo non ammesso dal destinatario
     7  path del destinatario non più valido
     8  il comando remoto è fallito
+    9  nome o path già registrati
 """
 
 from __future__ import annotations
@@ -52,9 +57,11 @@ E_UNKNOWN_INSTANCE = 5
 E_VERB_REFUSED = 6
 E_DEAD_PATH = 7
 E_REMOTE_FAILED = 8
+E_EXISTS = 9
 
 VERBS = ("recap", "ask")
 SUPPORTED_VERSIONS = (1,)
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 DEFAULT_REGISTRY = Path.home() / ".claude" / "maestro-instances.yaml"
 PROJECTS_ROOT = Path(os.environ.get("CLAUDE_PROJECTS_ROOT", Path.home() / ".claude" / "projects"))
@@ -436,6 +443,195 @@ def cmd_ask(args) -> int:
 
 
 # --------------------------------------------------------------------------
+# register / unregister — scrittura chirurgica del registry
+#
+# `scan --write --force` riscrive tutto il file e perde `domain` e `accepts`
+# che l'owner ha compilato a mano su ogni istanza già censita. register e
+# unregister toccano invece solo le righe della singola istanza aggiunta o
+# tolta: non passano da parse_registry + render_registry, che perderebbe i
+# commenti e riformatterebbe ogni istanza esistente. Lavorano riga per riga
+# sul testo originale — tutto il resto resta byte per byte identico.
+# --------------------------------------------------------------------------
+
+def is_instance_dir(path: Path) -> bool:
+    """La firma di un'istanza Maestro operativa: preferences.md + bin/mem.
+
+    Stessa firma che usa lo scanner (`scan_instances`), in una funzione a
+    parte perché V5 registrerà voci satellite senza passare da qui.
+    """
+    return (path / "private" / "preferences.md").is_file() and (path / "bin" / "mem").is_file()
+
+
+def _line_indent(line: str) -> Optional[int]:
+    """Indentazione di una riga di contenuto; None se è vuota o un commento.
+
+    Righe vuote e commenti sono trasparenti per chi cerca i confini di un
+    blocco: non lo aprono né lo chiudono, così un commento in mezzo alle
+    istanze non spezza né il blocco `instances:` né una singola istanza.
+    """
+    stripped = line.rstrip("\n")
+    if not stripped.strip() or stripped.lstrip().startswith("#"):
+        return None
+    return len(stripped) - len(stripped.lstrip(" "))
+
+
+def _block_end(lines: List[str], start: int, boundary_indent: int) -> int:
+    """Prima riga (>= start) di contenuto reale con indentazione <= boundary_indent.
+
+    len(lines) se non se ne trova una: il blocco arriva fino a fine file.
+    """
+    for i in range(start, len(lines)):
+        indent = _line_indent(lines[i])
+        if indent is not None and indent <= boundary_indent:
+            return i
+    return len(lines)
+
+
+def _instances_header_index(lines: List[str]) -> int:
+    """Riga `instances:` di primo livello. Il chiamante l'ha già validata con parse_registry."""
+    for i, line in enumerate(lines):
+        indent = _line_indent(line)
+        if indent == 0 and line.strip().split(":", 1)[0].strip() == "instances":
+            return i
+    raise RegistryError("`instances:` non trovata")
+
+
+def render_entry(name: str, path: str, domain: str, accepts: List[str]) -> str:
+    """Un blocco istanza: stessa indentazione e stesso ordine campi di render_registry."""
+    if '"' in path:
+        raise NetError(E_USAGE, f"path con virgolette, non rappresentabile: {path}")
+    rendered_path = f'"{path}"' if re.search(r"[\s:#\[\]{}]", path) else path
+    lines = [
+        f"  {name}:",
+        f"    path: {rendered_path}",
+        f'    domain: "{domain}"',
+        f"    accepts: [{', '.join(accepts)}]",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def insert_entry(text: str, entry_text: str) -> str:
+    """Inserisce entry_text alla fine del blocco `instances:`. Il resto non cambia."""
+    lines = text.splitlines(keepends=True)
+    header = _instances_header_index(lines)
+    insert_at = _block_end(lines, header + 1, 0)
+    if insert_at == len(lines) and lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    return "".join(lines[:insert_at]) + entry_text + "".join(lines[insert_at:])
+
+
+def remove_entry(text: str, name: str) -> str:
+    """Toglie il blocco della singola istanza `name`. Il resto non cambia."""
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        indent = _line_indent(line)
+        if indent == 2 and line.strip().split(":", 1)[0].strip() == name:
+            end = _block_end(lines, i + 1, 2)
+            return "".join(lines[:i]) + "".join(lines[end:])
+    raise RegistryError(f"istanza `{name}` non trovata nel testo")
+
+
+def _load_registry_text(dest: Path) -> Tuple[str, dict]:
+    """Testo grezzo + dati validati, o un registry vuoto in memoria se il file non c'è."""
+    if not dest.is_file():
+        return "version: 1\ninstances:\n", {"version": 1, "instances": {}}
+    try:
+        text = dest.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise NetError(E_NO_REGISTRY, f"registry illeggibile: {dest}: {exc}")
+    try:
+        data = parse_registry(text, str(dest))
+    except RegistryError as exc:
+        raise NetError(E_BAD_REGISTRY, f"registry malformato: {exc}")
+    return text, data
+
+
+def cmd_register(args) -> int:
+    name = args.name
+    if not NAME_RE.fullmatch(name):
+        raise NetError(
+            E_USAGE,
+            f"nome non valido: `{name}` (serve uno slug minuscolo: lettere, cifre, `-`, "
+            f"che inizia con lettera o cifra — non viene minuscolizzato per te).",
+        )
+
+    raw_path = Path(args.path)
+    if not raw_path.is_absolute():
+        raise NetError(E_USAGE, f"--path deve essere assoluto: {args.path}")
+
+    domain = args.domain
+    if '"' in domain or "\n" in domain:
+        raise NetError(E_USAGE, f"--domain non può contenere virgolette o andare a capo: {domain!r}")
+
+    accepts = [v.strip() for v in args.accepts.split(",") if v.strip()]
+    for verb in accepts:
+        if verb not in VERBS:
+            raise NetError(E_USAGE, f"verbo sconosciuto in --accepts: `{verb}` (ammessi: {', '.join(VERBS)})")
+
+    if not raw_path.is_dir():
+        raise NetError(E_DEAD_PATH, f"non è una directory: {raw_path}")
+    if not is_instance_dir(raw_path):
+        raise NetError(
+            E_DEAD_PATH,
+            f"`{raw_path}` non ha la firma di un'istanza Maestro "
+            f"(servono private/preferences.md e bin/mem).",
+        )
+    real_path = os.path.realpath(raw_path)
+
+    dest = registry_path(args.registry)
+    text, data = _load_registry_text(dest)
+
+    for existing_name, entry in data["instances"].items():
+        if existing_name.lower() == name.lower():
+            raise NetError(
+                E_EXISTS,
+                f"nome già registrato: `{existing_name}` → {entry.get('path')}.",
+            )
+        try:
+            existing_real = os.path.realpath(Path(entry["path"]).expanduser())
+        except OSError:
+            existing_real = entry.get("path")
+        if existing_real == real_path:
+            raise NetError(
+                E_EXISTS,
+                f"path già registrato con il nome `{existing_name}`: {real_path}.",
+            )
+
+    entry_text = render_entry(name, real_path, domain, accepts)
+    new_text = insert_entry(text, entry_text)
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(new_text, encoding="utf-8")
+    print(f"maestro-net: `{name}` registrata — {real_path}.")
+    return OK
+
+
+def cmd_unregister(args) -> int:
+    dest = registry_path(args.registry)
+    if not dest.is_file():
+        raise NetError(
+            E_NO_REGISTRY,
+            f"registry assente: {dest}\n"
+            f"Popolalo con: maestro-net scan --write",
+        )
+    try:
+        text = dest.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise NetError(E_NO_REGISTRY, f"registry illeggibile: {dest}: {exc}")
+    try:
+        data = parse_registry(text, str(dest))
+    except RegistryError as exc:
+        raise NetError(E_BAD_REGISTRY, f"registry malformato: {exc}")
+
+    name, entry = resolve_instance(data, args.name)
+
+    new_text = remove_entry(text, name)
+    dest.write_text(new_text, encoding="utf-8")
+    print(f"maestro-net: `{name}` tolta dal registry — {entry.get('path')}.")
+    return OK
+
+
+# --------------------------------------------------------------------------
 # Scanner
 #
 # I path delle istanze non stanno da nessuna parte in forma leggibile: le
@@ -639,7 +835,7 @@ def build_parser() -> argparse.ArgumentParser:
             "MCP o task di un'altra istanza.\n"
             "Exit code: 0 fatto, 2 uso, 3 registry assente, 4 registry malformato, "
             "5 istanza sconosciuta o ambigua, 6 verbo non ammesso, 7 path non valido, "
-            "8 comando remoto fallito."
+            "8 comando remoto fallito, 9 nome o path già registrati."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -675,6 +871,18 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"verbi proposti per ogni istanza (default: {','.join(VERBS)})")
     sp.set_defaults(func=cmd_scan)
 
+    sp = sub.add_parser("register", help="Aggiunge un'istanza al registry senza toccare le altre")
+    sp.add_argument("name", help="slug minuscolo, es. home")
+    sp.add_argument("--path", required=True, help="path assoluto della root dell'istanza")
+    sp.add_argument("--domain", default="", help="a cosa serve l'istanza (facoltativo)")
+    sp.add_argument("--accepts", default=",".join(VERBS),
+                    help=f"verbi ammessi per questa istanza (default: {','.join(VERBS)})")
+    sp.set_defaults(func=cmd_register)
+
+    sp = sub.add_parser("unregister", help="Toglie un'istanza dal registry")
+    sp.add_argument("name")
+    sp.set_defaults(func=cmd_unregister)
+
     return p
 
 
@@ -683,7 +891,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if not args.verb:
         parser.print_usage(sys.stderr)
-        print("maestro-net: serve un verbo (list, recap, ask, scan)", file=sys.stderr)
+        print("maestro-net: serve un verbo (list, recap, ask, scan, register, unregister)", file=sys.stderr)
         return E_USAGE
     try:
         return args.func(args)

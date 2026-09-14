@@ -20,6 +20,7 @@ E_UNKNOWN_INSTANCE = 5
 E_VERB_REFUSED = 6
 E_DEAD_PATH = 7
 E_REMOTE_FAILED = 8
+E_EXISTS = 9
 
 
 def run(*args, env=None, cwd=None, stdin=None):
@@ -574,6 +575,211 @@ class TestScan(unittest.TestCase):
         self.assertIn("nessuna istanza", r.stderr.lower())
 
 
+class TestRegister(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.registry = self.root / "maestro-instances.yaml"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def register(self, *args, **kw):
+        return run("--registry", str(self.registry), "register", *args, **kw)
+
+    def make_instance(self, name):
+        return fake_instance(self.root, name)
+
+    def test_creates_registry_from_nothing(self):
+        inst = self.make_instance("home")
+        r = self.register("home", "--path", str(inst))
+        self.assertEqual(r.returncode, OK, r.stderr)
+        text = self.registry.read_text()
+        self.assertIn("version: 1", text)
+        self.assertIn("instances:", text)
+        self.assertIn("  home:", text)
+        self.assertIn(f"path: {os.path.realpath(inst)}", text)
+        self.assertIn('domain: ""', text)
+        self.assertIn("accepts: [recap, ask]", text)
+
+    def test_confirmation_names_instance_and_path(self):
+        inst = self.make_instance("home")
+        r = self.register("home", "--path", str(inst))
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertIn("home", r.stdout)
+        self.assertIn(str(os.path.realpath(inst)), r.stdout)
+
+    def test_append_keeps_other_entries_domain_accepts_and_comments(self):
+        home = self.make_instance("home")
+        work = self.make_instance("work")
+        self.registry.write_text(
+            "# nota personale sul registry\n"
+            "version: 1\n"
+            "instances:\n"
+            "  home:\n"
+            f"    path: {home}\n"
+            '    domain: "vita personale"\n'
+            "    accepts: [recap, ask]\n"
+        )
+        r = self.register("work", "--path", str(work), "--domain", "lavoro")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        text = self.registry.read_text()
+        self.assertIn("# nota personale sul registry", text)
+        self.assertIn('domain: "vita personale"', text)
+        self.assertIn("accepts: [recap, ask]", text)
+        self.assertIn("  work:", text)
+        self.assertIn('domain: "lavoro"', text)
+
+    def test_registry_with_version_after_instances_stays_valid(self):
+        home = self.make_instance("home")
+        work = self.make_instance("work")
+        self.registry.write_text(f"instances:\n  home:\n    path: {home}\nversion: 1\n")
+        r = self.register("work", "--path", str(work))
+        self.assertEqual(r.returncode, OK, r.stderr)
+        lr = run("--registry", str(self.registry), "list", "--json")
+        self.assertEqual(lr.returncode, OK, lr.stderr)
+        data = json.loads(lr.stdout)
+        self.assertIn("home", data["instances"])
+        self.assertIn("work", data["instances"])
+
+    def test_registry_without_trailing_newline_stays_valid(self):
+        home = self.make_instance("home")
+        work = self.make_instance("work")
+        self.registry.write_text(f"version: 1\ninstances:\n  home:\n    path: {home}")
+        r = self.register("work", "--path", str(work))
+        self.assertEqual(r.returncode, OK, r.stderr)
+        lr = run("--registry", str(self.registry), "list", "--json")
+        self.assertEqual(lr.returncode, OK, lr.stderr)
+        data = json.loads(lr.stdout)
+        self.assertIn("home", data["instances"])
+        self.assertIn("work", data["instances"])
+
+    def test_duplicate_name_different_case_exits_9(self):
+        home = self.make_instance("home")
+        other = self.make_instance("other")
+        self.registry.write_text(f"version: 1\ninstances:\n  Home:\n    path: {home}\n")
+        r = self.register("home", "--path", str(other))
+        self.assertEqual(r.returncode, E_EXISTS)
+        self.assertIn("home", r.stderr.lower())
+
+    def test_duplicate_path_via_symlink_exits_9(self):
+        home = self.make_instance("home")
+        self.registry.write_text(f"version: 1\ninstances:\n  home:\n    path: {home}\n")
+        link = self.root / "home-link"
+        link.symlink_to(home)
+        r = self.register("home2", "--path", str(link))
+        self.assertEqual(r.returncode, E_EXISTS)
+
+    def test_missing_dir_exits_7(self):
+        r = self.register("ghost", "--path", str(self.root / "nope"))
+        self.assertEqual(r.returncode, E_DEAD_PATH)
+        self.assertFalse(self.registry.exists())
+
+    def test_dir_without_signature_exits_7(self):
+        naked = self.root / "naked"
+        naked.mkdir()
+        r = self.register("naked", "--path", str(naked))
+        self.assertEqual(r.returncode, E_DEAD_PATH)
+        self.assertIn("bin/mem", r.stderr + " " + str(r.stderr))
+
+    def test_domain_with_quote_is_refused(self):
+        inst = self.make_instance("home")
+        r = self.register("home", "--path", str(inst), "--domain", 'ha "virgolette"')
+        self.assertEqual(r.returncode, E_USAGE)
+        self.assertFalse(self.registry.exists())
+
+    def test_domain_with_newline_is_refused(self):
+        inst = self.make_instance("home")
+        r = self.register("home", "--path", str(inst), "--domain", "riga1\nriga2")
+        self.assertEqual(r.returncode, E_USAGE)
+
+    def test_uppercase_name_refused(self):
+        inst = self.make_instance("Home")
+        r = self.register("Home", "--path", str(inst))
+        self.assertEqual(r.returncode, E_USAGE)
+        self.assertFalse(self.registry.exists())
+
+    def test_relative_path_refused(self):
+        inst = self.make_instance("home")
+        r = self.register("home", "--path", "relative/path")
+        self.assertEqual(r.returncode, E_USAGE)
+
+    def test_unknown_verb_in_accepts_refused(self):
+        inst = self.make_instance("home")
+        r = self.register("home", "--path", str(inst), "--accepts", "recap,handoff")
+        self.assertEqual(r.returncode, E_USAGE)
+        self.assertIn("handoff", r.stderr)
+
+    def test_accepts_defaults_to_recap_ask(self):
+        inst = self.make_instance("home")
+        r = self.register("home", "--path", str(inst))
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertIn("accepts: [recap, ask]", self.registry.read_text())
+
+    def test_accepts_can_be_narrowed(self):
+        inst = self.make_instance("home")
+        r = self.register("home", "--path", str(inst), "--accepts", "recap")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertIn("accepts: [recap]", self.registry.read_text())
+
+    def test_registered_instance_is_reachable_by_recap(self):
+        inst = self.make_instance("home")
+        recording_mem(inst)
+        r = self.register("home", "--path", str(inst))
+        self.assertEqual(r.returncode, OK, r.stderr)
+        r2 = run("--registry", str(self.registry), "recap", "home", "ciao", "--dry-run")
+        self.assertEqual(r2.returncode, OK, r2.stderr)
+
+    def test_missing_path_flag_exits_2(self):
+        r = self.register("home")
+        self.assertEqual(r.returncode, E_USAGE)
+
+
+class TestUnregister(RegistryFixture):
+    def test_removes_existing_instance(self):
+        r = self.run_net("unregister", "work")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        text = self.registry.read_text()
+        self.assertNotIn("work:", text)
+        self.assertIn("home:", text)
+
+    def test_confirmation_names_instance_and_path(self):
+        r = self.run_net("unregister", "work")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertIn("work", r.stdout)
+        self.assertIn(str(self.work), r.stdout)
+
+    def test_keeps_other_entries_intact(self):
+        r = self.run_net("unregister", "work")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        text = self.registry.read_text()
+        self.assertIn("domain: vita personale", text)
+        self.assertIn("accepts: [recap, ask]", text)
+
+    def test_unregistered_instance_disappears_from_list(self):
+        r = self.run_net("unregister", "work")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        lr = self.run_net("list", "--json")
+        data = json.loads(lr.stdout)
+        self.assertNotIn("work", data["instances"])
+        self.assertIn("home", data["instances"])
+
+    def test_unknown_name_exits_5(self):
+        r = self.run_net("unregister", "zorro")
+        self.assertEqual(r.returncode, E_UNKNOWN_INSTANCE)
+        self.assertIn("zorro", r.stderr)
+        self.assertIn("home", r.stderr)
+
+    def test_case_insensitive_match(self):
+        r = self.run_net("unregister", "Work")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertNotIn("work:", self.registry.read_text())
+
+    def test_missing_registry_exits_3(self):
+        r = run("--registry", str(self.root / "nope.yaml"), "unregister", "home")
+        self.assertEqual(r.returncode, E_NO_REGISTRY)
+
+
 class TestCli(unittest.TestCase):
     def test_no_verb_exits_2(self):
         r = run()
@@ -589,6 +795,8 @@ class TestCli(unittest.TestCase):
         self.assertIn("recap", r.stdout)
         self.assertIn("ask", r.stdout)
         self.assertIn("scan", r.stdout)
+        self.assertIn("register", r.stdout)
+        self.assertIn("unregister", r.stdout)
 
 
 if __name__ == "__main__":

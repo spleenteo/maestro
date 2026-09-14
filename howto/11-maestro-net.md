@@ -123,6 +123,29 @@ The scanner works from `~/.claude/projects/`. Those directory names are slugs wh
 
 The registry itself stays out of chezmoi when instance paths differ between machines; add it there only once the paths match on every machine chezmoi applies to.
 
+### Adding or removing one instance
+
+`scan --write --force` rewrites the whole file, so it loses every `domain` and `accepts` the owner filled in by hand, and it can't see an instance that has no transcript yet. `register` adds one instance without touching the others — the way `/maestro:new-instance` registers the instance it just created:
+
+```bash
+maestro-net register home --path /Users/you/Sites/home-instance \
+  --domain "vita personale" --accepts recap,ask
+```
+
+- **`NAME`** must already be a lowercase slug, `^[a-z0-9][a-z0-9-]*$`. It is checked as given, never lowercased for you — an uppercase letter is a usage error (exit 2).
+- **`--path`** must be absolute. It is stored as its real path, symlinks resolved, and compared by real path against every entry already in the registry: a name already there (case-insensitively) or a path already there (by real path, so a symlink to an already-registered instance is caught too) exits 9.
+- **`--domain`** defaults to empty and is always written double-quoted, matching the quoting `scan` already uses. A value carrying `"` or a line break can't be represented and is refused (exit 2).
+- **`--accepts`** defaults to `recap,ask`. Every value must be a verb this copy of `maestro-net` recognizes, or it's a usage error — stricter than a registry it only *reads*, where an unknown verb in `accepts` is dropped with a warning instead.
+- `register` refuses a `--path` that isn't a Maestro instance's own root: no `private/preferences.md` and `bin/mem` there is the same signature check the scanner applies, in its own function so a later satellite-entry command can register a project root without it.
+
+The entry lands with the same field order and indentation `render_registry` uses (`path`, then `domain`, then `accepts`), inserted at the end of the `instances:` block. Every other line in the file, including comments and the other instances' `domain` and `accepts`, is untouched — `register` edits the text surgically rather than reparsing and rewriting the whole registry the way `scan --write` does.
+
+`unregister <name>` removes one instance the same surgical way. An unknown name resolves like everywhere else in this tool (exit 5, known names listed in the error).
+
+```bash
+maestro-net unregister home
+```
+
 ## Degradation
 
 Every failure has its own exit code and says what happened.
@@ -135,8 +158,9 @@ Every failure has its own exit code and says what happened.
 | 4 | Registry malformed (with the offending line number) |
 | 5 | Unknown instance, or a name matching more than one |
 | 6 | Verb not in the recipient's `accepts` |
-| 7 | The recipient's path no longer exists, or has no `bin/mem` |
+| 7 | The recipient's path no longer exists, or has no `bin/mem` — also `register`'s `--path`, when it isn't a directory or isn't a Maestro instance's own root |
 | 8 | The remote command failed, timed out, or couldn't be started |
+| 9 | `register` found the name or the path already in the registry |
 
 The rule behind the table: a channel that can't deliver says so. A recap that can't reach its recipient is never written somewhere else, and a malformed registry never degrades into an empty one.
 
@@ -152,4 +176,4 @@ The reading side. Each instance would pick up, at session start, the `from:*` ro
 python3 -m unittest tests.test_maestro_net
 ```
 
-62 tests, stdlib only, no real instances and no network: registry parsing and its malformations (including the unknown-verb warning), name resolution including the ambiguous case, the `accepts` gate, the scanner against fake transcripts, and both verbs against recorder scripts that capture their arguments and environment (`MEM_DB`, `MEM_SCOPE` and `PWD` stripped).
+87 tests, stdlib only, no real instances and no network: registry parsing and its malformations (including the unknown-verb warning), name resolution including the ambiguous case, the `accepts` gate, the scanner against fake transcripts, both verbs against recorder scripts that capture their arguments and environment (`MEM_DB`, `MEM_SCOPE` and `PWD` stripped), and `register`/`unregister` against temp registries — creation from nothing, surgical append and removal that leaves comments and every other entry's fields untouched, the duplicate and slug checks, and the instance-signature check on `--path`.

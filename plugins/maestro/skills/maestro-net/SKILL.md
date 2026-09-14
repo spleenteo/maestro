@@ -79,6 +79,23 @@ The scanner reads `~/.claude/projects/`, resolves each project's real `cwd` from
 
 `list` shows what is registered, and flags paths that no longer exist.
 
+### Adding or removing one instance
+
+`scan --write --force` rewrites the whole file and loses every `domain` and `accepts` the owner already filled in. `register` adds one instance without touching the others — this is what `/maestro:new-instance` calls after it finishes setting up a new instance:
+
+```bash
+maestro-net register home --path /Users/you/Sites/home-instance \
+  --domain "vita personale" --accepts recap,ask
+```
+
+- `NAME` must already be a lowercase slug (`^[a-z0-9][a-z0-9-]*$`) — mixed case is refused, never lowercased for you.
+- `--path` must be absolute; it's stored as its real path (symlinks resolved). A name or a path already in the registry — matched case-insensitively for the name, by real path for the path — is refused with its own exit code.
+- `--domain` defaults to empty and is always written double-quoted; a value carrying `"` or a line break is refused.
+- `--accepts` defaults to `recap,ask`; every value must be a verb the tool knows.
+- `register` also refuses a `--path` that isn't a Maestro instance's own root — no `private/preferences.md` and `bin/mem` there.
+
+`unregister <name>` removes one instance the same surgical way; an unknown name behaves like everywhere else in this tool: exit 5, known names listed.
+
 ## When something fails
 
 Every failure is explicit and named. Report it to the owner as it is; never retry a different way, never fall back silently to writing in the local db.
@@ -89,8 +106,9 @@ Every failure is explicit and named. Report it to the owner as it is; never retr
 | 4 | Registry malformed | Report the line number the tool gives |
 | 5 | Unknown or ambiguous name | List the known instances and ask which one |
 | 6 | Verb not in `accepts` | Say that the instance doesn't accept it, and that the registry is where it changes |
-| 7 | Path gone | The instance moved, offer to re-run `scan` |
+| 7 | Path gone, or not a Maestro instance | The instance moved (or `register` was pointed at the wrong folder), offer to re-run `scan` or fix `--path` |
 | 8 | Remote command failed | Report the recipient's own error output |
+| 9 | `register` found the name or path already in the registry | Say which existing entry it collides with; suggest `unregister` first if it should be replaced |
 
 A missing registry is not a reason to write the memory somewhere else. The owner asked to reach another instance; if the channel is down, they need to know.
 
