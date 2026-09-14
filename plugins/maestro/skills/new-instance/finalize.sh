@@ -44,10 +44,12 @@
 # directly, not by re-running this script.
 #
 # Note on values: the LLM that invokes this script passes free-form text
-# from the owner as env vars. Values must be plain text — they get
-# expanded into the preferences.md heredoc below, so literal `$`, backticks
-# or `$(...)` in a value would be interpreted by the shell. Sanitize at the
-# caller (the LLM should never see those in normal interview answers).
+# from the owner as env vars. Inside the heredoc below, `$VAR` is expanded
+# once to the variable's value, and that value then lands as plain data —
+# a literal `$`, backtick or `$(...)` an owner typed stays literal in
+# preferences.md, the same way it would inside a double-quoted string.
+# Escaping happens earlier, on the caller's command line that sets these
+# env vars: SKILL.md (Finalize) spells out the rule.
 
 set -euo pipefail
 
