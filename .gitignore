@@ -7,6 +7,9 @@ private/
 workspace/handoff/*
 !workspace/handoff/.gitkeep
 
+# Python bytecode (bin/mem imports bin/mem_schema.py)
+__pycache__/
+
 # macOS
 .DS_Store
 
@@ -14,3 +17,7 @@ workspace/handoff/*
 .agents/
 skills-lock.json
 .claude/settings.local.json
+
+# Design and devflow working documents: kept on the owner's disk, never published
+docs/work/
+docs/shaping*.md
