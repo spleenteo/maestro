@@ -3,17 +3,29 @@
 Unit test stdlib-only + integration test che si auto-skippano se
 sqlite-vec o Ollama non sono disponibili nell'interprete corrente.
 
+The scope tests stub `vec_distance_cosine` with a plain SQLite function
+instead of loading the real extension, so they run stdlib-only: only
+visibility (which ids come back) is under test, never real distance.
+
 Run (unit, stdlib):  python3 -m unittest tests.test_mem_vec -v
 Run (integration):   uv run --with sqlite-vec python -m unittest tests.test_mem_vec -v
 """
+import argparse
+import contextlib
 import importlib.util
+import io
+import itertools
 import json
 import os
+import shutil
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 _mem_vec_path = ROOT / "bin" / "mem-vec"
@@ -64,6 +76,8 @@ class TempDbCase(unittest.TestCase):
     """Fixture: db temporaneo con schema log reale e 2 righe note."""
 
     def setUp(self):
+        os.environ.pop("MEM_DB", None)
+        os.environ.pop("MEM_SCOPE", None)
         self._tmp = tempfile.TemporaryDirectory()
         self.db = Path(self._tmp.name) / "test.db"
         con = sqlite3.connect(self.db)
@@ -81,6 +95,7 @@ class TempDbCase(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("MEM_DB", None)
+        os.environ.pop("MEM_SCOPE", None)
         self._tmp.cleanup()
 
 
@@ -406,6 +421,350 @@ class TestFusedSearch(TempDbCase):
                 mem_vec.main(["search", "persiane", "--only", "memory", "--min-score", "0"])
             rows = json.loads(buf.getvalue().strip())
             self.assertTrue(all(r["source"] == "memory" for r in rows))
+
+
+def _stub_distance(a, b):
+    """Stands in for vec_distance_cosine in the scope tests: only visibility
+    (which ids come back) is under test here, never a real distance."""
+    return 0.0
+
+
+def _stub_load_vec(con):
+    """Stands in for load_vec in command-level scope tests: registers the stub
+    distance, so no sqlite-vec extension is needed."""
+    con.create_function("vec_distance_cosine", 2, _stub_distance)
+
+
+_UNIT_VEC = [1.0, 0.0]
+
+
+def _sem_args(**kw):
+    defaults = dict(type=None, status=None, since=None, until=None, tag=None,
+                    model="m1", limit=50, min_score=0.0, scope=None, all_scopes=False)
+    defaults.update(kw)
+    return argparse.Namespace(**defaults)
+
+
+def _assert_exit(testcase, code, fn, *args, **kwargs):
+    """Run fn with stderr captured, assert it exits with `code`, return the
+    captured message."""
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err), testcase.assertRaises(SystemExit) as cm:
+        fn(*args, **kwargs)
+    testcase.assertEqual(cm.exception.code, code)
+    return err.getvalue()
+
+
+class ScopedRowsCase(TempDbCase):
+    """Fixture: a migrated db (mem_vec.connect()), a stubbed
+    vec_distance_cosine, and one embedded memory per (title, scope) in ROWS.
+    The two legacy rows of TempDbCase have no embedding, so they never match."""
+
+    ROWS = (("mother-a", None), ("acme-a", "acme"), ("other-a", "other"))
+
+    def setUp(self):
+        super().setUp()
+        self.con = mem_vec.connect()
+        _stub_load_vec(self.con)
+        self.ids = {}
+        for title, scope in self.ROWS:
+            log_id = self.con.execute(
+                "INSERT INTO log (date, title, type, scope) VALUES (?,?,?,?)",
+                ("2026-09-14", title, "memory", scope)).lastrowid
+            self.con.execute(
+                "INSERT INTO log_vec (log_id, model, dims, content_hash, embedding, embedded_at) "
+                "VALUES (?, 'm1', 2, 'h', ?, '2026-09-14T00:00:00')",
+                (log_id, mem_vec.pack(_UNIT_VEC)))
+            self.ids[title] = log_id
+        self.con.commit()
+
+    def tearDown(self):
+        self.con.close()
+        super().tearDown()
+
+    def id_list(self, *titles):
+        return sorted(self.ids[t] for t in titles)
+
+
+class TestMemHitRowsScope(ScopedRowsCase):
+    def hit_ids(self, **kw):
+        rows = mem_vec._mem_hit_rows(self.con, mem_vec.pack(_UNIT_VEC), _sem_args(**kw))
+        return sorted(r["id"] for r in rows)
+
+    def test_mother_default_sees_only_the_null_scope(self):
+        self.assertEqual(self.hit_ids(), self.id_list("mother-a"))
+
+    def test_mother_scope_flag_narrows_to_that_scope(self):
+        self.assertEqual(self.hit_ids(scope="acme"), self.id_list("acme-a"))
+
+    def test_mother_all_scopes_sees_every_row(self):
+        self.assertEqual(self.hit_ids(all_scopes=True), sorted(self.ids.values()))
+
+    def test_other_filters_still_apply_inside_the_scope(self):
+        self.assertEqual(self.hit_ids(all_scopes=True, type="task"), [])
+
+    def test_satellite_sees_only_its_own_scope(self):
+        with mock.patch.dict(os.environ, {"MEM_SCOPE": "acme"}):
+            self.assertEqual(self.hit_ids(), self.id_list("acme-a"))
+
+    def test_satellite_refuses_both_flags_with_exit_4(self):
+        for flag in ({"scope": "other"}, {"all_scopes": True}):
+            with self.subTest(flag=flag), \
+                    mock.patch.dict(os.environ, {"MEM_SCOPE": "acme"}):
+                msg = _assert_exit(self, mem_vec.mem_schema.EXIT_SCOPE_REFUSED,
+                                   self.hit_ids, **flag)
+                self.assertTrue(msg.startswith("mem-vec:"), msg)
+
+
+class TestSimilarRowsScope(ScopedRowsCase):
+    def similar_ids(self, anchor, **kw):
+        rows = mem_vec._similar_rows(self.con, mem_vec.pack(_UNIT_VEC), "m1",
+                                     self.ids[anchor], _sem_args(**kw))
+        return sorted(r["id"] for r in rows)
+
+    def test_mother_default_sees_only_the_null_scope(self):
+        self.assertEqual(self.similar_ids("acme-a"), self.id_list("mother-a"))
+
+    def test_mother_all_scopes_sees_every_row_but_the_anchor(self):
+        self.assertEqual(self.similar_ids("mother-a", all_scopes=True),
+                         self.id_list("acme-a", "other-a"))
+
+    def test_mother_scope_flag_narrows_to_that_scope(self):
+        self.assertEqual(self.similar_ids("mother-a", scope="other"),
+                         self.id_list("other-a"))
+
+    def test_satellite_sees_only_its_own_scope(self):
+        with mock.patch.dict(os.environ, {"MEM_SCOPE": "acme"}):
+            self.assertEqual(self.similar_ids("mother-a"), self.id_list("acme-a"))
+
+    def test_satellite_refuses_scope_flag_with_exit_4(self):
+        with mock.patch.dict(os.environ, {"MEM_SCOPE": "acme"}):
+            msg = _assert_exit(self, mem_vec.mem_schema.EXIT_SCOPE_REFUSED,
+                               self.similar_ids, "acme-a", scope="other")
+        self.assertTrue(msg.startswith("mem-vec:"), msg)
+
+
+class TestDupesRowsScope(ScopedRowsCase):
+    ROWS = (("mother-a", None), ("mother-b", None), ("acme-a", "acme"),
+            ("other-a", "other"))
+
+    def pairs(self, **kw):
+        rows = mem_vec._dupes_rows(self.con, _sem_args(**kw))
+        return sorted(tuple(sorted((r["id_a"], r["id_b"]))) for r in rows)
+
+    def test_mother_default_pairs_only_rows_of_the_null_scope(self):
+        self.assertEqual(self.pairs(), [tuple(self.id_list("mother-a", "mother-b"))])
+
+    def test_a_pair_needs_both_rows_in_scope(self):
+        self.assertEqual(self.pairs(scope="acme"), [])
+
+    def test_mother_all_scopes_pairs_every_combination(self):
+        expected = sorted(itertools.combinations(sorted(self.ids.values()), 2))
+        self.assertEqual(self.pairs(all_scopes=True), expected)
+
+    def test_satellite_pairs_only_rows_of_its_own_scope(self):
+        with mock.patch.dict(os.environ, {"MEM_SCOPE": "acme"}):
+            self.assertEqual(self.pairs(), [])
+
+    def test_satellite_refuses_scope_flag_with_exit_4(self):
+        with mock.patch.dict(os.environ, {"MEM_SCOPE": "acme"}):
+            msg = _assert_exit(self, mem_vec.mem_schema.EXIT_SCOPE_REFUSED,
+                               self.pairs, scope="other")
+        self.assertTrue(msg.startswith("mem-vec:"), msg)
+
+
+class TestCmdSimilarAnchorScope(ScopedRowsCase):
+    """cmd_similar end to end in process, with load_vec replaced by the stub."""
+
+    ROWS = (("mother-a", None), ("acme-a", "acme"), ("acme-b", "acme"),
+            ("other-a", "other"))
+
+    def run_similar(self, anchor, *flags, env=None):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env or {}), \
+                mock.patch.object(mem_vec, "load_vec", _stub_load_vec), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = mem_vec.main(["similar", str(self.ids[anchor]), *flags])
+        ids = sorted(h["id"] for h in json.loads(out.getvalue())) if rc == 0 else None
+        return rc, ids, err.getvalue()
+
+    def test_satellite_refuses_an_anchor_of_another_scope_with_exit_1(self):
+        rc, ids, err = self.run_similar("mother-a", env={"MEM_SCOPE": "acme"})
+        self.assertEqual(rc, 1)
+        self.assertEqual(
+            err, f"mem-vec: no row with id {self.ids['mother-a']} in scope acme\n")
+
+    def test_satellite_anchors_on_its_own_rows(self):
+        rc, ids, err = self.run_similar("acme-a", env={"MEM_SCOPE": "acme"})
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(ids, self.id_list("acme-b"))
+
+    def test_mother_accepts_an_anchor_of_any_scope_and_hits_follow_the_flags(self):
+        self.assertEqual(self.run_similar("acme-a")[1], self.id_list("mother-a"))
+        self.assertEqual(self.run_similar("acme-a", "--all-scopes")[1],
+                         self.id_list("mother-a", "acme-b", "other-a"))
+        self.assertEqual(self.run_similar("acme-a", "--scope", "other")[1],
+                         self.id_list("other-a"))
+
+    def test_satellite_flag_refusal_comes_before_the_anchor_check(self):
+        with mock.patch.dict(os.environ, {"MEM_SCOPE": "acme"}):
+            msg = _assert_exit(self, mem_vec.mem_schema.EXIT_SCOPE_REFUSED, mem_vec.main,
+                               ["similar", str(self.ids["mother-a"]), "--all-scopes"])
+        self.assertIn("--all-scopes", msg)
+
+
+class TestAnchorInScope(ScopedRowsCase):
+    """_anchor_in_scope now delegates to mem_schema.row_in_scope for a
+    satellite, keeping its own mother-always-True shortcut (T2)."""
+
+    def test_mother_accepts_any_row_including_a_nonexistent_id(self):
+        self.assertTrue(mem_vec._anchor_in_scope(self.con, self.ids["acme-a"], None))
+        self.assertTrue(mem_vec._anchor_in_scope(self.con, 999999, None))
+
+    def test_satellite_accepts_only_its_own_scope(self):
+        self.assertTrue(mem_vec._anchor_in_scope(self.con, self.ids["acme-a"], "acme"))
+        self.assertFalse(mem_vec._anchor_in_scope(self.con, self.ids["mother-a"], "acme"))
+        self.assertFalse(mem_vec._anchor_in_scope(self.con, self.ids["other-a"], "acme"))
+
+    def test_satellite_rejects_a_nonexistent_id(self):
+        self.assertFalse(mem_vec._anchor_in_scope(self.con, 999999, "acme"))
+
+
+class TestScopeRefusalLeavesTheDbUntouched(TempDbCase):
+    """TempDbCase's db has the legacy schema: connect() would add the scope
+    column and the vec tables, so an identical file means no connect ran."""
+
+    def assert_untouched(self, code, argv, env):
+        before = self.db.read_bytes()
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(mem_vec, "ollama_embed") as embed:
+            msg = _assert_exit(self, code, mem_vec.main, argv)
+        embed.assert_not_called()
+        self.assertEqual(self.db.read_bytes(), before)
+        return msg
+
+    def test_embed_is_refused_in_a_satellite_with_exit_4(self):
+        before = self.db.read_bytes()
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"MEM_SCOPE": "acme"}), \
+                contextlib.redirect_stderr(err):
+            rc = mem_vec.main(["embed"])
+        self.assertEqual(rc, mem_vec.mem_schema.EXIT_SCOPE_REFUSED)
+        self.assertTrue(err.getvalue().startswith("mem-vec:"), err.getvalue())
+        self.assertIn("acme", err.getvalue())
+        self.assertEqual(self.db.read_bytes(), before)
+
+    def test_embed_with_an_invalid_mem_scope_exits_6(self):
+        msg = self.assert_untouched(mem_vec.mem_schema.EXIT_SCOPE_INVALID,
+                                    ["embed"], {"MEM_SCOPE": "Bad!"})
+        self.assertTrue(msg.startswith("mem-vec:"), msg)
+
+    def test_read_commands_refuse_scope_flags_before_connecting(self):
+        for argv in (["search", "q", "--scope", "other"],
+                     ["search", "q", "--only", "vault", "--all-scopes"],
+                     ["similar", "1", "--all-scopes"],
+                     ["dupes", "--scope", "other"]):
+            with self.subTest(argv=argv):
+                msg = self.assert_untouched(mem_vec.mem_schema.EXIT_SCOPE_REFUSED,
+                                            argv, {"MEM_SCOPE": "acme"})
+                self.assertTrue(msg.startswith("mem-vec:"), msg)
+
+    def test_embed_runs_in_the_mother(self):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"MEM_VAULT_ROOTS": ""}), \
+                contextlib.redirect_stdout(out):
+            rc = mem_vec.main(["embed", "--status"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out.getvalue())["memory"]["total"], 2)
+
+
+class TestParserScopeFlags(unittest.TestCase):
+    def parse(self, args):
+        with contextlib.redirect_stderr(io.StringIO()):
+            return mem_vec.build_parser().parse_args(args)
+
+    def test_search_similar_dupes_accept_scope_flags(self):
+        self.assertEqual(self.parse(["search", "q", "--scope", "acme"]).scope, "acme")
+        self.assertTrue(self.parse(["similar", "1", "--all-scopes"]).all_scopes)
+        self.assertEqual(self.parse(["dupes", "--scope", "acme"]).scope, "acme")
+
+    def test_scope_and_all_scopes_are_mutually_exclusive(self):
+        for args in (["search", "q", "--scope", "acme", "--all-scopes"],
+                     ["similar", "1", "--scope", "acme", "--all-scopes"],
+                     ["dupes", "--scope", "acme", "--all-scopes"]):
+            with self.subTest(args=args), self.assertRaises(SystemExit) as cm:
+                self.parse(args)
+            self.assertEqual(cm.exception.code, 2)
+
+    def test_embed_does_not_accept_scope_flags(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.parse(["embed", "--scope", "acme"])
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_help_documents_scope_rules_and_exit_codes(self):
+        text = mem_vec.build_parser().format_help()
+        for needle in ("MEM_SCOPE", "--scope", "--all-scopes", "embed",
+                       "Exit code 3", "Exit code 4", "Exit code 5", "Exit code 6"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, text)
+
+
+@unittest.skipUnless(_has_sqlite_vec() and _ollama_up() and shutil.which("uv"),
+                     "servono uv, sqlite-vec + Ollama")
+class TestSemanticProbeRespectsScope(unittest.TestCase):
+    """The V1 Done probe through bin/mem: a row saved by a satellite stays out
+    of the mother's --semantic search until --scope opens it, and the
+    satellite finds it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.db = Path(cls._tmp.name) / "probe.db"
+        con = sqlite3.connect(cls.db)
+        con.executescript(LOG_SCHEMA)
+        con.commit()
+        con.close()
+        cls.sat_ref = "#" + str(cls.saved("probe", "acme"))
+        cls.mother_ref = "#" + str(cls.saved("probe", None))
+        r = cls.run_mem("embed")
+        if r.returncode != 0:
+            raise AssertionError(f"bin/mem embed failed: {r.stderr}")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    @classmethod
+    def run_mem(cls, *args, scope=None):
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("MEM_DB", "MEM_SCOPE", "MEM_VAULT_ROOTS")}
+        env["MEM_DB"] = str(cls.db)
+        if scope:
+            env["MEM_SCOPE"] = scope
+        return subprocess.run([sys.executable, str(ROOT / "bin" / "mem"), *args],
+                              capture_output=True, text=True, env=env)
+
+    @classmethod
+    def saved(cls, title, scope):
+        r = cls.run_mem("save", title, "--json", scope=scope)
+        if r.returncode != 0:
+            raise AssertionError(f"bin/mem save failed: {r.stderr}")
+        return json.loads(r.stdout)["id"]
+
+    def refs(self, *flags, scope=None):
+        r = self.run_mem("search", "probe", "--semantic", "--only", "memory",
+                         *flags, scope=scope)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return {h["ref"] for h in json.loads(r.stdout)}
+
+    def test_mother_search_finds_only_the_null_scope(self):
+        self.assertEqual(self.refs(), {self.mother_ref})
+
+    def test_mother_scope_flag_finds_the_satellite_row(self):
+        self.assertEqual(self.refs("--scope", "acme"), {self.sat_ref})
+
+    def test_satellite_search_finds_its_own_row(self):
+        self.assertEqual(self.refs(scope="acme"), {self.sat_ref})
 
 
 if __name__ == "__main__":

@@ -21,6 +21,31 @@ from datetime import datetime, timedelta, date
 from pathlib import Path
 from typing import Any, Iterable
 
+EXIT_USAGE = 2
+EXIT_SCHEMA_MISSING = 5
+EXIT_BAD_PATH = 7
+EXIT_SATELLITE_EXISTS = 8
+SCHEMA_API_EXPECTED = 2  # bumped together with bin/mem_schema.py's SCHEMA_API
+
+sys.dont_write_bytecode = True  # instances copy bin/* by hand: no __pycache__/
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import mem_schema
+except ModuleNotFoundError as e:
+    if e.name != "mem_schema":
+        raise
+    sys.stderr.write(
+        "mem: bin/mem_schema.py is missing next to bin/mem; copy it from the "
+        "Maestro mirror (~/.maestro/bin/mem_schema.py)\n")
+    sys.exit(EXIT_SCHEMA_MISSING)
+_schema_api = getattr(mem_schema, "SCHEMA_API", "missing")
+if _schema_api != SCHEMA_API_EXPECTED:
+    sys.stderr.write(
+        f"mem: bin/mem_schema.py schema API is {_schema_api}, bin/mem expects "
+        f"{SCHEMA_API_EXPECTED}; copy bin/mem, bin/mem-vec and bin/mem_schema.py "
+        "together from the Maestro mirror (~/.maestro/bin/)\n")
+    sys.exit(EXIT_SCHEMA_MISSING)
+
 # ---------------------------------------------------------------------------
 # DB path resolution
 # ---------------------------------------------------------------------------
@@ -41,11 +66,14 @@ def connect():
     p = db_path()
     if not p.exists():
         sys.stderr.write(f"mem: db not found at {p}\n")
-        sys.exit(2)
-    con = sqlite3.connect(str(p))
+        sys.exit(EXIT_USAGE)
+    # 30 s instead of the default 5: a concurrent `embed` holds the lock for a
+    # whole batch of writes, and the first run on a legacy db migrates it.
+    con = sqlite3.connect(str(p), timeout=30)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
     try:
+        mem_schema.ensure_scope(con)
         yield con
         con.commit()
     finally:
@@ -149,7 +177,7 @@ def tags_list(tags: str | None) -> list[str]:
 def _insert_log(con: sqlite3.Connection, row: dict) -> int:
     cols = [
         "date", "title", "description", "tags",
-        "type", "status", "due_date", "completed_date", "priority",
+        "type", "status", "due_date", "completed_date", "priority", "scope",
     ]
     values = [row.get(c) for c in cols]
     cur = con.execute(
@@ -168,6 +196,7 @@ def cmd_save(args) -> int:
         "description": args.description,
         "tags": ",".join(args.tags) if args.tags else None,
         "type": "memory",
+        "scope": mem_schema.current_scope(),
     }
     with connect() as con:
         rid = _insert_log(con, row)
@@ -187,12 +216,13 @@ def _bulk_save(args) -> int:
         items = json.loads(raw)
     except json.JSONDecodeError as e:
         sys.stderr.write(f"mem: invalid JSON on stdin: {e}\n")
-        return 2
+        return EXIT_USAGE
     if not isinstance(items, list):
         sys.stderr.write("mem: --bulk expects JSON array\n")
-        return 2
+        return EXIT_USAGE
     inserted = []
     today = effective_today()
+    scope = mem_schema.current_scope()
     with connect() as con:
         for item in items:
             row = {
@@ -205,6 +235,7 @@ def _bulk_save(args) -> int:
                 "due_date": parse_date(item.get("due_date")),
                 "completed_date": parse_date(item.get("completed_date")),
                 "priority": item.get("priority") or "normal",
+                "scope": scope,  # the session's scope, never a key of the item
             }
             # memory has NULL status
             if row["type"] == "memory":
@@ -230,6 +261,7 @@ def cmd_task(args) -> int:
         "status": "todo",
         "due_date": parse_date(args.due),
         "priority": args.priority or "normal",
+        "scope": mem_schema.current_scope(),
     }
     with connect() as con:
         rid = _insert_log(con, row)
@@ -253,6 +285,7 @@ def cmd_idea(args) -> int:
         "tags": ",".join(args.tags) if args.tags else None,
         "type": "idea",
         "status": "open",
+        "scope": mem_schema.current_scope(),
     }
     with connect() as con:
         rid = _insert_log(con, row)
@@ -262,6 +295,22 @@ def cmd_idea(args) -> int:
         tags = row["tags"] or ""
         announce(f'💡 idea: "{row["title"]}" [{tags}] (open) #{rid}', json_mode=False)
     return 0
+
+
+def _id_scope() -> tuple[str | None, str, list]:
+    """The session scope and the filter of the id commands (show, update,
+    done, reopen): a satellite acts on its own rows, the mother on any row."""
+    scope = mem_schema.current_scope()
+    clause, params = mem_schema.scope_clause(scope, all_scopes=scope is None)
+    return scope, clause, params
+
+
+def _missing(con: sqlite3.Connection, rid: int, scope: str | None, kind: str = "row") -> str:
+    """The stderr line for an id the command did not match: a row outside the
+    satellite's scope, or no <kind> with that id."""
+    if scope is not None and not mem_schema.row_in_scope(con, rid, scope):
+        return f"mem: no row with id {rid} in scope {scope}\n"
+    return f"mem: no {kind} with id {rid}\n"
 
 
 def cmd_update(args) -> int:
@@ -277,13 +326,14 @@ def cmd_update(args) -> int:
         sys.stderr.write("mem: nothing to update\n")
         return 1
     set_clause = ", ".join(f"{k}=?" for k in fields)
+    scope, clause, params = _id_scope()
     with connect() as con:
         cur = con.execute(
-            f"UPDATE log SET {set_clause} WHERE id=?",
-            (*fields.values(), args.id),
+            f"UPDATE log SET {set_clause} WHERE id=? AND {clause}",
+            (*fields.values(), args.id, *params),
         )
         if cur.rowcount == 0:
-            sys.stderr.write(f"mem: no row with id {args.id}\n")
+            sys.stderr.write(_missing(con, args.id, scope))
             return 1
     changed = ", ".join(f"{k}={v!r}" for k, v in fields.items())
     if args.json:
@@ -295,15 +345,26 @@ def cmd_update(args) -> int:
 
 def cmd_done(args) -> int:
     today = effective_today()
+    scope, clause, params = _id_scope()
+    committed: list[int] = []
     with connect() as con:
         for rid in args.ids:
             cur = con.execute(
-                "UPDATE log SET status='done', completed_date=? WHERE id=? AND type='task'",
-                (today, rid),
+                "UPDATE log SET status='done', completed_date=? "
+                f"WHERE id=? AND type='task' AND {clause}",
+                (today, rid, *params),
             )
             if cur.rowcount == 0:
-                sys.stderr.write(f"mem: no task with id {rid}\n")
+                # Ids already committed in this call stay announced/reported
+                # even though the whole call exits 1 on the first refusal.
+                if args.json:
+                    emit_json({"done": committed, "completed_date": today})
+                else:
+                    for done_id in committed:
+                        announce(f"✅ done #{done_id}", json_mode=False)
+                sys.stderr.write(_missing(con, rid, scope, "task"))
                 return 1
+            committed.append(rid)
     if args.json:
         emit_json({"done": args.ids, "completed_date": today})
     else:
@@ -313,13 +374,15 @@ def cmd_done(args) -> int:
 
 
 def cmd_reopen(args) -> int:
+    scope, clause, params = _id_scope()
     with connect() as con:
         cur = con.execute(
-            "UPDATE log SET status='todo', completed_date=NULL WHERE id=? AND type='task'",
-            (args.id,),
+            "UPDATE log SET status='todo', completed_date=NULL "
+            f"WHERE id=? AND type='task' AND {clause}",
+            (args.id, *params),
         )
         if cur.rowcount == 0:
-            sys.stderr.write(f"mem: no task with id {args.id}\n")
+            sys.stderr.write(_missing(con, args.id, scope, "task"))
             return 1
     if args.json:
         emit_json({"reopened": args.id})
@@ -329,23 +392,27 @@ def cmd_reopen(args) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Marker commands (kv-style on log table, retrocompat with last-slacky-flush)
+# Marker commands (kv-style on log table, retrocompat with last-acme-flush)
 # ---------------------------------------------------------------------------
 
 def cmd_marker(args) -> int:
+    # Every lookup stays in the session scope: a satellite and the mother can
+    # each hold a marker with the same name.
+    scope = mem_schema.current_scope()
+    clause, params = mem_schema.scope_clause(scope)
     if args.action == "get":
         with connect() as con:
             row = con.execute(
                 "SELECT id, date, description FROM log WHERE title=? AND type='memory' "
-                "AND tags LIKE '%marker%' ORDER BY id DESC LIMIT 1",
-                (args.name,),
+                f"AND tags LIKE '%marker%' AND {clause} ORDER BY id DESC LIMIT 1",
+                (args.name, *params),
             ).fetchone()
             # fallback: any record with title=<name> (retrocompat con marker pre-CLI)
             if row is None:
                 row = con.execute(
-                    "SELECT id, date, description FROM log WHERE title=? "
+                    f"SELECT id, date, description FROM log WHERE title=? AND {clause} "
                     "ORDER BY id DESC LIMIT 1",
-                    (args.name,),
+                    (args.name, *params),
                 ).fetchone()
         if row is None:
             if args.json:
@@ -361,8 +428,8 @@ def cmd_marker(args) -> int:
         today = effective_today()
         with connect() as con:
             existing = con.execute(
-                "SELECT id FROM log WHERE title=? ORDER BY id DESC LIMIT 1",
-                (args.name,),
+                f"SELECT id FROM log WHERE title=? AND {clause} ORDER BY id DESC LIMIT 1",
+                (args.name, *params),
             ).fetchone()
             if existing:
                 con.execute(
@@ -373,9 +440,9 @@ def cmd_marker(args) -> int:
                 action = "updated"
             else:
                 cur = con.execute(
-                    "INSERT INTO log (date, title, description, tags, type) "
-                    "VALUES (?, ?, ?, 'marker', 'memory')",
-                    (today, args.name, args.value),
+                    "INSERT INTO log (date, title, description, tags, type, scope) "
+                    "VALUES (?, ?, ?, 'marker', 'memory', ?)",
+                    (today, args.name, args.value, scope),
                 )
                 rid = cur.lastrowid
                 action = "created"
@@ -386,7 +453,7 @@ def cmd_marker(args) -> int:
         return 0
 
     sys.stderr.write("mem marker: unknown action\n")
-    return 2
+    return EXIT_USAGE
 
 
 # ---------------------------------------------------------------------------
@@ -407,48 +474,76 @@ def _query(con: sqlite3.Connection, where: str, params: Iterable, order: str = "
     return [_row_to_dict(r) for r in con.execute(sql, list(params)).fetchall()]
 
 
+def _read_clause(args, *, mother_all: bool = False) -> tuple[str, list]:
+    """Scope filter of a read command from its --scope/--all-scopes flags."""
+    return mem_schema.read_clause(args.scope, args.all_scopes, mother_all=mother_all)
+
+
+def _task_cols(cols: list[str]) -> list[str]:
+    """todo/overdue read every scope in the mother, so its table names the scope."""
+    if mem_schema.current_scope() is None:
+        return cols[:1] + ["scope"] + cols[1:]
+    return cols
+
+
 def cmd_today(args) -> int:
+    clause, params = _read_clause(args)
+    first = parse_date(args.date) or effective_today()
+    last = parse_date(args.to) or first
+    if last < first:
+        sys.stderr.write(f"mem: --to {last} is earlier than the first day {first}\n")
+        return EXIT_USAGE
     with connect() as con:
-        rows = _query(con, "date=?", [effective_today()], order="id ASC")
+        rows = _query(con, f"date BETWEEN ? AND ? AND {clause}", [first, last, *params],
+                      order="date ASC, id ASC")
     emit_rows(rows, _DEFAULT_COLS, args.json)
     return 0
 
 
 def cmd_todo(args) -> int:
+    clause, params = _read_clause(args, mother_all=True)
+    where = f"type='task' AND status IN ('todo','in_progress') AND {clause}"
+    if args.due_until:
+        where += " AND (due_date IS NULL OR due_date <= ?)"
+        params = [*params, parse_date(args.due_until)]
     with connect() as con:
         rows = _query(
             con,
-            "type='task' AND status IN ('todo','in_progress')",
-            [],
+            where,
+            params,
             order=(
                 "CASE priority WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 END, "
                 "due_date NULLS LAST, id"
             ),
         )
-    cols = ["id", "title", "status", "priority", "due_date", "tags"]
+    cols = _task_cols(["id", "title", "status", "priority", "due_date", "tags"])
     emit_rows(rows, cols, args.json)
     return 0
 
 
 def cmd_overdue(args) -> int:
     today = effective_today()
+    clause, params = _read_clause(args, mother_all=True)
     with connect() as con:
         rows = _query(
             con,
-            "type='task' AND status IN ('todo','in_progress') AND due_date < ?",
-            [today],
+            f"type='task' AND status IN ('todo','in_progress') AND due_date < ? AND {clause}",
+            [today, *params],
             order="due_date ASC, id",
         )
-    cols = ["id", "title", "due_date", "priority", "tags"]
+    cols = _task_cols(["id", "title", "due_date", "priority", "tags"])
     emit_rows(rows, cols, args.json)
     return 0
 
 
 def cmd_search(args) -> int:
+    # Scope validation/refusal runs before any db access or `uv` run, on both
+    # the keyword and the --semantic path.
+    clause, scope_params = _read_clause(args)
     if args.semantic:
         return _cmd_search_semantic(args)
-    clauses = []
-    params: list[Any] = []
+    clauses = [clause]
+    params: list[Any] = list(scope_params)
     if args.query:
         like = f"%{args.query}%"
         clauses.append("(title LIKE ? OR description LIKE ? OR tags LIKE ?)")
@@ -469,7 +564,15 @@ def cmd_search(args) -> int:
     if args.until:
         clauses.append("date<=?")
         params.append(parse_date(args.until))
-    where = " AND ".join(clauses) if clauses else "1=1"
+    # A null completed_date fails both comparisons, so open tasks, memories
+    # and ideas drop out as soon as either bound is given.
+    if args.completed_since:
+        clauses.append("completed_date>=?")
+        params.append(parse_date(args.completed_since))
+    if args.completed_until:
+        clauses.append("completed_date<=?")
+        params.append(parse_date(args.completed_until))
+    where = " AND ".join(clauses)
     with connect() as con:
         rows = _query(con, where, params, limit=args.limit)
     emit_rows(rows, _DEFAULT_COLS, args.json)
@@ -477,11 +580,13 @@ def cmd_search(args) -> int:
 
 
 def cmd_show(args) -> int:
+    scope, clause, params = _id_scope()
     with connect() as con:
-        row = con.execute("SELECT * FROM log WHERE id=?", (args.id,)).fetchone()
-    if row is None:
-        sys.stderr.write(f"mem: no row with id {args.id}\n")
-        return 1
+        row = con.execute(f"SELECT * FROM log WHERE id=? AND {clause}",
+                          (args.id, *params)).fetchone()
+        if row is None:
+            sys.stderr.write(_missing(con, args.id, scope))
+            return 1
     d = _row_to_dict(row)
     if args.json or not is_tty():
         emit_json(d)
@@ -494,20 +599,23 @@ def cmd_show(args) -> int:
 
 
 def cmd_stats(args) -> int:
+    clause, params = _read_clause(args)
     with connect() as con:
-        total = con.execute("SELECT COUNT(*) FROM log").fetchone()[0]
+        total = con.execute(f"SELECT COUNT(*) FROM log WHERE {clause}", params).fetchone()[0]
         by_type = {
             r["type"]: r["n"]
-            for r in con.execute("SELECT type, COUNT(*) AS n FROM log GROUP BY type")
+            for r in con.execute(
+                f"SELECT type, COUNT(*) AS n FROM log WHERE {clause} GROUP BY type", params)
         }
         open_tasks = con.execute(
-            "SELECT COUNT(*) FROM log WHERE type='task' AND status IN ('todo','in_progress')"
+            "SELECT COUNT(*) FROM log WHERE type='task' AND status IN ('todo','in_progress') "
+            f"AND {clause}", params,
         ).fetchone()[0]
         open_ideas = con.execute(
-            "SELECT COUNT(*) FROM log WHERE type='idea' AND status='open'"
+            f"SELECT COUNT(*) FROM log WHERE type='idea' AND status='open' AND {clause}", params,
         ).fetchone()[0]
-        first = con.execute("SELECT MIN(date) FROM log").fetchone()[0]
-        last = con.execute("SELECT MAX(date) FROM log").fetchone()[0]
+        first = con.execute(f"SELECT MIN(date) FROM log WHERE {clause}", params).fetchone()[0]
+        last = con.execute(f"SELECT MAX(date) FROM log WHERE {clause}", params).fetchone()[0]
     payload = {
         "total": total,
         "by_type": by_type,
@@ -534,6 +642,21 @@ def cmd_stats(args) -> int:
 EXIT_SEM_UNAVAILABLE = 3
 
 _SEM_COLS = ["source", "ref", "title", "score", "snippet"]
+# `similar` rows are shaped like a search hit (mem-vec's `_scored`), not like
+# `search --semantic`'s fused source/ref/snippet rows: a table needs its own
+# column list, or it prints blanks for keys the row never had.
+_SIMILAR_COLS = _DEFAULT_COLS + ["score"]
+
+
+def _scope_argv(args) -> list[str]:
+    """The --scope/--all-scopes argv fragment forwarded to `mem-vec`, built
+    from a read command's own flags. One helper for the three call sites
+    (search --semantic, similar, dupes) that used to repeat this pass-through."""
+    if args.scope:
+        return ["--scope", args.scope]
+    if args.all_scopes:
+        return ["--all-scopes"]
+    return []
 
 
 def _vec_run(vec_args: list[str]) -> tuple[int, str]:
@@ -558,6 +681,10 @@ def _vec_run(vec_args: list[str]) -> tuple[int, str]:
 
 
 def cmd_embed(args) -> int:
+    scope = mem_schema.current_scope()
+    if scope is not None:
+        sys.stderr.write(f"mem: {mem_schema.EMBED_REFUSED.format(scope=scope)}\n")
+        return mem_schema.EXIT_SCOPE_REFUSED
     vec_args = ["embed"]
     if args.rebuild:
         vec_args.append("--rebuild")
@@ -595,7 +722,18 @@ def cmd_embed(args) -> int:
 def _cmd_search_semantic(args) -> int:
     if not args.query:
         sys.stderr.write("mem: --semantic richiede una query di testo\n")
-        return 2
+        return EXIT_USAGE
+    # Usage errors, checked before `uv` runs: mem-vec ranks a bounded number of
+    # hits and has no completed_date filter, so neither can be passed through.
+    if args.limit == 0:
+        sys.stderr.write("mem: --limit 0 (no limit) works on keyword search only, "
+                         "not with --semantic\n")
+        return EXIT_USAGE
+    for flag, value in (("--completed-since", args.completed_since),
+                        ("--completed-until", args.completed_until)):
+        if value:
+            sys.stderr.write(f"mem: {flag} works on keyword search only, not with --semantic\n")
+            return EXIT_USAGE
     vec_args = ["search", args.query, "--limit", str(args.limit),
                 "--min-score", str(args.min_score)]
     if args.type:
@@ -614,6 +752,7 @@ def _cmd_search_semantic(args) -> int:
         vec_args += ["--vault-frac", str(args.vault_frac)]
     if getattr(args, "model", None):
         vec_args += ["--model", args.model]
+    vec_args += _scope_argv(args)
     rc, out = _vec_run(vec_args)
     if rc != 0:
         return rc
@@ -622,21 +761,26 @@ def _cmd_search_semantic(args) -> int:
 
 
 def cmd_similar(args) -> int:
-    rc, out = _vec_run(["similar", str(args.id), "--limit", str(args.limit),
-                        "--min-score", str(args.min_score)])
+    _read_clause(args)  # scope refusal/validation before any `uv` run
+    vec_args = ["similar", str(args.id), "--limit", str(args.limit),
+                "--min-score", str(args.min_score)]
+    vec_args += _scope_argv(args)
+    rc, out = _vec_run(vec_args)
     if rc != 0:
         return rc
-    emit_rows(json.loads(out), _SEM_COLS, args.json)
+    emit_rows(json.loads(out), _SIMILAR_COLS, args.json)
     return 0
 
 
 def cmd_dupes(args) -> int:
+    _read_clause(args)  # scope refusal/validation before any `uv` run
     vec_args = ["dupes", "--min-score", str(args.min_score),
                 "--limit", str(args.limit)]
     if args.type:
         vec_args += ["--type", args.type]
     if getattr(args, "model", None):
         vec_args += ["--model", args.model]
+    vec_args += _scope_argv(args)
     rc, out = _vec_run(vec_args)
     if rc != 0:
         return rc
@@ -647,8 +791,147 @@ def cmd_dupes(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Satellites: the mother's registry of the repos it lends its memory to.
+# ---------------------------------------------------------------------------
+
+_SATELLITE_COLS = ["scope", "repo_path", "project_type", "mandate", "method",
+                   "constraints", "language", "vault_folder", "created"]
+
+
+def _refuse_satellite_scope(action: str) -> int | None:
+    """None in the mother; in a satellite, a stderr message naming `action`
+    and EXIT_SCOPE_REFUSED — satellite add/list/show are mother-only."""
+    scope = mem_schema.current_scope()
+    if scope is None:
+        return None
+    sys.stderr.write(
+        f"mem: {action} is refused in scope {scope}: only the mother "
+        "instance manages satellites\n")
+    return mem_schema.EXIT_SCOPE_REFUSED
+
+
+def _satellites_table_exists(con: sqlite3.Connection) -> bool:
+    return con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='satellites'"
+    ).fetchone() is not None
+
+
+def cmd_satellite_add(args) -> int:
+    rc = _refuse_satellite_scope("satellite add")
+    if rc is not None:
+        return rc
+    slug = mem_schema.check_scope(args.slug, "slug")
+
+    repo_arg = Path(args.repo)
+    if not repo_arg.is_absolute():
+        sys.stderr.write(f"mem: --repo {args.repo} must be an absolute path\n")
+        return EXIT_BAD_PATH
+    repo_path = repo_arg.resolve()
+    if not repo_path.is_dir():
+        sys.stderr.write(f"mem: --repo {repo_path} is not an existing directory\n")
+        return EXIT_BAD_PATH
+
+    vault_folder = None
+    if args.vault:
+        vault_arg = Path(args.vault)
+        if not vault_arg.is_absolute():
+            sys.stderr.write(f"mem: --vault {args.vault} must be an absolute path\n")
+            return EXIT_BAD_PATH
+        vault_folder = str(vault_arg.resolve())
+
+    row = {
+        "scope": slug,
+        "repo_path": str(repo_path),
+        "project_type": args.project_type,
+        "mandate": args.mandate,
+        "method": args.method,
+        "constraints": args.constraints,
+        "language": args.language,
+        "vault_folder": vault_folder,
+        "created": datetime.now().isoformat(timespec="seconds"),
+    }
+    with connect() as con:
+        mem_schema.ensure_satellites(con)
+        if con.execute(
+                "SELECT 1 FROM satellites WHERE scope=?", (slug,)).fetchone():
+            sys.stderr.write(f"mem: satellite {slug!r} already exists\n")
+            return EXIT_SATELLITE_EXISTS
+        dup = con.execute(
+            "SELECT scope FROM satellites WHERE repo_path=?",
+            (row["repo_path"],)).fetchone()
+        if dup:
+            sys.stderr.write(
+                f"mem: repo {row['repo_path']} is already registered as "
+                f"satellite {dup['scope']!r}\n")
+            return EXIT_SATELLITE_EXISTS
+        try:
+            con.execute(
+                f"INSERT INTO satellites ({','.join(_SATELLITE_COLS)}) VALUES "
+                f"({','.join('?' * len(_SATELLITE_COLS))})",
+                [row[c] for c in _SATELLITE_COLS])
+        except sqlite3.IntegrityError:
+            sys.stderr.write(
+                f"mem: satellite {slug!r} or repo {row['repo_path']} "
+                "already exists\n")
+            return EXIT_SATELLITE_EXISTS
+    if args.json:
+        emit_json(row)
+    else:
+        announce(f"🛰️ satellite added: {slug} (repo {row['repo_path']})", json_mode=False)
+    return 0
+
+
+def cmd_satellite_list(args) -> int:
+    rc = _refuse_satellite_scope("satellite list")
+    if rc is not None:
+        return rc
+    with connect() as con:
+        if _satellites_table_exists(con):
+            rows = [_row_to_dict(r) for r in con.execute(
+                "SELECT * FROM satellites ORDER BY scope").fetchall()]
+        else:
+            rows = []
+    cols = ["scope", "repo_path", "project_type", "created"]
+    emit_rows(rows, cols, args.json)
+    return 0
+
+
+def cmd_satellite_show(args) -> int:
+    rc = _refuse_satellite_scope("satellite show")
+    if rc is not None:
+        return rc
+    with connect() as con:
+        row = None
+        if _satellites_table_exists(con):
+            row = con.execute(
+                "SELECT * FROM satellites WHERE scope=?", (args.slug,)).fetchone()
+    if row is None:
+        sys.stderr.write(f"mem: no satellite {args.slug!r}\n")
+        return 1
+    d = _row_to_dict(row)
+    if args.json or not is_tty():
+        emit_json(d)
+    else:
+        for k, v in d.items():
+            if v is None or v == "":
+                continue
+            print(f"{k:>16}: {v}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # CLI parser
 # ---------------------------------------------------------------------------
+
+def _add_scope_flags(sp: argparse.ArgumentParser, *, mother_all: bool = False) -> None:
+    """--scope/--all-scopes of a read command: mother only, mutually exclusive."""
+    default = "every scope" if mother_all else "the null scope"
+    g = sp.add_mutually_exclusive_group()
+    g.add_argument("--scope", metavar="SLUG",
+                   help=f"Mother only: read the rows of this scope (default: {default})")
+    g.add_argument("--all-scopes", action="store_true", dest="all_scopes",
+                   help="Mother only: read the rows of every scope")
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -656,12 +939,65 @@ def build_parser() -> argparse.ArgumentParser:
         description="CLI wrapper su memories.db.",
         epilog=(
             "dates: absolute YYYY-MM-DD or relative (today, yesterday, tomorrow, +Nd, -Nd, +Nw, +Nm).\n"
-            "When --date is omitted, writes use today with the early-morning rule:\n"
+            "A negative offset takes the = form (--since=-7d): argparse reads a bare -7d as a flag.\n"
+            "When --date is omitted, writes and `today` use today with the early-morning rule:\n"
             "between 00:00 and 06:00 local the row is attributed to the previous day,\n"
             "so a session running past midnight stays on the lived day.\n"
+            "\n"
+            "read options for skills:\n"
+            "  today --date DAY [--to DAY]   rows of one day, or of DAY..TO inclusive,\n"
+            "                                ordered by date then id; --to alone starts\n"
+            "                                at today (early-morning rule)\n"
+            "  todo --due-until DAY          open tasks with no due date or due by DAY\n"
+            "  search --completed-since DAY / --completed-until DAY\n"
+            "                                filter completed_date (rows without one drop out)\n"
+            "  search --limit 0              every matching row (keyword search only)\n"
+            "\n"
             "Output: ASCII table on TTY, dense JSON on pipe; --json forces JSON.\n"
+            "--json rows include `scope` (null for the mother).\n"
             "DB path: env MEM_DB overrides <repo-root>/private/memories.db.\n"
+            "\n"
+            "scope: env MEM_SCOPE (a slug: lowercase letters, digits, hyphens) marks a\n"
+            "satellite session. Set, writes (save, --bulk, task, idea, marker set) carry\n"
+            "it, reads and markers see only that scope, and show, update, done, reopen\n"
+            "refuse ids of other scopes. Unset (the mother), writes leave scope null and\n"
+            "today, search, stats and markers read the null scope, while todo and overdue\n"
+            "show every scope with a scope column; show, update, done, reopen act on any id.\n"
+            "In the mother, --scope SLUG narrows today, search, stats, todo, overdue to\n"
+            "one scope and --all-scopes opens every scope; a satellite refuses both.\n"
+            "\n"
+            "The semantic layer (search --semantic, similar, dupes) follows the same\n"
+            "rule: --scope/--all-scopes on these commands are mother-only too, checked\n"
+            "before Ollama/uv ever run. similar refuses an anchor id outside the\n"
+            "session's scope. embed refuses to run at all under MEM_SCOPE: only the\n"
+            "mother instance vectorizes memories and prunes vault_vec.\n"
+            "\n"
+            "satellite add|list|show manage the satellites table: one row per repo\n"
+            "the mother lends its memory to (scope, resolved repo path, project\n"
+            "type, mandate, method, constraints, language, vault folder, created).\n"
+            "Mother-only, like the scope flags above. list and show read the table\n"
+            "as it stands and leave a db without one alone: list answers an empty\n"
+            "list, show exits 1. add validates SLUG like MEM_SCOPE, requires --repo\n"
+            "and --type, stores --repo and --vault resolved, and rejects a relative\n"
+            "--repo, one that isn't an existing directory, or a relative --vault;\n"
+            "a slug or a repo already registered is refused too.\n"
+            "\n"
+            "Exit code 1: default error — no row, task or satellite matches an id or\n"
+            "slug, update has nothing to change, or a date value (--date, --due,\n"
+            "--since, --until, --completed-since, --completed-until) fails to parse.\n"
+            "Exit code 2: a usage error — bad or missing arguments (including\n"
+            "argparse's own checks, invalid JSON on --bulk stdin, an unknown marker\n"
+            "action, a missing --semantic query), --to earlier than the first day,\n"
+            "search --semantic with --limit 0 or --completed-since/--completed-until,\n"
+            "or db not found.\n"
             "Exit code 3: strato semantico non disponibile (uv/Ollama mancanti) — fallback keyword.\n"
+            "Exit code 4: --scope or --all-scopes refused, or embed or satellite\n"
+            "add/list/show run under MEM_SCOPE.\n"
+            "Exit code 5: bin/mem_schema.py missing or incompatible next to bin/mem.\n"
+            "Exit code 6: invalid MEM_SCOPE, --scope slug, or satellite add SLUG.\n"
+            "Exit code 7: satellite add's --repo is relative or not an existing\n"
+            "directory, or its --vault is relative.\n"
+            "Exit code 8: satellite add's slug or repo path is already registered.\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -672,7 +1008,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("title", nargs="?", help="Memory title (omit with --bulk)")
     sp.add_argument("-d", "--description", help="Optional context: notes, links, reasoning")
     sp.add_argument("-t", "--tags", action="append", help="Tag (repeat or comma-separate)")
-    sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, -2d); omitted = today with early-morning rule")
+    sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, --date=-2d); omitted = today with early-morning rule")
     sp.add_argument("--bulk", action="store_true",
                     help='Read JSON array from stdin, insert all rows in one transaction. '
                          'Row keys: title (required), type, tags, description, date, due_date, priority, status')
@@ -686,7 +1022,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-t", "--tags", action="append", help="Tag (repeat or comma-separate)")
     sp.add_argument("--due", help="Due date: YYYY-MM-DD or relative (tomorrow, +3d, +1w, +1m)")
     sp.add_argument("--priority", choices=["low", "normal", "high"])
-    sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, -2d); omitted = today with early-morning rule")
+    sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, --date=-2d); omitted = today with early-morning rule")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_task)
 
@@ -695,7 +1031,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("title")
     sp.add_argument("-d", "--description", help="Optional context: notes, links, reasoning")
     sp.add_argument("-t", "--tags", action="append", help="Tag (repeat or comma-separate)")
-    sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, -2d); omitted = today with early-morning rule")
+    sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, --date=-2d); omitted = today with early-morning rule")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_idea)
 
@@ -708,7 +1044,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--status", help="task: todo|in_progress|done|cancelled; idea: open|done|dismissed")
     sp.add_argument("--due", help="Due date: YYYY-MM-DD or relative (tomorrow, +3d, +1w, +1m)")
     sp.add_argument("--priority", choices=["low", "normal", "high"])
-    sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, -2d); omitted = today with early-morning rule")
+    sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, --date=-2d); omitted = today with early-morning rule")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_update)
 
@@ -727,18 +1063,31 @@ def build_parser() -> argparse.ArgumentParser:
     # marker
     sp = sub.add_parser("marker", help="Get/set a named marker")
     sp.add_argument("action", choices=["get", "set"], help="get prints the marker; set upserts it in place")
-    sp.add_argument("name", help="Marker name, e.g. last-slacky-flush")
+    sp.add_argument("name", help="Marker name, e.g. last-acme-flush")
     sp.add_argument("value", nargs="?", help="New value (required with set)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_marker)
 
     # today / todo / overdue
-    for name, func, help_ in [
-        ("today", cmd_today, "Rows dated today"),
-        ("todo", cmd_todo, "Open tasks"),
-        ("overdue", cmd_overdue, "Overdue open tasks"),
+    for name, func, help_, mother_all in [
+        ("today", cmd_today, "Rows dated today, another day, or a range of days", False),
+        ("todo", cmd_todo, "Open tasks", True),
+        ("overdue", cmd_overdue, "Overdue open tasks", True),
     ]:
         sp = sub.add_parser(name, help=help_)
+        if name == "today":
+            sp.add_argument("--date", metavar="DAY",
+                            help="Day to read: YYYY-MM-DD, a relative offset "
+                                 "(--date=-2d), or a keyword (today, yesterday, "
+                                 "tomorrow) resolved to that calendar day; "
+                                 "omitted = the lived day (early-morning rule)")
+            sp.add_argument("--to", metavar="DAY",
+                            help="Last day of an inclusive range starting at --date; "
+                                 "rows ordered by date, then id")
+        if name == "todo":
+            sp.add_argument("--due-until", metavar="DAY", dest="due_until",
+                            help="Only tasks with no due date or due on or before DAY")
+        _add_scope_flags(sp, mother_all=mother_all)
         sp.add_argument("--json", action="store_true")
         sp.set_defaults(func=func)
 
@@ -750,7 +1099,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--status", help="task: todo|in_progress|done|cancelled; idea: open|done|dismissed")
     sp.add_argument("--since", help="Lower date bound (YYYY-MM-DD or relative)")
     sp.add_argument("--until", help="Upper date bound (YYYY-MM-DD or relative)")
-    sp.add_argument("--limit", type=int, default=50, help="Max rows (default 50)")
+    sp.add_argument("--completed-since", metavar="DAY", dest="completed_since",
+                    help="Lower bound on completed_date; rows without one are left out")
+    sp.add_argument("--completed-until", metavar="DAY", dest="completed_until",
+                    help="Upper bound on completed_date; rows without one are left out")
+    sp.add_argument("--limit", type=int, default=50,
+                    help="Max rows (default 50; 0 = no limit, keyword search only)")
     sp.add_argument("--semantic", action="store_true",
                     help="Ricerca per significato via embedding (richiede Ollama+uv)")
     sp.add_argument("--min-score", type=float, default=0.0, dest="min_score",
@@ -760,6 +1114,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Restringe il recall a una sola sorgente")
     sp.add_argument("--vault-frac", type=float, default=0.6, dest="vault_frac",
                     help="Quota massima di risultati dal vault (anti-sommersione)")
+    _add_scope_flags(sp)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_search)
 
@@ -771,6 +1126,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # stats
     sp = sub.add_parser("stats", help="Aggregate counts")
+    _add_scope_flags(sp)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_stats)
 
@@ -789,6 +1145,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("id", type=int)
     sp.add_argument("--limit", type=int, default=10)
     sp.add_argument("--min-score", type=float, default=0.0, dest="min_score")
+    _add_scope_flags(sp)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_similar)
 
@@ -798,8 +1155,39 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--type", choices=["memory", "task", "idea"])
     sp.add_argument("--limit", type=int, default=50)
     sp.add_argument("--model", help="Override modello embedding")
+    _add_scope_flags(sp)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_dupes)
+
+    # satellite
+    sp = sub.add_parser("satellite", help="Manage the satellites of this mother instance")
+    sat_sub = sp.add_subparsers(dest="satellite_cmd", required=True)
+
+    sp_add = sat_sub.add_parser("add", help="Register a satellite")
+    sp_add.add_argument("slug", metavar="SLUG")
+    sp_add.add_argument("--repo", required=True, metavar="PATH",
+                        help="Absolute path to the satellite's repo; stored resolved")
+    sp_add.add_argument("--type", required=True, dest="project_type",
+                        choices=["ux", "consulting", "development"],
+                        help="What kind of project the satellite is")
+    sp_add.add_argument("--mandate", help="What the satellite is here to do")
+    sp_add.add_argument("--method", help="How the satellite works")
+    sp_add.add_argument("--constraints", help="What the satellite must not do")
+    sp_add.add_argument("--language", help="Default language of the satellite")
+    sp_add.add_argument("--vault", metavar="ABS_PATH",
+                        help="Absolute path to the satellite's vault folder "
+                             "(not required to exist)")
+    sp_add.add_argument("--json", action="store_true")
+    sp_add.set_defaults(func=cmd_satellite_add)
+
+    sp_list = sat_sub.add_parser("list", help="List the registered satellites")
+    sp_list.add_argument("--json", action="store_true")
+    sp_list.set_defaults(func=cmd_satellite_list)
+
+    sp_show = sat_sub.add_parser("show", help="Show one satellite")
+    sp_show.add_argument("slug", metavar="SLUG")
+    sp_show.add_argument("--json", action="store_true")
+    sp_show.set_defaults(func=cmd_satellite_show)
 
     return p
 

@@ -31,7 +31,28 @@ from pathlib import Path
 OLLAMA_URL = os.environ.get("MEM_OLLAMA_URL", "http://localhost:11434")
 DEFAULT_MODEL = os.environ.get("MEM_EMBED_MODEL", "bge-m3")
 EXIT_UNAVAILABLE = 3
+EXIT_SCHEMA_MISSING = 5
 BATCH_SIZE = 32
+SCHEMA_API_EXPECTED = 2  # bumped together with bin/mem_schema.py's SCHEMA_API
+
+sys.dont_write_bytecode = True  # instances copy bin/* by hand: no __pycache__/
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import mem_schema
+except ModuleNotFoundError as e:
+    if e.name != "mem_schema":
+        raise
+    sys.stderr.write(
+        "mem-vec: bin/mem_schema.py is missing next to bin/mem-vec; copy it "
+        "from the Maestro mirror (~/.maestro/bin/mem_schema.py)\n")
+    sys.exit(EXIT_SCHEMA_MISSING)
+_schema_api = getattr(mem_schema, "SCHEMA_API", "missing")
+if _schema_api != SCHEMA_API_EXPECTED:
+    sys.stderr.write(
+        f"mem-vec: bin/mem_schema.py schema API is {_schema_api}, bin/mem-vec "
+        f"expects {SCHEMA_API_EXPECTED}; copy bin/mem, bin/mem-vec and "
+        "bin/mem_schema.py together from the Maestro mirror (~/.maestro/bin/)\n")
+    sys.exit(EXIT_SCHEMA_MISSING)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS log_vec (
@@ -75,9 +96,12 @@ def connect() -> sqlite3.Connection:
     if not p.exists():
         sys.stderr.write(f"mem-vec: db not found at {p}\n")
         sys.exit(2)
-    con = sqlite3.connect(str(p))
+    # 30 s instead of the default 5: another process may hold the lock for a
+    # batch of embed writes or for the scope migration.
+    con = sqlite3.connect(str(p), timeout=30)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
+    mem_schema.ensure_scope(con)
     con.executescript(SCHEMA)
     con.executescript(SCHEMA_VAULT)
     return con
@@ -404,6 +428,10 @@ def _embed_vault(con, roots, model, now, rebuild) -> dict:
 
 
 def cmd_embed(args) -> int:
+    scope = mem_schema.current_scope(prog="mem-vec")
+    if scope is not None:
+        sys.stderr.write(f"mem-vec: {mem_schema.EMBED_REFUSED.format(scope=scope)}\n")
+        return mem_schema.EXIT_SCOPE_REFUSED
     model = args.model
     con = connect()
     t0 = time.monotonic()
@@ -485,13 +513,29 @@ _SELECT_VAULT_SCORED = (
     "FROM vault_vec WHERE model = ? ORDER BY distance ASC LIMIT ?")
 
 
-def _mem_hits(con, qvec, args) -> list[dict]:
+def _scope_filter(args, column: str) -> tuple[str, list]:
+    """The scope filter of a read command on `column`: a satellite reads its
+    own scope and refuses --scope/--all-scopes (exit 4), the mother reads the
+    null scope unless the flags open the others (same rules as bin/mem)."""
+    return mem_schema.read_clause(args.scope, args.all_scopes, column=column,
+                                  prog="mem-vec")
+
+
+def _mem_hit_rows(con, qvec, args) -> list[sqlite3.Row]:
+    """The scoped SQL of a memory search."""
     params: list = [qvec, args.model]
     clauses = _filters(args, params)
-    where = (" AND " + " AND ".join(clauses)) if clauses else ""
-    rows = con.execute(
+    scope_where, scope_params = _scope_filter(args, "l.scope")
+    clauses.append(scope_where)
+    params.extend(scope_params)
+    where = " AND " + " AND ".join(clauses)
+    return con.execute(
         _MEM_FUSED + f"WHERE v.model = ?{where} ORDER BY distance ASC LIMIT ?",
         (*params, args.limit)).fetchall()
+
+
+def _mem_hits(con, qvec, args) -> list[dict]:
+    rows = _mem_hit_rows(con, qvec, args)
     hits = []
     for r in rows:
         sc = _score(r)
@@ -524,6 +568,7 @@ def _merge_hits(mem: list, vault: list, limit: int, vault_frac: float) -> list:
 
 
 def cmd_search(args) -> int:
+    _scope_filter(args, "l.scope")  # refuse the flags before the db and Ollama
     con = connect()
     load_vec(con)
     qvec = pack(ollama_embed([args.query], args.model)[0])
@@ -534,8 +579,31 @@ def cmd_search(args) -> int:
     return 0
 
 
+def _similar_rows(con, embedding, model, exclude_id, args) -> list[sqlite3.Row]:
+    """The scoped SQL of `similar` hits: every row but the anchor, filtered
+    like a memory search."""
+    scope_where, scope_params = _scope_filter(args, "l.scope")
+    return con.execute(
+        _SELECT_SCORED + f"WHERE v.model = ? AND l.id != ? AND {scope_where} "
+        "ORDER BY distance ASC LIMIT ?",
+        (embedding, model, exclude_id, *scope_params, args.limit)).fetchall()
+
+
+def _anchor_in_scope(con, log_id: int, scope: str | None) -> bool:
+    """A satellite anchors `similar` only on rows of its own scope; the mother
+    on any row."""
+    if scope is None:
+        return True
+    return mem_schema.row_in_scope(con, log_id, scope)
+
+
 def cmd_similar(args) -> int:
+    _scope_filter(args, "l.scope")  # refuse the flags before the db
+    scope = mem_schema.current_scope(prog="mem-vec")
     con = connect()
+    if not _anchor_in_scope(con, args.id, scope):
+        sys.stderr.write(f"mem-vec: no row with id {args.id} in scope {scope}\n")
+        return 1
     load_vec(con)
     row = con.execute(
         "SELECT embedding, model FROM log_vec WHERE log_id=?", (args.id,)).fetchone()
@@ -543,23 +611,23 @@ def cmd_similar(args) -> int:
         sys.stderr.write(
             f"mem-vec: nessun embedding per #{args.id} — esegui prima 'mem embed'\n")
         return 1
-    rows = con.execute(
-        _SELECT_SCORED + "WHERE v.model = ? AND l.id != ? ORDER BY distance ASC LIMIT ?",
-        (row["embedding"], row["model"], args.id, args.limit)).fetchall()
+    rows = _similar_rows(con, row["embedding"], row["model"], args.id, args)
     emit([_scored(r) for r in rows if _score(r) >= args.min_score])
     return 0
 
 
-def cmd_dupes(args) -> int:
-    con = connect()
-    load_vec(con)
+def _dupes_rows(con, args) -> list[sqlite3.Row]:
+    """The scoped SQL of `dupes`: a pair returns only when both of its rows
+    are in scope."""
     max_distance = 1 - args.min_score
     type_clause = " AND la.type = ?" if args.type else ""
+    clause_a, params_a = _scope_filter(args, "la.scope")
+    clause_b, params_b = _scope_filter(args, "lb.scope")
     params: list = [args.model, args.model]
     if args.type:
         params.append(args.type)
-    params += [max_distance, args.limit]
-    rows = con.execute(
+    params += params_a + params_b + [max_distance, args.limit]
+    return con.execute(
         "SELECT * FROM ("
         "  SELECT a.log_id AS id_a, b.log_id AS id_b, la.type AS type, "
         "         la.title AS title_a, lb.title AS title_b, "
@@ -568,18 +636,52 @@ def cmd_dupes(args) -> int:
         "  FROM log_vec a JOIN log_vec b ON a.log_id < b.log_id "
         "  JOIN log la ON la.id = a.log_id JOIN log lb ON lb.id = b.log_id "
         f" WHERE a.model = ? AND b.model = ? AND la.type = lb.type{type_clause}"
+        f" AND {clause_a} AND {clause_b}"
         ") WHERE distance <= ? ORDER BY distance ASC LIMIT ?",
         params).fetchall()
+
+
+def cmd_dupes(args) -> int:
+    _scope_filter(args, "la.scope")  # refuse the flags before the db
+    con = connect()
+    load_vec(con)
+    rows = _dupes_rows(con, args)
     emit([{**{k: r[k] for k in ("id_a", "id_b", "type", "title_a", "title_b",
                                 "status_a", "status_b")}, "score": _score(r)}
           for r in rows])
     return 0
 
 
+def _add_scope_flags(sp: argparse.ArgumentParser) -> None:
+    """--scope/--all-scopes of a read command: mother only, mutually
+    exclusive, same semantics as bin/mem's own flags."""
+    g = sp.add_mutually_exclusive_group()
+    g.add_argument("--scope", metavar="SLUG",
+                   help="Mother only: read the rows of this scope (default: the null scope)")
+    g.add_argument("--all-scopes", action="store_true", dest="all_scopes",
+                   help="Mother only: read the rows of every scope")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="mem-vec",
-        description="Strato semantico di memories.db (emette JSON; usato da bin/mem).")
+        description="Strato semantico di memories.db (emette JSON; usato da bin/mem).",
+        epilog=(
+            "scope: env MEM_SCOPE marks a satellite session, same slug rules and\n"
+            "exit codes as bin/mem. search, similar and dupes accept --scope/\n"
+            "--all-scopes (mother only, mutually exclusive) to read another scope\n"
+            "or every scope; a satellite refuses both flags. similar refuses an\n"
+            "anchor id outside the session's scope. embed refuses to run at all\n"
+            "when MEM_SCOPE is set: only the mother instance vectorizes memories\n"
+            "and prunes vault_vec of files outside its own roots.\n"
+            "\n"
+            "Exit code 3: strato semantico non disponibile (uv/Ollama mancanti).\n"
+            "Exit code 4: --scope/--all-scopes refused, or embed run under MEM_SCOPE.\n"
+            "Exit code 5: bin/mem_schema.py missing or incompatible next to bin/mem-vec.\n"
+            "Exit code 6: invalid MEM_SCOPE or --scope slug.\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sp = sub.add_parser("embed", help="Vettorizza righe nuove/modificate")
@@ -602,12 +704,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--model", default=DEFAULT_MODEL)
     sp.add_argument("--only", choices=["memory", "vault"])
     sp.add_argument("--vault-frac", type=float, default=0.6, dest="vault_frac")
+    _add_scope_flags(sp)
     sp.set_defaults(func=cmd_search)
 
     sp = sub.add_parser("similar", help="Righe affini a un id dato")
     sp.add_argument("id", type=int)
     sp.add_argument("--limit", type=int, default=10)
     sp.add_argument("--min-score", type=float, default=0.0, dest="min_score")
+    _add_scope_flags(sp)
     sp.set_defaults(func=cmd_similar)
 
     sp = sub.add_parser("dupes", help="Coppie candidate duplicate")
@@ -615,6 +719,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--type")
     sp.add_argument("--limit", type=int, default=50)
     sp.add_argument("--model", default=DEFAULT_MODEL)
+    _add_scope_flags(sp)
     sp.set_defaults(func=cmd_dupes)
 
     return p
