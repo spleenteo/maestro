@@ -33,8 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "bin" / "mem"
 
 # Every file that reads or writes `log`, as required by the V2 slice packet's
-# `rg` gate over `.claude/` (outside `.claude/skills/setup/finalize.sh`, V4's
-# to move). Task 4 adds `howto/01-skills.md`.
+# `rg` gate over `.claude/`. Task 4 adds `howto/01-skills.md`.
 SOURCE_FILES = [
     ROOT / ".claude" / "skills" / "logbook" / "SKILL.md",
     ROOT / ".claude" / "agents" / "scheduler.md",
@@ -405,11 +404,31 @@ EXPECTERS = {"today": expected_today, "todo": expected_todo, "search": expected_
 
 _RAW_SQLITE_RE = re.compile(r"sqlite3.*\blog\b|INSERT INTO log|FROM log")
 
+# finalize.sh (V4 Task 3: moved from `.claude/skills/setup/` into the plugin
+# at `plugins/maestro/skills/new-instance/`) used to write the first memory
+# with a raw `sqlite3 INSERT INTO log`; it now calls the instance's own
+# `bin/mem save`. `plugins/` is `export-ignore`d (see `.gitattributes`), so
+# this path only exists inside the template repo itself — never inside a
+# shipped instance, where this file (not export-ignored) still runs.
+PLUGIN_SOURCE_FILES = [
+    ROOT / "plugins" / "maestro" / "skills" / "new-instance" / "finalize.sh",
+]
+
 
 class TestNoRawSqlite3(unittest.TestCase):
     def test_no_source_file_touches_log_with_raw_sqlite3(self):
         for path in SOURCE_FILES:
             with self.subTest(file=path.relative_to(ROOT)):
+                offenders = [ln for ln in path.read_text().splitlines()
+                             if _RAW_SQLITE_RE.search(ln)]
+                self.assertEqual(offenders, [])
+
+    def test_moved_finalize_script_touches_no_raw_sqlite3(self):
+        if not (ROOT / "plugins").is_dir():
+            self.skipTest("plugins/ is export-ignore'd: absent in a shipped instance")
+        for path in PLUGIN_SOURCE_FILES:
+            with self.subTest(file=path.relative_to(ROOT)):
+                self.assertTrue(path.is_file(), f"{path} missing")
                 offenders = [ln for ln in path.read_text().splitlines()
                              if _RAW_SQLITE_RE.search(ln)]
                 self.assertEqual(offenders, [])

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
-# finalize.sh — mechanical finalization of the `setup` skill.
+# finalize.sh — mechanical finalization of the `new-instance` skill.
 #
-# Called by the setup skill after the owner has answered the 10 questions
-# and confirmed the summary. Runs the deterministic filesystem ops that
-# don't need the LLM:
+# Called by the new-instance skill after the owner has answered the 10
+# interview questions and confirmed the summary, in the new instance's own
+# folder. Runs the deterministic filesystem ops that don't need the LLM:
 #   1. Write private/preferences.md from collected answers.
 #   2. Copy memories.db.template → private/memories.db.
 #   3. Copy routines.example.yaml → private/routines.yaml.
-#   4. Insert the first memory log record.
+#   4. Insert the first memory log record, through the instance's own
+#      bin/mem save.
 #   5. Remove the three root templates.
-#   6. Move the setup skill to .claude/skills/.disabled/setup/.
 #
 # The LLM still owns: asking the questions, the summary/confirmation,
 # the creative "day zero" logbook note, the orientation TIL note, and the
@@ -37,8 +37,11 @@
 #   MAESTRO_DOCUMENTS_PATH        absolute path for documents (empty if skip)
 #   MAESTRO_NOTES                 free-form additional context (optional)
 #
-# Assumes CWD = repo root (where the setup skill was triggered from).
-# Refuses to run if `private/preferences.md` already exists.
+# Assumes CWD = instance root.
+# Refuses to run if `private/preferences.md` or `private/memories.db`
+# already exists — a new instance always starts in a new or empty folder;
+# re-running here would mean re-setup, which happens by editing preferences
+# directly, not by re-running this script.
 #
 # Note on values: the LLM that invokes this script passes free-form text
 # from the owner as env vars. Values must be plain text — they get
@@ -52,8 +55,15 @@ set -euo pipefail
 
 if [[ -f private/preferences.md ]]; then
   echo "ERROR: private/preferences.md already exists — refusing to overwrite." >&2
-  echo "       The setup skill should run only once per instance." >&2
-  echo "       To reconfigure, remove private/preferences.md and re-enable the skill." >&2
+  echo "       finalize.sh should run only once per instance, in a new or empty folder." >&2
+  echo "       To reconfigure, edit private/preferences.md directly." >&2
+  exit 1
+fi
+
+if [[ -f private/memories.db ]]; then
+  echo "ERROR: private/memories.db already exists — refusing to overwrite." >&2
+  echo "       finalize.sh should run only once per instance, in a new or empty folder." >&2
+  echo "       To start a new instance, use a new or empty destination folder." >&2
   exit 1
 fi
 
@@ -203,24 +213,24 @@ echo "OK: private/memories.db initialized"
 cp routines.example.yaml private/routines.yaml
 echo "OK: private/routines.yaml initialized"
 
-# --- 4) First memory log -----------------------------------------------
+# --- 4) First memory log -------------------------------------------------
 
-TODAY=$(date +%Y-%m-%d)
-sqlite3 private/memories.db \
-  "INSERT INTO log (date, title, description, tags, type) VALUES ('$TODAY', 'Orchestrator setup completed', 'First launch configured via setup skill. Identity and preferences recorded.', 'setup,bootstrap,meta', 'memory');"
-FIRST_ID=$(sqlite3 private/memories.db "SELECT last_insert_rowid();")
-echo "OK: first memory logged (id=$FIRST_ID)"
+# -u strips any MEM_DB/MEM_SCOPE the caller's environment happens to carry
+# (a stray value from an unrelated instance, say), so the write always lands
+# on this instance's own db, as the mother (scope NULL).
+MEM_OUTPUT=$(env -u MEM_DB -u MEM_SCOPE "$PWD/bin/mem" save "Orchestrator setup completed" \
+  -d "First launch configured via new-instance. Identity and preferences recorded." \
+  -t setup,bootstrap,meta)
+if [[ "$MEM_OUTPUT" =~ \#([0-9]+)$ ]]; then
+  echo "OK: first memory logged (id=${BASH_REMATCH[1]})"
+else
+  echo "OK: first memory logged"
+fi
 
 # --- 5) Clean up root templates ----------------------------------------
 
 /bin/rm -f preferences.example.md memories.db.template routines.example.yaml
 echo "OK: root templates removed"
-
-# --- 6) Self-disable ---------------------------------------------------
-
-mkdir -p .claude/skills/.disabled
-mv .claude/skills/setup .claude/skills/.disabled/setup
-echo "OK: setup skill moved to .claude/skills/.disabled/setup/"
 
 echo ""
 echo "finalize.sh done."

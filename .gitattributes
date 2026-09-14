@@ -29,3 +29,7 @@ tests/test_maestro_sync.py export-ignore
 # This test clones the template's own .git to build the archive it
 # checks: an archived instance never has that .git to clone.
 tests/test_template_archive.py export-ignore
+
+# This test also clones the template's own .git, and reads finalize.sh out
+# of plugins/, both absent from an archived instance.
+tests/test_finalize.py export-ignore

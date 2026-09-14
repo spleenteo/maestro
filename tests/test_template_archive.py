@@ -56,6 +56,7 @@ EXPORT_IGNORED_TEST_FILES = (
     "test_maestro_net.py",
     "test_maestro_sync.py",
     "test_template_archive.py",
+    "test_finalize.py",
 )
 
 # A sample of test files that have nothing to do with the template and
