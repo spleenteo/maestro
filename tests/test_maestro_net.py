@@ -734,6 +734,23 @@ class TestRegister(unittest.TestCase):
         r = self.register("home")
         self.assertEqual(r.returncode, E_USAGE)
 
+    def test_appends_after_trailing_comments_of_the_last_entry(self):
+        home = self.make_instance("home")
+        work = self.make_instance("work")
+        self.registry.write_text(
+            "version: 1\ninstances:\n"
+            f"  home:\n    path: {home}\n"
+            "  # fine istanze, non aggiungere a mano qui sotto\n"
+        )
+        r = self.register("work", "--path", str(work))
+        self.assertEqual(r.returncode, OK, r.stderr)
+        text = self.registry.read_text()
+        self.assertIn("# fine istanze, non aggiungere a mano qui sotto", text)
+        self.assertLess(
+            text.index("# fine istanze"), text.index("  work:"),
+            "il commento di coda deve restare prima della nuova istanza appesa",
+        )
+
 
 class TestUnregister(RegistryFixture):
     def test_removes_existing_instance(self):
@@ -778,6 +795,34 @@ class TestUnregister(RegistryFixture):
     def test_missing_registry_exits_3(self):
         r = run("--registry", str(self.root / "nope.yaml"), "unregister", "home")
         self.assertEqual(r.returncode, E_NO_REGISTRY)
+
+    def test_comment_between_two_instances_survives_unregister_of_the_first(self):
+        self.registry.write_text(
+            "version: 1\ninstances:\n"
+            f"  home:\n    path: {self.home}\n"
+            "  # a note describing work below\n"
+            f"  work:\n    path: {self.work}\n"
+        )
+        r = self.run_net("unregister", "home")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        text = self.registry.read_text()
+        self.assertIn("# a note describing work below", text)
+        self.assertNotIn("home:", text)
+        self.assertIn("work:", text)
+
+    def test_comment_inside_the_removed_block_goes_with_it(self):
+        self.registry.write_text(
+            "version: 1\ninstances:\n"
+            f"  home:\n    path: {self.home}\n"
+            "    # nota interna su home\n"
+            "    accepts: [recap]\n"
+            f"  work:\n    path: {self.work}\n"
+        )
+        r = self.run_net("unregister", "home")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        text = self.registry.read_text()
+        self.assertNotIn("nota interna su home", text)
+        self.assertIn("work:", text)
 
 
 class TestCli(unittest.TestCase):

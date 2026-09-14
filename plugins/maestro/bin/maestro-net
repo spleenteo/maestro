@@ -476,14 +476,28 @@ def _line_indent(line: str) -> Optional[int]:
 
 
 def _block_end(lines: List[str], start: int, boundary_indent: int) -> int:
-    """Prima riga (>= start) di contenuto reale con indentazione <= boundary_indent.
+    """Fine del blocco che inizia a start: una riga reale con indentazione
+    <= boundary_indent, oppure l'inizio della striscia di righe vuote o di
+    commento che la precede immediatamente.
 
-    len(lines) se non se ne trova una: il blocco arriva fino a fine file.
+    Quella striscia appartiene a quello che segue, non al blocco che sta
+    per finire — è così che un commento fra due istanze sopravvive a chi
+    toglie la prima. Una striscia senza nulla dopo (fine del file) resta
+    invece dentro il blocco: non ha un "quello che segue" a cui appartenere,
+    e chi accoda una nuova istanza in coda al file deve poterci scrivere
+    dopo, non incunearsi prima. len(lines) in quel caso.
     """
+    pending: Optional[int] = None  # inizio di una striscia vuota/commento non ancora assegnata
     for i in range(start, len(lines)):
         indent = _line_indent(lines[i])
-        if indent is not None and indent <= boundary_indent:
-            return i
+        if indent is None:
+            if pending is None:
+                pending = i
+            continue
+        if indent > boundary_indent:
+            pending = None  # era dentro il blocco: assorbita, non più in sospeso
+            continue
+        return pending if pending is not None else i
     return len(lines)
 
 

@@ -146,6 +146,8 @@ The entry lands with the same field order and indentation `render_registry` uses
 maestro-net unregister home
 ```
 
+Both assume a single writer: nothing locks the registry file, so two `register`/`unregister` calls racing on it can each read before the other writes, and the second write silently loses the first's change.
+
 ## Degradation
 
 Every failure has its own exit code and says what happened.
@@ -176,4 +178,4 @@ The reading side. Each instance would pick up, at session start, the `from:*` ro
 python3 -m unittest tests.test_maestro_net
 ```
 
-87 tests, stdlib only, no real instances and no network: registry parsing and its malformations (including the unknown-verb warning), name resolution including the ambiguous case, the `accepts` gate, the scanner against fake transcripts, both verbs against recorder scripts that capture their arguments and environment (`MEM_DB`, `MEM_SCOPE` and `PWD` stripped), and `register`/`unregister` against temp registries — creation from nothing, surgical append and removal that leaves comments and every other entry's fields untouched, the duplicate and slug checks, and the instance-signature check on `--path`.
+90 tests, stdlib only, no real instances and no network: registry parsing and its malformations (including the unknown-verb warning), name resolution including the ambiguous case, the `accepts` gate, the scanner against fake transcripts, both verbs against recorder scripts that capture their arguments and environment (`MEM_DB`, `MEM_SCOPE` and `PWD` stripped), and `register`/`unregister` against temp registries — creation from nothing, surgical append and removal that leaves comments and every other entry's fields untouched (including a comment sitting between two instances, or trailing after the last one), the duplicate and slug checks, and the instance-signature check on `--path`.
