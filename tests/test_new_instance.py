@@ -530,6 +530,57 @@ class TestRefusals(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Step 4 against a mirror cloned single-branch
+# ---------------------------------------------------------------------------
+
+class TestSingleBranchMirror(unittest.TestCase):
+    """A mirror already on disk, cloned `--single-branch` of `main` by
+    whatever put it there before this session: the plugin's commit lives
+    on another branch of the same remote. `git fetch origin` with no
+    refspec follows the mirror's own restricted `remote.origin.fetch` and
+    never brings it, even though the fetch itself exits 0 (fix round 3,
+    finding 3)."""
+
+    def test_step_4_fetches_a_commit_from_another_branch_of_a_single_branch_mirror(self):
+        for name, shell in SHELLS:
+            with self.subTest(shell=name):
+                tmp = Path(tempfile.mkdtemp(prefix="maestro-single-branch-mirror-"))
+                self.addCleanup(shutil.rmtree, tmp, True)
+
+                bare = tmp / "remote.git"
+                _git("init", "--bare", "--quiet", "-b", "main", str(bare))
+                work = tmp / "work"
+                _git("clone", "--quiet", bare.as_uri(), str(work))
+                commit = ["-c", "user.name=New Instance Test",
+                          "-c", "user.email=new-instance-test@example.com",
+                          "-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet"]
+
+                _git("-C", str(work), *commit, "-m", "main commit")
+                _git("-C", str(work), "push", "--quiet", "origin", "HEAD:refs/heads/main")
+
+                _git("-C", str(work), "checkout", "--quiet", "-b", "plugin-branch")
+                _git("-C", str(work), *commit, "-m", "plugin commit")
+                plugin_sha = _git("-C", str(work), "rev-parse", "HEAD")
+                _git("-C", str(work), "push", "--quiet", "origin", "HEAD:refs/heads/plugin-branch")
+
+                class _Repo:
+                    url = bare.as_uri()
+
+                s = _Session(tmp, _Repo(), _plugin_rows(plugin_sha[:12]))
+                _git("clone", "--quiet", "--single-branch", "--branch", "main",
+                     bare.as_uri(), str(s.mirror))
+
+                r = s.run(shell, _only_bash_block(STEP_MIRROR), s.values(sha=plugin_sha))
+
+                self.assertEqual(r.returncode, 0, r.stderr)
+                have = subprocess.run(
+                    ["git", "-C", str(s.mirror), "cat-file", "-e", f"{plugin_sha}^{{commit}}"],
+                    env={"PATH": BASE_PATH, "HOME": str(s.home)},
+                )
+                self.assertEqual(have.returncode, 0, "plugin commit still missing from the mirror")
+
+
+# ---------------------------------------------------------------------------
 # Free-text values and the register fallback
 # ---------------------------------------------------------------------------
 

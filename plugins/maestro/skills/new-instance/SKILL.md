@@ -92,7 +92,7 @@ set -eo pipefail
 REPO_URL=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["repository"])' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json")
 MIRROR="$HOME/.maestro"
 if [ -e "$MIRROR/.git" ]; then
-  git -C "$MIRROR" fetch --quiet origin
+  git -C "$MIRROR" fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*'
 else
   git clone --quiet "$REPO_URL" "$MIRROR"
 fi
