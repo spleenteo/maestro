@@ -23,6 +23,8 @@ PLUGIN_DIR = ROOT / "plugins" / "maestro"
 PLUGIN_MANIFEST = PLUGIN_DIR / ".claude-plugin" / "plugin.json"
 SCRIPT = PLUGIN_DIR / "bin" / "maestro-net"
 SKILL = PLUGIN_DIR / "skills" / "maestro-net" / "SKILL.md"
+NEW_INSTANCE_SKILL = PLUGIN_DIR / "skills" / "new-instance" / "SKILL.md"
+NEW_INSTANCE_FINALIZE = PLUGIN_DIR / "skills" / "new-instance" / "finalize.sh"
 
 
 class TestMarketplaceJson(unittest.TestCase):
@@ -133,6 +135,37 @@ class TestMaestroNetSkillPlacement(unittest.TestCase):
 class TestUserSkillsGone(unittest.TestCase):
     def test_user_skills_directory_no_longer_exists(self):
         self.assertFalse((ROOT / "user-skills").exists())
+
+
+class TestNewInstanceSkillPlacement(unittest.TestCase):
+    """`setup` moved from `.claude/skills/setup/` into the plugin as
+    `new-instance` (V4 plan, Task 3): triggered only on explicit request,
+    never automatically — a user-scope plugin loads its skills in every
+    session, and the interview should not start on its own."""
+
+    def test_skill_exists(self):
+        self.assertTrue(NEW_INSTANCE_SKILL.is_file())
+
+    def test_finalize_script_exists_and_is_readable(self):
+        self.assertTrue(NEW_INSTANCE_FINALIZE.is_file())
+
+    def test_skill_frontmatter_has_no_origin_marker(self):
+        text = NEW_INSTANCE_SKILL.read_text(encoding="utf-8")
+        self.assertNotIn("origin: maestro", text)
+        self.assertNotIn("maestro_version:", text)
+
+    def test_skill_name_field_is_new_instance(self):
+        text = NEW_INSTANCE_SKILL.read_text(encoding="utf-8")
+        self.assertIn("name: new-instance", text)
+
+    def test_skill_disables_automatic_model_invocation(self):
+        text = NEW_INSTANCE_SKILL.read_text(encoding="utf-8")
+        self.assertIn("disable-model-invocation: true", text)
+
+
+class TestOldSetupSkillGone(unittest.TestCase):
+    def test_setup_skill_directory_no_longer_exists_under_dot_claude(self):
+        self.assertFalse((ROOT / ".claude" / "skills" / "setup").exists())
 
 
 if __name__ == "__main__":

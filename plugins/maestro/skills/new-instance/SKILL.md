@@ -1,8 +1,7 @@
 ---
-origin: maestro
-maestro_version: v2026.09.10.1
-name: setup
-description: Interactive first-launch setup for a new orchestrator instance. Asks the owner a short series of questions, writes `private/preferences.md`, initializes `private/memories.db`, and self-disables. Invoked automatically when `private/preferences.md` is missing or has `setup_completed: false`.
+name: new-instance
+description: Create a new Maestro instance in a new folder: fetch the template at the plugin's commit, run the first-launch interview, finalize and register it. Use only when the owner asks to create a new Maestro instance or runs /maestro:new-instance.
+disable-model-invocation: true
 ---
 
 # Setup
