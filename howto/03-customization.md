@@ -158,7 +158,7 @@ The trigger for writing to preferences is **patterns**, not topic transitions. T
 
 Edit the `Name` field in the Identity block. Next session the orchestrator introduces itself with the new name.
 
-For a full re-setup (new identity, new adjectives, new paths), there is no in-place trigger: `new-instance` never edits an existing instance, only a new or empty folder. Either edit `private/preferences.md` by hand, field by field, or run `/maestro:new-instance` in a new or empty folder for a fresh interview end to end. To keep your accumulated history in the new instance, move `private/memories.db` into it once `new-instance` finishes — its `finalize.sh` refuses to run over an existing db, so the move happens after, never during.
+For a full re-setup (new identity, new adjectives, new paths), there is no in-place trigger: `new-instance` never edits an existing instance, only a new or empty folder. Either edit `private/preferences.md` by hand, field by field, or run `/maestro:new-instance` in a new or empty folder for a fresh interview end to end. To keep your accumulated history in the new instance, move `private/memories.db` into it once `new-instance` finishes — its `finalize.sh` refuses to run over an existing db, so the move happens after, never during. The move replaces the new instance's first memory (the "Orchestrator setup completed" row `finalize.sh` wrote) with your old db's full history, that event included from its own instance's first run. If you're dropping the old instance, run `maestro-net unregister <old-name>` so the machine registry doesn't keep pointing at a folder you're no longer using.
 
 ## Changing language
 
@@ -169,7 +169,7 @@ Change `Default language` in the Owner block. Next session, the orchestrator use
 There is no in-place reset: `new-instance` always creates a fresh instance in a new or empty folder, never edits this one. To start over from zero while preserving memory:
 
 1. Run `/maestro:new-instance` in a new or empty folder and answer the interview again.
-2. Once it finishes, move `private/memories.db` from this instance into the new one — its `finalize.sh` refuses to run over an existing db, so this always happens after, never during.
-3. This folder is yours to delete or keep as a backup once you're happy with the new instance.
+2. Once it finishes, move `private/memories.db` from this instance into the new one — its `finalize.sh` refuses to run over an existing db, so this always happens after, never during. The moved db replaces the new instance's first memory (the "Orchestrator setup completed" row `finalize.sh` wrote): your old db already has its own first-run row, and the new one is superseded.
+3. This folder is yours to delete or keep as a backup once you're happy with the new instance. If you delete it, or otherwise stop using it, run `maestro-net unregister <old-name>` so the machine registry drops the stale entry.
 
 To start over *completely* (fresh memory too), skip step 2. You'll lose your history.
