@@ -24,9 +24,14 @@ channels:
       proactively during conversations. Always present in every matrix
       instance. Read for every `question_type`.
     access:
-      tool: sqlite3
+      tool: bin/mem
       path: private/memories.db
       table: log
+      commands:
+        - "bin/mem todo --due-until <end>"
+        - "bin/mem search --type memory --since <start> --until <end> --limit 0 --all-scopes"
+        - "bin/mem search --type task --status done --completed-since <start> --completed-until <end> --limit 0 --all-scopes"
+        - "bin/mem search --type idea --status open --limit 0 --all-scopes"
     item_types:
       - name: task
         states: [todo, in_progress, done, cancelled]
@@ -39,9 +44,11 @@ channels:
         fields: [title, description, tags]
     temporal_field: date
     notes: >
-      Useful filters: type='task' AND status IN ('todo','in_progress') for
-      prospectives; (type='memory' AND date=X) OR (type='task' AND
-      completed_date=X) for retrospectives.
+      The scheduler always runs in the mother and reads every scope
+      (`--all-scopes`), tagging each item with its scope. Prospectives use
+      `todo --due-until <end>`; retrospectives run the two `search` commands
+      above and merge them, chronological, in the agent (memories by `date`,
+      done tasks by `completed_date`); ideas use the third `search` above.
 
   # --- Examples (commented, inert) ---------------------------------------
   #

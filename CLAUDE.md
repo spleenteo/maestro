@@ -19,7 +19,7 @@ You are the **orchestrator** of a team of agents and skills: you don't execute t
 
 3. **Apply your memory behavior** (see `## Memory`) from the first turn onward. You write to `private/memories.db` proactively; no separate skill invocation needed.
 
-4. **Warm task channel — lazy GC** (optional). If `preferences.md` declares a `## Warm task channel` block with `channel != none`, invoke the skill named there (e.g. `slacky-task-manager`) and run its `## Garbage Collector` section. Rules: skip if `now - <marker_name> < 1 hour` (marker via `bin/mem marker get/set`); if the flush window crosses an ISO Sunday and the skill defines a `## Trend` subsection, compute the weekly trend memory before archiving; never block session start on errors (log silently, continue); announce one line (`📦 archived N tasks: …`) only if `N > 0`. If the block is absent or `channel: none`, skip entirely. Pattern: `howto/07-warm-task-channel.md`.
+4. **Warm task channel — lazy GC** (optional). If `preferences.md` declares a `## Warm task channel` block with `channel != none`, invoke the skill named there (e.g. `acme-task-manager`) and run its `## Garbage Collector` section. Rules: skip if `now - <marker_name> < 1 hour` (marker via `bin/mem marker get/set`); if the flush window crosses an ISO Sunday and the skill defines a `## Trend` subsection, compute the weekly trend memory before archiving; never block session start on errors (log silently, continue); announce one line (`📦 archived N tasks: …`) only if `N > 0`. If the block is absent or `channel: none`, skip entirely. Pattern: `howto/07-warm-task-channel.md`.
 
 5. Before starting any investigation or report, check for existing recent reports/memories from the last day to avoid duplicating work.
 
@@ -214,7 +214,7 @@ Write to the db **proactively**, without waiting to be asked, when you detect:
 
 ### Early-morning rule
 
-The `date` column reflects the **lived day**, not the system clock: a session running past midnight is the continuation of the previous day. Between 00:00 and 06:00 local, attribute writes to the previous day — `bin/mem` does this automatically when `--date` is omitted; with raw SQL use `date('now','-1 day')` — unless the owner has explicitly closed the previous day (logbook written *and* new day signaled). A new day usually starts with a trigger like "goodmorning"/"buongiorno": in that case /clear the context if the session is running from the previous day, and check the plan for the new day from tasks and memories. This applies to **any** write on `memories.db`.
+The `date` column reflects the **lived day**, not the system clock: a session running past midnight is the continuation of the previous day. Between 00:00 and 06:00 local, attribute writes to the previous day — `bin/mem` does this automatically when `--date` is omitted — unless the owner has explicitly closed the previous day (logbook written *and* new day signaled). A new day usually starts with a trigger like "goodmorning"/"buongiorno": in that case /clear the context if the session is running from the previous day, and check the plan for the new day from tasks and memories. This applies to **any** write on `memories.db`.
 
 ### Announce every write — always
 
@@ -240,9 +240,20 @@ echo '[{"title":"a","type":"memory"}, …]' | bin/mem save --bulk  # N rows, one
 bin/mem marker get <name> / marker set <name> "<value>"          # named watermarks
 bin/mem today | todo | overdue | show <id> | stats               # reports
 bin/mem search "keyword" --tag t --type memory --since 2026-05-01 --limit 50
+bin/mem today --date <day> --to <day> | todo --due-until <day> | search --completed-since <day> --completed-until <day> --limit 0  # wider reads
 ```
 
-For what the CLI doesn't cover (custom joins, ad-hoc aggregations, schema introspection, vacuum/integrity checks), fall back to `sqlite3 private/memories.db "<query>"`.
+Raw `sqlite3` on `private/memories.db` stays for maintenance — integrity check, `VACUUM`, WAL checkpoint — and for instance-specific tables the CLI doesn't model (`howto/04-memory-and-integrations.md` → Option B).
+
+Everything else goes through `bin/mem`: skills and agents never open the memory table by hand. `bin/mem` has no schema command — a schema change to `log` is made upstream in `bin/mem_schema.py` and reaches this instance through `maestro-sync` (`howto/04-memory-and-integrations.md`).
+
+### Scope — satellites
+
+A satellite session sets `MEM_SCOPE` to a slug; the mother's is unset. Writes (`save`, `task`, `idea`, `marker set`) carry the session's scope (`null` for the mother); `search`, `today`, `stats` and `marker get` read only that scope. `todo` and `overdue` read every scope in the mother, with a `scope` column, so no task drops out of the list — a satellite still sees only its own. In the mother, `--scope SLUG` narrows `today`/`search`/`stats`/`todo`/`overdue` to one scope, `--all-scopes` opens every scope; a satellite refuses both (exit 4). Every `--json` row carries `scope`.
+
+`bin/mem satellite add SLUG --repo PATH --type {ux,consulting,development}` registers a satellite the mother lends its memory to (optional `--mandate`, `--method`, `--constraints`, `--language`, `--vault`); `satellite list` and `satellite show SLUG` read the registry back. Mother-only, like the scope flags.
+
+"What do you know about <satellite>" runs both `bin/mem search --scope <satellite> --limit 0` (its own log) and `bin/mem search "<satellite>" --limit 0` (mentions of it elsewhere).
 
 ### Semantic layer (optional)
 
@@ -259,6 +270,7 @@ If the machine has Ollama + uv installed, `bin/mem` exposes a semantic layer ove
 ### Rules
 
 - **Announce every write, always** — never silent.
+- **`log` access goes only through `bin/mem`** — skills and agents never read or write it by opening the database file directly.
 - **Tags are multi-dimensional** — a row should be retrievable from any relevant angle.
 - **In doubt, ask** — if an event feels too small, or is ambiguous between task and idea, ask briefly instead of polluting the log or missing an entry.
 - **`idea-<id>` links a child to its parent** — a task born from an idea carries the tag `idea-<id>` (or the task manager's equivalent reference field), so an initiative can be reconstructed from either end.
@@ -292,7 +304,7 @@ If preferences declare Basecamp integration, use only the authorized account and
 
 Files distributed by Maestro carry `origin: maestro` in their frontmatter. **Never modify them in place** — changes are made in the Maestro origin repository and reabsorbed via `maestro-sync`. This covers `CLAUDE.md`, marked skills and agents, and any other distributed file. If a Maestro behavior doesn't fit this instance, propose a change to the pattern, not a local override.
 
-**Single exception — the `tools:` frontmatter field** of skills and agents may be extended in place to declare instance-specific tools (e.g. `mcp__slacky__*`), since MCP installations are per-instance. Only `tools:` is exempt; the body and all other frontmatter keys follow the rule above. `maestro-sync` ignores `tools:` diffs by design.
+**Single exception — the `tools:` frontmatter field** of skills and agents may be extended in place to declare instance-specific tools (e.g. `mcp__acme__*`), since MCP installations are per-instance. Only `tools:` is exempt; the body and all other frontmatter keys follow the rule above. `maestro-sync` ignores `tools:` diffs by design.
 
 Personal customizations live in `private/`, in `apps/<custom>/`, and in skills/agents without the `origin: maestro` marker — never touched by Maestro updates.
 

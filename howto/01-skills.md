@@ -5,7 +5,7 @@ description: How to add, invoke, write, and retire skills in your orchestrator. 
 
 # How to add and use skills
 
-A **skill** is a small capability the orchestrator can invoke. Skills live in `.claude/skills/<name>/SKILL.md` and are surfaced to Claude Code at session start. The orchestrator decides when to invoke them (based on their `description`), or you can invoke one explicitly with `/<skill-name>`.
+A skill is a small capability the orchestrator can invoke. Skills live in `.claude/skills/<name>/SKILL.md` and are surfaced to Claude Code at session start. The orchestrator decides when to invoke them (based on their `description`), or you can invoke one explicitly with `/<skill-name>`.
 
 Skills are the right abstraction when:
 
@@ -13,7 +13,7 @@ Skills are the right abstraction when:
 - You want a reusable recipe that can be triggered by a keyword or a pattern in the conversation
 - The capability doesn't need its own identity or isolated context
 
-If any of those fail — especially the last one — you probably want an **agent** instead (see `02-agents-and-hr.md`).
+If any of those fail, especially the last one, you probably want an agent instead (see `02-agents-and-hr.md`).
 
 ## Anatomy of a skill
 
@@ -42,7 +42,7 @@ description: <one-line: what it does and when to use it — this is the trigger 
 Two fields are critical:
 
 - **`name`** must match the folder name and be valid for `/<name>` invocation.
-- **`description`** is the trigger. It's what the orchestrator reads at session start to decide whether a request matches. Write it like you'd write a commit subject: concrete, action-oriented, mentioning the real triggers ("Use when the user asks for X, Y, or Z").
+- **`description`** is the trigger. It's what the orchestrator reads at session start to decide whether a request matches. Write it like you'd write a commit subject: concrete, action-oriented, mentioning the real triggers ("Use when the user asks for X or Y").
 
 ## How invocation works
 
@@ -51,11 +51,11 @@ When Claude Code starts a session in your repo, it loads all skills' names and d
 1. **Auto-invokes** a skill when it detects a clear match with its description (e.g., user says "recap of today" and the `logbook` skill matches).
 2. **Explicit invocation** happens when the user types `/<skill-name>`.
 
-If auto-invocation doesn't fire when you expected it to, sharpen the description or use the explicit `/<name>` form.
+If auto-invocation doesn't fire when you expected it to, sharpen the description. The explicit `/<name>` form works too.
 
 ## Writing a new skill
 
-Minimum viable skill — let's call it `weekly-report`:
+Minimum viable skill (let's call it `weekly-report`):
 
 ```markdown
 ---
@@ -71,7 +71,7 @@ Generate a summary of the last 7 days.
 
 1. Query the log:
    ```bash
-   sqlite3 -header -column private/memories.db "SELECT date, title, type, tags FROM log WHERE date >= date('now','-7 days') ORDER BY date, id;"
+   bin/mem search --since=-7d --limit 0
    ```
 2. Group entries by tag cluster (customize for your domain).
 3. Write the report as Markdown, sections per cluster.
@@ -90,7 +90,7 @@ Put this at `.claude/skills/weekly-report/SKILL.md`. Restart the Claude Code ses
 
 Move the skill folder to `.claude/skills/.disabled/<name>/`. It's preserved but no longer available to the orchestrator. Restore by moving it back.
 
-The `setup` skill uses this pattern after first launch — it self-disables but stays recoverable.
+The `setup` skill uses this pattern after first launch: it self-disables but stays recoverable.
 
 ## Skill vs agent — quick heuristic
 

@@ -13,7 +13,7 @@ tools: Read, Bash, Grep, Skill
 1. Never talk to the owner directly. Every output returns to the orchestrator.
 2. Never write to any path — not the vault (`vault_path` and its subfolder keys), not `private/`. Read-only agent.
 3. Return **data**, not narrative. No commentary, no interpretation outside structured `⚠️` flags.
-4. Every output item carries a source tag: `[sqlite #<id>]`, `[channel:<name> <key>]` — whatever the channel declares.
+4. Every output item carries a source tag: `[mem #<id>]`, `[channel:<name> <key>]` — whatever the channel declares.
 5. On ambiguity (possible duplicate, uncertain source, missing data): flag with `⚠️` and a short note. Never stay silent, never invent.
 6. Only query the channels declared for the matched `question_type`. Do not go off-script.
 
@@ -52,27 +52,30 @@ Every channel's access shape is declared in `channels.yaml`. Dispatch by `access
 
 ### `memories_db` (always present, matrix default)
 
-Database `private/memories.db`, table `log`. Queries the orchestrator's memory for tasks, memories, and ideas.
+Database `private/memories.db`, table `log`, reached only through `bin/mem` — Cal never opens the db file itself. The scheduler always runs in the mother and reads every scope, tagging each item with its scope so mother rows and satellite rows stay distinguishable.
+
+If `channels.yaml` still declares an old `access.tool` for this channel (a customized file predating this pattern), use `bin/mem` anyway and say so once, in `## Notes`, rather than reading the database file directly.
 
 Open tasks (prospective):
 
 ```bash
-sqlite3 -header -column private/memories.db "SELECT id, date, title, description, tags, status, due_date, priority FROM log WHERE type='task' AND status IN ('todo','in_progress') AND (due_date IS NULL OR due_date <= '<end>') ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 END, due_date;"
+bin/mem todo --due-until <end>
 ```
 
-Done in window (retrospective):
+Done in window (retrospective) — `bin/mem` orders each result set on its own terms, so the two searches below are merged and ordered chronologically here: memories by `date`, done tasks by `completed_date`.
 
 ```bash
-sqlite3 -header -column private/memories.db "SELECT id, date, title, description, tags, type, status, completed_date FROM log WHERE (type='memory' AND date BETWEEN '<start>' AND '<end>') OR (type='task' AND status='done' AND completed_date BETWEEN '<start>' AND '<end>') ORDER BY COALESCE(completed_date, date);"
+bin/mem search --type memory --since <start> --until <end> --limit 0 --all-scopes
+bin/mem search --type task --status done --completed-since <start> --completed-until <end> --limit 0 --all-scopes
 ```
 
 Open ideas (only when relevant to the `question_type`, e.g. `weekly_plan`):
 
 ```bash
-sqlite3 -header -column private/memories.db "SELECT id, date, title, description, tags FROM log WHERE type='idea' AND status='open' ORDER BY date DESC;"
+bin/mem search --type idea --status open --limit 0 --all-scopes
 ```
 
-Source tag: `[sqlite #<id>]`.
+Source tag: `[mem #<id>]`, or `[mem #<id> · <scope>]` for a row that carries a scope.
 
 ### Other channels
 

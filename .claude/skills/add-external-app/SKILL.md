@@ -17,7 +17,7 @@ This skill registers an external project as a sub-app of the orchestrator, witho
 
 Invoke it when the owner says something like:
 
-- *"I have a project at `~/Sites/me/my-blog`, add it as a sub-app"*
+- *"I have a project at `~/Code/my-blog`, add it as a sub-app"*
 - *"Register ACME's dashboard as an external app"*
 - *"Hook up my Notion export repo"*
 - *"Connect the portfolio site"*
@@ -86,7 +86,7 @@ If a path is provided, save it into the pointer skill frontmatter as `notes_dir:
 Recap the answers and ask for confirmation before acting. Example:
 
 > I'll create:
-> - Symlink: `apps/blog/` → `/Users/you/Sites/me/my-blog`
+> - Symlink: `apps/blog/` → `/Users/you/Code/my-blog`
 > - Pointer skill: `.claude/skills/blog/SKILL.md` with the description and triggers above (access: `read-only`)
 > - Notes territory: `/Users/you/.../Projects/Blog/` (I'll write notes about this app there, with standard frontmatter)
 > - A new row in `private/preferences.md` → "Available apps" section
@@ -203,7 +203,7 @@ Otherwise, offer gently:
 Per the "Announce every write" rule, after the actions, insert a memory entry:
 
 ```bash
-sqlite3 private/memories.db "INSERT INTO log (date, title, description, tags, type) VALUES (date('now'), 'Registered external app <name>', 'Symlinked <absolute-path> → apps/<name>, created pointer skill, updated preferences.md Available apps section.', 'app,symlink,setup,<name>', 'memory');"
+bin/mem save "Registered external app <name>" -t app,symlink,setup,<name> -d "Symlinked <absolute-path> → apps/<name>, created pointer skill, updated preferences.md Available apps section."
 ```
 
 Announce:

@@ -5,7 +5,7 @@ description: How the memory db works, how to query and extend it, and how to int
 
 # How to interact with memory and integrations
 
-Memory is the engine of the orchestrator — the log that accumulates events, tasks, and ideas across all your sessions. This document covers how it works, how to query it, how to extend it, and how to integrate external tools without fragmenting the source of truth.
+Memory is the engine of the orchestrator: the log that accumulates events and tasks, plus ideas, across all your sessions. This document covers how it works, how to query it, how to extend it, and how to integrate external tools without fragmenting the source of truth.
 
 ## Model
 
@@ -20,11 +20,11 @@ The `log` table has rows of **three types**:
 
 | Type | Purpose | Lifecycle |
 |---|---|---|
-| `memory` | Events, completed work, things that happened | No lifecycle — it's a fact, `status` stays NULL |
+| `memory` | Events, completed work, things that happened | No lifecycle: it's a fact, `status` stays NULL |
 | `task` | Things to do, commitments | `todo` → `in_progress` → `done` (or `cancelled`) |
 | `idea` | Things to park for later | `open` → `done` (when realized) or `dismissed` |
 
-Columns: `id`, `date`, `title`, `description`, `tags`, `type`, `status`, `due_date`, `completed_date`, `priority`. The full schema is in `CLAUDE.md` → `## Memory` → "Schema (reference)".
+Columns: `id`, `date`, `title`, `description`, `tags`, `type`, `status`, `due_date`, `completed_date`, `priority`, `scope`. The full schema ships in `memories.db.template`; `bin/mem --help` documents every command that reads or writes it.
 
 ## Proactive writes
 
@@ -49,9 +49,9 @@ If you don't see the announcement, nothing was written. If you see one and it's 
 Tags are how you find things later. The convention is **multi-dimensional**: one row should have tags across all relevant axes (people, areas, objects, actions). Example:
 
 > **Title**: "Fixed waivers bug in production"
-> **Tags**: `waivers,production,bug,fix,api,faber,datocms`
+> **Tags**: `waivers,production,bug,fix,api,backend,saas`
 
-Now you can retrieve this entry by searching for `waivers`, `bug`, `faber`, or `datocms` — any angle works.
+Now you can retrieve this entry by searching for `waivers`, `bug`, `backend`, or `saas`. Any angle works.
 
 Rules:
 
@@ -61,33 +61,40 @@ Rules:
 
 ## Querying
 
-Common queries (all documented in `CLAUDE.md` → `## Memory` → "Reports"):
+Common queries, through `bin/mem` (full command reference in `CLAUDE.md` → `## Memory` → "Commands"):
 
-- **Today** — `WHERE date = date('now')`
-- **This week** — `WHERE date >= date('now','-7 days')`
-- **Open tasks** — `WHERE type = 'task' AND status IN ('todo','in_progress') ORDER BY priority, due_date`
-- **Open ideas** — `WHERE type = 'idea' AND status = 'open'`
-- **Everything tagged X** — `WHERE tags LIKE '%<keyword>%'`
-- **Cross-type by person** — `WHERE tags LIKE '%<name>%'`
+- **Today**: `bin/mem today`
+- **This week**: `bin/mem search --since=-7d --limit 0`
+- **Open tasks**: `bin/mem todo`
+- **Open ideas**: `bin/mem search --type idea --status open --limit 0`
+- **Everything tagged X**: `bin/mem search --tag <keyword> --limit 0`
+- **Cross-type by person**: `bin/mem search "<name>" --limit 0`
 
 Just ask the orchestrator in natural language: *"what did I do yesterday?"*, *"open tasks for the partner program"*, *"show me everything about the waivers feature"*.
 
 ## CLI helper — `bin/mem`
 
-The repo ships a small Python CLI at `bin/mem` that wraps the common operations on `memories.db`. It's the preferred layer the orchestrator uses for everyday reads and writes — see `CLAUDE.md` → `## Memory` → "Commands" / "Reports" for the full surface.
+The repo ships a small Python CLI at `bin/mem` that wraps the common operations on `memories.db`. It's the preferred layer the orchestrator uses for everyday reads and writes: see `CLAUDE.md` → `## Memory` → "Commands" / "Reports" for the full surface.
 
 Why it exists:
 
-- **No more escape errors** on apostrophes/accents/quotes — the CLI uses parameterized SQL under the hood, you never build query text by hand.
-- **Relative dates** — `--due tomorrow`, `--date +3d`, `--since yesterday`. Resolved to ISO inside the CLI.
-- **Early-morning rule** — between 00:00 and 06:00 local time, a missing `--date` resolves to *yesterday*, matching how the lived day is attributed in the memory log.
-- **Bulk writes** — `mem save --bulk` reads a JSON array from stdin and inserts every row in a single SQLite transaction. Useful when archiving many rows at once (e.g., flushing an external task store into the cold layer).
-- **Markers** — `mem marker get|set <name>` provides a named upsert for watermarks and sync cursors.
-- **JSON-by-pipe** — when stdout is not a TTY, output is compact JSON for consumption by the orchestrator; on TTY it's a human-readable table.
+- **No more escape errors** on apostrophes/accents/quotes: the CLI uses parameterized SQL under the hood, you never build query text by hand.
+- **Relative dates**: `--due tomorrow`, `--date +3d`, `--since yesterday`. Resolved to ISO inside the CLI.
+- **Early-morning rule**: between 00:00 and 06:00 local time, a missing `--date` resolves to *yesterday*, matching how the lived day is attributed in the memory log.
+- **Read options**: `today --date DAY [--to DAY]` reads one day or an inclusive range; `todo --due-until DAY` limits open tasks to those due by a day; `search --completed-since DAY --completed-until DAY` filters on `completed_date` (rows without one drop out); `search --limit 0` lifts the row cap on keyword search. `--semantic` refuses `--limit 0` and the `--completed-since`/`--completed-until` filters (exit code 2); see `howto/09-memoria-semantica.md`.
+- **Bulk writes**: `mem save --bulk` reads a JSON array from stdin and inserts every row in a single SQLite transaction. Useful when archiving many rows at once (e.g., flushing an external task store into the cold layer).
+- **Markers**: `mem marker get|set <name>` provides a named upsert for watermarks and sync cursors.
+- **JSON-by-pipe**: when stdout is not a TTY, output is compact JSON for consumption by the orchestrator; on TTY it's a human-readable table.
 
-The CLI is **owner-agnostic** — it has no knowledge of your specific integrations. Anything domain-specific (Slacky, Basecamp, custom skills) sits on top of it.
+The CLI is owner-agnostic: it has no knowledge of your specific integrations. Anything domain-specific (Acme, Basecamp, custom skills) sits on top of it.
 
-Falling back to raw `sqlite3` is still fine for queries the CLI doesn't cover (custom joins, integrity checks, `ALTER TABLE`, `VACUUM`). The CLI is a convenience layer, not a wall.
+Opening `memories.db` directly is for maintenance only (integrity checks, `VACUUM`, WAL checkpoints; see `howto/05-backup-and-sync.md`) and for instance-specific tables outside `log` (Option B, below). `log` itself goes through `bin/mem` only, schema changes included (Option A, below).
+
+### Satellites — `bin/mem satellite`
+
+A satellite is a project repo that borrows the mother's memory instead of carrying its own. `bin/mem satellite add SLUG --repo PATH --type {ux,consulting,development}` registers one in a `satellites` table: the repo path is resolved and stored absolute, and optional flags record a mandate, a method, constraints, a language and a vault folder. `bin/mem satellite list` and `bin/mem satellite show SLUG` read the registry back: a table on a terminal, JSON on a pipe or with `--json`. All three commands run in the mother only; a satellite session gets exit code 4.
+
+Exit code 7 marks a `--repo` that is relative or does not exist, or a `--vault` that is relative. Exit code 8 marks a slug or a repo path already registered.
 
 ## Extending the db
 
@@ -95,13 +102,9 @@ The single-table model is deliberately simple. Two ways to extend:
 
 ### Option A — add columns to `log`
 
-If your orchestrator's domain needs a field consistently (e.g., `project_id` for cross-referencing with an external system), add a column:
+If your orchestrator's domain needs a field consistently (e.g., `project_id` for cross-referencing with an external system), columns on `log` are added upstream in `bin/mem_schema.py`, not by hand on your instance: propose the column there, so `bin/mem`'s own read and write commands pick it up and the `SCHEMA_API` version bumps with it.
 
-```bash
-sqlite3 private/memories.db "ALTER TABLE log ADD COLUMN project_id TEXT;"
-```
-
-Update `CLAUDE.md` → `## Memory` → "Schema (reference)" to document the new column. That's it.
+Update `memories.db.template`'s `log` schema, and `bin/mem --help` if the new column changes a command's behaviour, once it lands. That's it.
 
 ### Option B — add a new table for a distinct use case
 
@@ -123,7 +126,7 @@ Same file, same db, new table. Document it in CLAUDE.md so the orchestrator know
 
 ## Integrating external tools
 
-The memory db is the **orchestrator's own log**. It's not a replacement for dedicated tools — it's the index that ties them together. The right pattern: keep each external tool authoritative for its domain, use memory as a reference.
+The memory db is the orchestrator's own log. It's not a replacement for dedicated tools: it's the index that ties them together. The right pattern: keep each external tool authoritative for its domain, use memory as a reference.
 
 ### Basecamp todos / messages
 
@@ -140,20 +143,20 @@ Calendar is authoritative for events and commitments with time. The orchestrator
 
 - Reference calendar events in memory entries: "Met with <Name> (calendar id: abc123)"
 - Propose memory entries after a meeting: "I see you had a 1-hour call with <Name> at 11:00. Want me to log what emerged?"
-- Not duplicate calendar events as memory rows — that's noise.
+- Not duplicate calendar events as memory rows: that's noise.
 
-### External task managers (Things, Todoist, Linear, custom Slacky)
+### External task managers (Things, Todoist, Linear, a custom app like Acme)
 
 If you already use a task manager, you have a choice:
 
 - **Lightweight memory**: keep `type='task'` entries only for things said in conversation, and let the external tool own the real task list
-- **Unified view**: have the orchestrator query both and present them together (memory tasks + external tasks), but never sync — syncing causes drift and conflicts
+- **Unified view**: have the orchestrator query both and present them together (memory tasks + external tasks), but never sync: syncing causes drift and conflicts
 
-The `CLAUDE.md` default is lightweight: memory `task` entries are **conversational commitments**, quick things said in chat. The source of truth for structured, recurring tasks is your external tool.
+The `CLAUDE.md` default is lightweight: memory `task` entries are conversational commitments, quick things said in chat. The source of truth for structured, recurring tasks is your external tool.
 
 ### Reminders (macOS / iOS)
 
-Use Reminders when something needs to ping you at a specific time — memory doesn't do notifications. Log in memory that the reminder was created, let Reminders actually remind you.
+Use Reminders when something needs to ping you at a specific time: memory doesn't do notifications. Log in memory that the reminder was created, let Reminders actually remind you.
 
 ## MCP servers
 
@@ -161,11 +164,11 @@ MCP (Model Context Protocol) servers give the orchestrator live tools for extern
 
 Common ones worth integrating:
 
-- `google-calendar` — read events, suggest times, respond to invites
-- `google-drive` / `gmail` — search and draft
-- `slack` — post and search messages
-- `basecamp` — todos, messages, cards
-- `linear` / `jira` — issue tracking
+- `google-calendar`: read events, suggest times, respond to invites
+- `google-drive` / `gmail`: search and draft
+- `slack`: post and search messages
+- `basecamp`: todos, messages, cards
+- `linear` / `jira`: issue tracking
 - Custom MCPs for domain-specific systems
 
 When an MCP is wired, you can ask the orchestrator things like *"do I have free time Tuesday afternoon?"* and it'll actually check the calendar.
@@ -174,14 +177,14 @@ When an MCP is wired, you can ask the orchestrator things like *"do I have free 
 
 Three cases:
 
-1. **It's a durable pattern about you or your world** — goes in `preferences.md`, not memory. See `CLAUDE.md` → `## Preferences evolution`.
-2. **It's transient session state** — doesn't belong anywhere persistent.
-3. **It's the content authoritative in another tool** — keep it there, reference it.
+1. **It's a durable pattern about you or your world**: goes in `preferences.md`, not memory. See `CLAUDE.md` → `## Preferences evolution`.
+2. **It's transient session state**: doesn't belong anywhere persistent.
+3. **It's the content authoritative in another tool**: keep it there, reference it.
 
-The rule of thumb: memory is a **log**, not a database. Append, don't replace. Tag generously. Trust external tools for their domains.
+The rule of thumb: memory is a log. Append, don't replace. Tag generously. Trust external tools for their domains.
 
 ## Querying memory programmatically
 
-If you want to build skills or reports that analyze memory, the db is standard SQLite. Any client works (`sqlite3`, Python's `sqlite3` module, DB Browser for SQLite, etc.). Stay outside of the `private/` folder when building a script — the db path is `private/memories.db`, but scripts themselves should live in `.claude/skills/<name>/` or `workspace/`.
+If you want to build skills or reports that analyze memory, read `log` through `bin/mem`: its `today`, `todo` and `search` commands cover date ranges, due dates, completion windows, tags and keywords, and `--json` gives a script structured rows to parse. Stay outside of the `private/` folder when building a script: the db path is `private/memories.db`, but scripts themselves should live in `.claude/skills/<name>/` or `workspace/`.
 
-Example: a skill that exports this week's memories to a Markdown digest can live at `.claude/skills/weekly-digest/` and read memory directly.
+Example: a skill that exports this week's memories to a Markdown digest can live at `.claude/skills/weekly-digest/` and pipe `bin/mem search --since=-7d --limit 0 --json` into its own formatting.

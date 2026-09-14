@@ -84,29 +84,31 @@ The db is the starting point, not the text of the note. It needs *interpretation
    - If the channel is unreachable or the GC fails, **don't block the logbook**: carry on and report it as a minor note at the end.
    - No block, or `channel: none`, means skip this step.
 
-3. **Decide which day you are documenting** — the target day is not always `date('now')`. It follows the same early-morning rule that governs every write to `memories.db`.
+3. **Decide which day you are documenting** — the target day is not always today's calendar date. It follows the same early-morning rule that governs every write to `memories.db`.
 
    - **Invoked in the small hours** (before 06:00 local) **and** no logbook exists yet for the previous day → the target day is the **previous day**. The working session that was lived is one, and it does not split at the change of solar date: it started the evening before and is running into the night. Collecting only the hour or two past midnight would produce a partial note.
    - **Any other case** (from 06:00 on, or a logbook for the previous day already exists) → the target day is today.
    - When in doubt, ask the owner "Am I writing the logbook for <day X>?" before going on.
 
-4. Retrieve the target day's log entries:
+4. Retrieve the target day's log entries, mother and satellites together:
 
    ```bash
-   bin/mem today
+   bin/mem today --all-scopes
    ```
 
-   For a target day other than today, or without the CLI:
+   For a target day other than today:
 
    ```bash
-   sqlite3 -header -column private/memories.db "SELECT id, title, description, tags, type, status FROM log WHERE date = date('now','-1 day') ORDER BY id;"
+   bin/mem today --date <DAY> --all-scopes
    ```
 
    **In the early-morning case, include the entries of the night that follows** (those dated today, up to the moment of the call): they are usually the tail of the same session and belong to the previous day's note.
 
    ```bash
-   sqlite3 -header -column private/memories.db "SELECT id, title, description, tags, type, status FROM log WHERE date IN (date('now','-1 day'), date('now')) ORDER BY date, id;"
+   bin/mem today --date yesterday --to today --all-scopes
    ```
+
+   Every row carries `scope` (null for the mother). Rows with `scope: null` feed the day's themes (step 6). Rows with a `scope` set go into a `### Satellites` section, grouped by scope, so a satellite's activity stays visible without folding into the mother's own themes.
 
 5. **Pick up the threads of the parallel sessions** — the owner may have worked across several sessions the same day (agent view). Their memories are already in the db by construction; what's missing is the thread of each discussion, which lives only in its transcript.
 
@@ -126,7 +128,7 @@ The db is the starting point, not the text of the note. It needs *interpretation
    - **Sessions sharing a title** with overlapping messages are one conversation seen through two transcripts (backgrounded or forked). The script merges them; if a trace survives, treat them as one.
    - If the script is missing or errors out, **don't block the logbook**: compose the note from the db and the current conversation, and say so as a minor note at the end.
 
-6. Group by theme (not by type): multiple entries can merge into a single section if they talk about the same topic.
+6. Group by theme (not by type): multiple entries can merge into a single section if they talk about the same topic. Rows with a `scope` don't enter this grouping — they go into the Satellites section from step 4.
 7. Pick a thread for the H1 if the day has one; otherwise use a neutral title like `# Work log`.
 8. Extract tags — from entries, conversational asides, and the parallel sessions — and draft a one-line `description`.
 9. Write the note at `<logbook_path>/YYYY-MM-DD-slug.md`, dated to the **target day** (the day being documented, not the day of writing), in the owner's default language.
