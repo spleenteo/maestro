@@ -57,8 +57,7 @@ STEP_COMMIT = "## 3. Plugin commit"
 STEP_MIRROR = "## 4. Template mirror"
 STEP_EXTRACT = "## 5. Extract"
 QUESTION_TERRITORIES = "### Question 10/10"
-INTERNAL_START = "**If `internal`**"
-INTERNAL_END = "**If `external`**"
+TERRITORY_FOLDERS = "## Territory folders"
 FINALIZE = "## Finalize"
 REGISTER = "## Register"
 LOGBOOK = "## Day-zero logbook"
@@ -162,10 +161,7 @@ def _only_bash_block(prefix: str) -> str:
 
 
 def _internal_vault_blocks() -> list:
-    body = _section(QUESTION_TERRITORIES)
-    start = body.index(INTERNAL_START)
-    end = body.index(INTERNAL_END, start)
-    blocks = _bash_blocks(body[start:end])
+    blocks = _bash_blocks(_section(TERRITORY_FOLDERS))
     if len(blocks) != 2:
         raise AssertionError(f"expected two bash blocks for the internal vault, found {len(blocks)}")
     return blocks
@@ -176,6 +172,15 @@ def _markdown_template(prefix: str) -> str:
     if m is None:
         raise AssertionError(f"no markdown template under {prefix!r}")
     return m.group(1)
+
+
+def _escape_for_double_quotes(value: str) -> str:
+    """The skill's rule for a free-text value inside double quotes on the
+    command line: a backslash before `\\`, `"`, `$` and a backtick; an
+    apostrophe and a line break stay as they are."""
+    for ch in ("\\", '"', "$", "`"):
+        value = value.replace(ch, "\\" + ch)
+    return value
 
 
 def _fill(block: str, values: dict) -> str:
@@ -262,9 +267,11 @@ class _Session:
     def mirror(self) -> Path:
         return self.home / ".maestro"
 
-    def env(self) -> dict:
+    def env(self, plugin_bin_on_path: bool = True) -> dict:
+        path = f"{self.stub_bin}:{PLUGIN_BIN}:{BASE_PATH}" if plugin_bin_on_path \
+            else f"{self.stub_bin}:{BASE_PATH}"
         return {
-            "PATH": f"{self.stub_bin}:{PLUGIN_BIN}:{BASE_PATH}",
+            "PATH": path,
             "HOME": str(self.home),
             "MAESTRO_INSTANCES": str(self.registry),
         }
@@ -280,10 +287,11 @@ class _Session:
             "${CLAUDE_PLUGIN_ROOT}": str(self.plugin_root),
         }
 
-    def run(self, shell: tuple, block: str, values: dict) -> subprocess.CompletedProcess:
+    def run(self, shell: tuple, block: str, values: dict, *, prelude: str = "",
+            plugin_bin_on_path: bool = True) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [*shell, _fill(block, values)], cwd=str(self.cwd), env=self.env(),
-            capture_output=True, text=True, timeout=120,
+            [*shell, prelude + _fill(block, values)], cwd=str(self.cwd),
+            env=self.env(plugin_bin_on_path), capture_output=True, text=True, timeout=120,
         )
 
 
@@ -432,6 +440,31 @@ class TestRefusals(unittest.TestCase):
 
                 self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_step_2_accepts_the_empty_session_folder(self):
+        for name, shell in SHELLS:
+            with self.subTest(shell=name):
+                s = self._session()
+
+                r = s.run(shell, _only_bash_block(STEP_DESTINATION), s.values(str(s.cwd)))
+
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_step_2_refuses_a_non_empty_destination_when_ls_is_shadowed(self):
+        # Claude Code applies the owner's aliases and functions to every
+        # Bash call: an `ls` that prints nothing must not pass the check.
+        for name, shell in SHELLS:
+            with self.subTest(shell=name):
+                s = self._session()
+                dest = s.tmp / "taken"
+                dest.mkdir()
+                (dest / "notes.txt").write_text("keep me", encoding="utf-8")
+
+                r = s.run(shell, _only_bash_block(STEP_DESTINATION), s.values(str(dest)),
+                          prelude="ls() { :; }\n")
+
+                self.assertNotEqual(r.returncode, 0)
+                self.assertEqual(sorted(p.name for p in dest.iterdir()), ["notes.txt"])
+
     def test_step_2_refuses_a_relative_destination(self):
         for name, shell in SHELLS:
             with self.subTest(shell=name):
@@ -497,6 +530,90 @@ class TestRefusals(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Free-text values and the register fallback
+# ---------------------------------------------------------------------------
+
+FREE_TEXT = 'He said "hi", it\'s $HOME and `echo INJECTED` with a \\ backslash\nand a second line'
+FREE_DOMAIN = "Costs in $HOME and `echo INJECTED`"
+
+
+class TestFinalizeAndRegisterValues(unittest.TestCase):
+    """Values written the way the skill says reach preferences and the
+    registry verbatim, under each shell the Bash tool may use."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="maestro-new-instance-values-"))
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, True)
+        cls.remote = _Remote(cls.tmp)
+
+    def _instance(self, s: _Session) -> Path:
+        dest = s.tmp / "instance"
+        dest.mkdir()
+        archive = subprocess.run(
+            ["git", "-C", str(self.remote.path), "archive", "HEAD"],
+            stdout=subprocess.PIPE, check=True, env={"PATH": BASE_PATH, "HOME": str(s.home)},
+        )
+        subprocess.run(["tar", "-x", "-C", str(dest)], input=archive.stdout, check=True,
+                       env={"PATH": BASE_PATH})
+        return dest
+
+    def _finalize(self, s: _Session, shell: tuple, dest: Path, context: str):
+        block, n = re.subn(
+            r'MAESTRO_CONTEXT="[^"\n]*"',
+            lambda _m: 'MAESTRO_CONTEXT="' + _escape_for_double_quotes(context) + '"',
+            _only_bash_block(FINALIZE),
+        )
+        self.assertEqual(n, 1, "the Finalize block has no single MAESTRO_CONTEXT value")
+        return s.run(shell, block, s.values(str(dest)))
+
+    def _registry_entry(self, s: _Session) -> dict:
+        r = subprocess.run([str(PLUGIN_BIN / "maestro-net"), "list", "--json"],
+                           env=s.env(), capture_output=True, text=True)
+        _require_ok("maestro-net list", r)
+        return json.loads(r.stdout)["instances"][ORCHESTRATOR_SLUG]
+
+    def test_finalize_keeps_special_characters_verbatim(self):
+        for name, shell in SHELLS:
+            with self.subTest(shell=name):
+                s = _Session(self.tmp, self.remote, _plugin_rows(self.remote.sha[:12]))
+                dest = self._instance(s)
+
+                _require_ok("finalize", self._finalize(s, shell, dest, FREE_TEXT))
+
+                prefs = (dest / "private" / "preferences.md").read_text(encoding="utf-8")
+                self.assertIn(FREE_TEXT, prefs)
+
+    def test_register_keeps_dollar_and_backtick_verbatim(self):
+        for name, shell in SHELLS:
+            with self.subTest(shell=name):
+                s = _Session(self.tmp, self.remote, _plugin_rows(self.remote.sha[:12]))
+                dest = self._instance(s)
+                _require_ok("finalize", self._finalize(s, shell, dest, "Plain context."))
+                values = s.values(str(dest))
+                values["<domain>"] = _escape_for_double_quotes(FREE_DOMAIN)
+
+                _require_ok("register", s.run(shell, _only_bash_block(REGISTER), values))
+
+                self.assertEqual(self._registry_entry(s)["domain"], FREE_DOMAIN)
+
+    def test_register_falls_back_to_the_plugin_copy_when_not_on_path(self):
+        for name, shell in SHELLS:
+            with self.subTest(shell=name):
+                s = _Session(self.tmp, self.remote, _plugin_rows(self.remote.sha[:12]))
+                dest = self._instance(s)
+                _require_ok("finalize", self._finalize(s, shell, dest, "Plain context."))
+                self.assertIsNone(shutil.which("maestro-net", path=s.env(False)["PATH"]))
+                values = s.values(str(dest))
+                values["${CLAUDE_PLUGIN_ROOT}"] = str(PLUGIN_BIN.parent)
+
+                r = s.run(shell, _only_bash_block(REGISTER), values, plugin_bin_on_path=False)
+
+                _require_ok("register", r)
+                self.assertEqual(self._registry_entry(s)["path"], os.path.realpath(dest))
+
+
+# ---------------------------------------------------------------------------
 # Static checks on the skill text
 # ---------------------------------------------------------------------------
 
@@ -533,6 +650,18 @@ class TestSkillText(unittest.TestCase):
             with self.subTest(key=key):
                 if ": " in value:
                     self.assertRegex(value, r'^".*"$')
+
+    def test_territory_question_writes_nothing(self):
+        # Folders are created after the summary is confirmed, so a corrected
+        # project name leaves nothing stale behind.
+        self.assertEqual(_bash_blocks(_section(QUESTION_TERRITORIES)), [])
+
+    def test_finalize_states_the_escaping_rule_and_never_rephrases(self):
+        body = _section(FINALIZE)
+        self.assertNotIn("ephrase", body)
+        for escaped in ("`\\\\`", '`\\"`', "`\\$`"):
+            with self.subTest(escaped=escaped):
+                self.assertIn(escaped, body)
 
     def test_title_is_new_instance(self):
         self.assertIn("\n# New instance\n", self.text)

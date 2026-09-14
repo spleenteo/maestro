@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # New instance
 
-This skill creates a Maestro instance in a new or empty folder. It takes the template at the commit the Maestro plugin was installed from, runs the first-launch interview in the current session, finalizes the new folder and registers it in the machine registry. The folder the session runs in is never touched.
+This skill creates a Maestro instance in a new or empty folder. It takes the template at the commit the Maestro plugin was installed from, runs the first-launch interview in the current session, finalizes the new folder and registers it in the machine registry. Outside the destination it writes only the template mirror at `$HOME/.maestro` and the registry.
 
 The interview collects only the essentials. Richer context (team, objectives, work rhythms, integrations) is added later by editing `private/preferences.md` in the new instance.
 
@@ -29,7 +29,7 @@ Each fenced `bash` block below runs as one Bash call, exactly as written except 
 
 Paths into the plugin's own folder are already absolute in the blocks: leave them as they are.
 
-If a block exits non-zero, show its stderr to the owner and stop. Never complete a step by hand.
+If a block exits non-zero, show its stderr to the owner and stop, unless its section says what to do on that failure (Destination, Register). Never complete a step by hand.
 
 ## 1. Kind
 
@@ -43,7 +43,7 @@ If the owner picks **full instance**: go on.
 
 ## 2. Destination
 
-Ask for the folder that will hold the new instance, as an absolute path (e.g. `/Users/you/instances/home`). It must be new or empty: an instance is never configured inside the current folder, a project repository or another instance. If the owner gives a path starting with `~`, expand it to their home directory yourself before filling `<destination>`: a quoted `~` doesn't expand.
+Ask for the folder that will hold the new instance, as an absolute path (e.g. `/Users/you/instances/home`). It must be new or empty. An empty folder is an allowed destination, the folder this session runs in included; a folder with anything in it is refused, which keeps an instance out of a project repository and away from another instance. If the owner gives a path starting with `~`, expand it to their home directory yourself before filling `<destination>`: a quoted `~` doesn't expand.
 
 ```bash
 set -eo pipefail
@@ -184,35 +184,7 @@ The owner's territory is organized around a single **vault root** (the key is `v
 
 Handle the answer:
 
-**If `internal`**:
-
-Create the vault and its three default subfolders inside the new instance, using the `project_slug` computed in Q2:
-
-```bash
-set -o pipefail
-mkdir -p "<destination>/<project_slug>/logbook" "<destination>/<project_slug>/til" "<destination>/<project_slug>/documents"
-```
-
-Append the slug to the instance's `.gitignore` when it isn't listed yet, so the vault stays out of git if the owner later turns the folder into a repository:
-
-```bash
-set -o pipefail
-python3 - "<destination>/.gitignore" "<project_slug>/" <<'PY'
-import sys
-path, entry = sys.argv[1], sys.argv[2]
-try:
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read()
-except FileNotFoundError:
-    text = ""
-if entry not in text.splitlines():
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(("" if text == "" or text.endswith("\n") else "\n") + entry + "\n")
-print(entry + " is listed in " + path)
-PY
-```
-
-Save **four** absolute keys to preferences:
+**If `internal`**: record **four** absolute keys for preferences, using the `project_slug` computed in Q2. The folders are created after the summary is confirmed (see Territory folders).
 
 - `vault_path: <destination>/<project_slug>`
 - `logbook_path: <destination>/<project_slug>/logbook`
@@ -225,10 +197,10 @@ Confirm in one line: *"Got it — notes will live in `<destination>/<project_slu
 
 > Absolute path for your vault root? (e.g., `/Users/you/Obsidian/MyVault`)
 
-Validate the directory exists; offer to create it if not (with `mkdir -p` on the absolute path, quoted). Once confirmed:
+Check whether the directory exists; if it doesn't, ask whether to create it. Once the root is settled:
 
 1. Compute three default subpaths: `<vault_path>/logbook`, `<vault_path>/til`, `<vault_path>/documents`.
-2. For each default subpath, check whether the folder exists. Missing ones: offer to create all three at once in a single yes/no (don't nag per folder).
+2. For each default subpath, check whether the folder exists. Missing ones: ask once whether to create them all (don't nag per folder). Nothing is created yet: record the answer for Territory folders.
 3. Save **four** keys to preferences:
    - `vault_path: <absolute-vault-path>`
    - `logbook_path: <vault_path>/logbook`
@@ -248,7 +220,41 @@ If the owner wants to add something, accept it as free-form text and save it to 
 
 ## Summary and confirmation
 
-Recap what was collected, grouped by section, with every path absolute. Offer a chance to correct any field before writing. Beyond the extracted template and the internal vault folders, do NOT write any file or run `finalize.sh` until the owner confirms.
+Recap what was collected, grouped by section, with every path absolute. Offer a chance to correct any field before writing. Beyond the extracted template, do NOT create any folder, write any file or run `finalize.sh` until the owner confirms.
+
+## Territory folders
+
+After the owner confirms the summary, create the territory folders with the final values.
+
+**Internal vault**: create the vault and its three subfolders inside the new instance:
+
+```bash
+set -o pipefail
+mkdir -p "<destination>/<project_slug>/logbook" "<destination>/<project_slug>/til" "<destination>/<project_slug>/documents"
+```
+
+Then append the slug to the instance's `.gitignore` when it isn't listed yet, so the vault stays out of git if the owner later turns the folder into a repository:
+
+```bash
+set -o pipefail
+python3 - "<destination>/.gitignore" "<project_slug>/" <<'PY'
+import sys
+path, entry = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+except FileNotFoundError:
+    text = ""
+if entry not in text.splitlines():
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(("" if text == "" or text.endswith("\n") else "\n") + entry + "\n")
+print(entry + " is listed in " + path)
+PY
+```
+
+**External vault**: create the root and the subfolders the owner agreed to create at Q10, with `mkdir -p` on each absolute path, quoted.
+
+**Skip**: nothing to create.
 
 ## Day-zero logbook (if `logbook_path` is set)
 
@@ -345,7 +351,7 @@ Pass the collected answers as environment variables. Required: `MAESTRO_LANGUAGE
 
 - Every path value is absolute. For an internal vault they sit under `<destination>/<project_slug>`; for `skip` they are empty strings.
 - `MAESTRO_PEOPLE` holds pre-formatted markdown bullets, one person per line, with real line breaks inside the double quotes (e.g. `- Jane Doe: CTO, technical lead` and `- John Smith: Account exec` on two lines). Empty string if the owner skipped the people question.
-- Values are plain text: the script expands them into a heredoc, so a `$`, a backtick or a double quote inside a value breaks it. Rephrase such characters out of the owner's answers.
+- Write the owner's answers verbatim. Each value sits inside double quotes on this command line, where the shell still interprets four characters: put a backslash before each of them. `\` becomes `\\`, `"` becomes `\"`, `$` becomes `\$`, and a backtick becomes `` \` ``. An apostrophe needs nothing, and a line break stays a literal line break inside the quotes. Without the backslashes, a `$` expands, a backtick runs a command and a `"` ends the value early, all with exit 0.
 
 The values below are an example: replace every one with the owner's answers.
 
@@ -380,18 +386,18 @@ If the script exits non-zero, surface its stderr to the owner and stop: don't pa
 
 ## Register
 
-Add the new instance to the machine registry (`~/.claude/maestro-instances.yaml`, or the file `MAESTRO_INSTANCES` names), so `maestro-net` can reach it. Fill the placeholders:
+Add the new instance to the machine registry (`~/.claude/maestro-instances.yaml`, or the file `MAESTRO_INSTANCES` names), so `maestro-net` can reach it. The block uses `maestro-net` from `PATH`, or the plugin's own copy when a session doesn't have the plugin's `bin/` on `PATH`. Fill the placeholders:
 
 - `<orchestrator-slug>`: the orchestrator's name from Question 4 as a slug (lowercase letters, digits and `-`, starting with a letter or digit), e.g. `jarvis`.
-- `<domain>`: one line taken from the project context of Question 3, with no double quotes and no line breaks.
+- `<domain>`: one line taken from the project context of Question 3, with no double quotes, backslashes or line breaks (`maestro-net` refuses a double quote). It sits inside double quotes like the Finalize values: put a backslash before each `$` and each backtick.
 
 ```bash
 set -o pipefail
+MAESTRO_NET=maestro-net
 if ! command -v maestro-net >/dev/null 2>&1; then
-  echo "maestro-net is not on PATH: install the Maestro plugin (claude plugin install maestro@maestro --scope user), then run this step again." >&2
-  exit 1
+  MAESTRO_NET="${CLAUDE_PLUGIN_ROOT}/bin/maestro-net"
 fi
-maestro-net register "<orchestrator-slug>" --path "<destination>" --domain "<domain>" --accepts recap,ask
+"$MAESTRO_NET" register "<orchestrator-slug>" --path "<destination>" --domain "<domain>" --accepts recap,ask
 ```
 
 On a failure, read the exit code:
@@ -399,6 +405,10 @@ On a failure, read the exit code:
 - `9`: the name or the path is already registered. Propose another name to the owner (e.g. `<orchestrator-slug>-<project_slug>`) and run the block again with the one they choose.
 - `2`: the slug or the domain was refused. Fix it and run the block again.
 - `7`: the destination lacks `private/preferences.md` or `bin/mem`, so finalize didn't complete. Stop and report.
+- `3`: the registry file exists but can't be read. Tell the owner its path and the error, so they can fix its permissions.
+- `4`: the registry file is malformed. Show the owner the error `maestro-net` printed; the file is theirs to fix, never rewrite it.
+
+A failed registration doesn't undo the instance, which is complete once finalize succeeds. Still give the hand-off, and add one line telling the owner how to register it later, with the values filled in: `maestro-net register "<orchestrator-slug>" --path "<destination>" --domain "<domain>" --accepts recap,ask`.
 
 ## Optional machine dependencies
 
@@ -457,14 +467,15 @@ Then hand control back.
 ## Rules
 
 - **Only on request**: never start this flow on your own.
-- **New or empty folder only**: never configure an instance in place, in the session's folder, in a project repository or over an existing instance.
+- **New or empty folder only**: an empty folder is fine, the session's own folder included; a folder with anything in it (a project repository, another instance) is refused.
 - **Mechanical steps first**: steps 1 to 5 run before the interview, and a failing block stops the flow instead of being worked around by hand.
 - **Language first in the interview**: Question 1 is always "what language should I use?". From the next turn on, everything is in the owner's chosen language.
 - **One question per turn, always**: never bundle. Always show the progress indicator (`N/10`) so the owner knows where they are.
 - **Propose defaults**, especially for adjectives (from the inspiration).
 - **Accept brevity, skip optional fields**: the owner may leave territories or people empty. Don't insist.
 - **Absolute paths everywhere**: in the command blocks, in preferences and in the closing message, every path is absolute on the destination. Never write `~` inside quotes.
-- **Validate paths**: for `logbook_path`, `til_path`, `documents_path`, check the directory exists and offer to create it before recording the value.
+- **Answers verbatim, escaped for the shell**: free text goes into double-quoted values with a backslash before `\`, `"`, `$` and a backtick; never reword an answer to dodge the escaping.
+- **Validate paths, create after confirmation**: for an external vault, check at Q10 whether each directory exists and ask about the missing ones; every territory folder is created in Territory folders, after the summary is confirmed.
 - **The mirror is read-only**: this skill only clones and fetches `$HOME/.maestro`; it never commits, checks out or deletes anything there.
 - **Never speak as "orchestrator"**: that term stays in CLAUDE.md. In chat, you use the chosen name once it exists.
 - **Never invent data**: if a field isn't provided, leave it empty in preferences.
