@@ -33,3 +33,7 @@ tests/test_template_archive.py export-ignore
 # This test also clones the template's own .git, and reads finalize.sh out
 # of plugins/, both absent from an archived instance.
 tests/test_finalize.py export-ignore
+
+# This test clones the template's own .git to stand in for GitHub and runs
+# the new-instance skill's command blocks out of plugins/.
+tests/test_new_instance.py export-ignore

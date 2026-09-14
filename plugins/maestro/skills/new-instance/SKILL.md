@@ -4,30 +4,133 @@ description: Create a new Maestro instance in a new folder: fetch the template a
 disable-model-invocation: true
 ---
 
-# Setup
+# New instance
 
-This skill runs **only once** per instance, at first launch. Its job is to collect the essentials the orchestrator needs to be operational, and put the project in a working state. Richer context (team, objectives, work rhythms, integrations) is meant to be added later by editing `private/preferences.md` directly — the setup doesn't try to capture everything upfront.
+This skill creates a Maestro instance in a new or empty folder. It takes the template at the commit the Maestro plugin was installed from, runs the first-launch interview in the current session, finalizes the new folder and registers it in the machine registry. The folder the session runs in is never touched.
+
+The interview collects only the essentials. Richer context (team, objectives, work rhythms, integrations) is added later by editing `private/preferences.md` in the new instance.
 
 ## When this skill runs
 
-The orchestrator's `CLAUDE.md` instructs it to invoke this skill at session start if any of these are true:
+Only on explicit request: the owner runs `/maestro:new-instance` or asks to create a new Maestro instance. It never starts on its own, not even in a folder that has no `private/preferences.md`.
 
-- `private/preferences.md` does not exist
-- `private/preferences.md` exists but its frontmatter has `setup_completed: false`
+Once invoked, **stop all other work** and drive the flow to the end, in order: steps 1 to 5 prepare the folder, then the interview, the day-zero notes, finalize, register and the hand-off. The mechanical steps come first so that a failure there never wastes the owner's answers.
 
-If this skill is invoked, **stop all other work** and drive the setup interactively until completion.
+Until Question 1 settles the language, talk in the language the owner is already using in this session (English when they only typed the command).
 
-## Setup flow — 10 questions, one at a time
+## Command blocks
+
+Each fenced `bash` block below runs as one Bash call, exactly as written except for the placeholders. Replace each placeholder and keep the double quotes around it:
+
+- `<destination>`: the absolute path confirmed in step 2.
+- `<sha>`: the commit printed by step 3.
+- `<project_slug>`: the slug derived from Question 2.
+- `<orchestrator-slug>` and `<domain>`: see Register.
+
+Paths into the plugin's own folder are already absolute in the blocks: leave them as they are.
+
+If a block exits non-zero, show its stderr to the owner and stop. Never complete a step by hand.
+
+## 1. Kind
+
+Ask:
+
+> Do you want a full instance or a satellite? A full instance is a complete Maestro with its own identity, memory and vault, in a new folder. A satellite attaches a project repository to an instance you already have.
+
+If the owner picks **satellite**: tell them satellites arrive with the `satellite` skill of the Maestro plugin, which this version doesn't ship yet, and stop here.
+
+If the owner picks **full instance**: go on.
+
+## 2. Destination
+
+Ask for the folder that will hold the new instance, as an absolute path (e.g. `/Users/you/instances/home`). It must be new or empty: an instance is never configured inside the current folder, a project repository or another instance. If the owner gives a path starting with `~`, expand it to their home directory yourself before filling `<destination>`: a quoted `~` doesn't expand.
+
+```bash
+set -eo pipefail
+DEST="<destination>"
+case "$DEST" in
+  /*) ;;
+  *) echo "The destination must be an absolute path: $DEST" >&2; exit 2 ;;
+esac
+if [ -e "$DEST" ] && [ -n "$(ls -A "$DEST")" ]; then
+  echo "The destination exists and is not empty: $DEST" >&2
+  echo "Choose a new or empty folder." >&2
+  exit 1
+fi
+mkdir -p "$DEST"
+echo "Destination ready: $DEST"
+```
+
+On exit 2 or 1, ask for another path and run the block again.
+
+## 3. Plugin commit
+
+The instance is built from the template at the commit the plugin was installed from, so the instance's files match the plugin's skills. `claude plugin list --json` reports that commit as the `version` of the user-scope `maestro@maestro` row.
+
+```bash
+set -o pipefail
+claude plugin list --json | python3 -c '
+import json, re, sys
+rows = [r for r in json.load(sys.stdin) if r.get("id") == "maestro@maestro" and r.get("scope") == "user"]
+if not rows:
+    sys.exit("maestro@maestro is not installed at user scope. Install it with: claude plugin install maestro@maestro --scope user")
+version = str(rows[0].get("version", ""))
+if not re.fullmatch(r"[0-9a-f]{7,40}", version):
+    sys.exit("maestro@maestro reports version " + repr(version) + ", not a commit SHA. Install the plugin from its marketplace, which versions it by commit.")
+print(version)
+'
+```
+
+The printed commit is `<sha>` for steps 4 and 5.
+
+## 4. Template mirror
+
+The template comes from the plugin's repository (`repository` in the plugin's `plugin.json`), through the local mirror at `$HOME/.maestro`, the same read-only mirror `maestro-sync` uses. The block clones the mirror when it is missing and fetches it otherwise, then checks that the commit from step 3 is there.
+
+```bash
+set -eo pipefail
+REPO_URL=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["repository"])' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json")
+MIRROR="$HOME/.maestro"
+if [ -e "$MIRROR/.git" ]; then
+  git -C "$MIRROR" fetch --quiet origin
+else
+  git clone --quiet "$REPO_URL" "$MIRROR"
+fi
+if ! git -C "$MIRROR" cat-file -e "<sha>^{commit}" 2>/dev/null; then
+  echo "Commit <sha> is not in $MIRROR, even after a fetch." >&2
+  echo "Update the plugin, then run /maestro:new-instance again:" >&2
+  echo "  claude plugin marketplace update maestro" >&2
+  echo "  claude plugin update maestro@maestro" >&2
+  exit 1
+fi
+echo "Mirror ready at $MIRROR with commit <sha>"
+```
+
+## 5. Extract
+
+```bash
+set -eo pipefail
+git -C "$HOME/.maestro" archive "<sha>" | tar -x -C "<destination>"
+if [ ! -f "<destination>/CLAUDE.md" ] || [ ! -x "<destination>/bin/mem" ]; then
+  echo "The archive of <sha> has no CLAUDE.md or no executable bin/mem: <destination> is not an instance skeleton." >&2
+  exit 1
+fi
+echo "Template <sha> extracted into <destination>"
+```
+
+The template's `.gitattributes` keeps its own material (`docs/`, `plugins/`, `.claude-plugin/`, the tests of the template repo) out of the archive, so nothing is deleted after extraction. The new folder is not a git repository; the owner can turn it into one later.
+
+## Interview: 10 questions, one at a time
 
 Ask **one question per turn** (not in groups). Prefix each question with its progress indicator, e.g. `3/10`. After each answer, move to the next. Don't dump a checklist, don't batch.
 
 ### Question 1/10 — Language
 
-Asked in English, before anything else:
+Asked in the language of the session so far, before any other interview question:
 
-> This is the first time I'm running. Before we start: **what language should I use to talk to you?** (e.g., English, Italian, Spanish, French…)
+> The folder is ready. Before we start: **what language should I use to talk to you?** (e.g., English, Italian, Spanish, French…)
 
-From the owner's next turn onward, **conduct the rest of the setup — and every future interaction — in the language they named**. Translate the following prompts into the chosen language; the English wordings here are illustrative.
+From the owner's next turn onward, **conduct the rest of the flow, and every future interaction with the new instance, in the language they named**. Translate the following prompts into the chosen language; the English wordings here are illustrative.
 
 ### Question 2/10 — Project name
 
@@ -75,7 +178,7 @@ The owner's territory is organized around a single **vault root** (the key is `v
 
 > `10/10` — Where should I save your notes? Three options:
 >
-> - **internal** — keep everything inside this repo, in `./<project-slug>/` (derived from the project name you gave in Q2). Logbook, TIL, and documents become subfolders there. Nothing external to configure. Migrate later by editing preferences. The vault folder will be gitignored, so nothing leaks.
+> - **internal** — keep everything inside the new instance, in `<destination>/<project-slug>/` (derived from the project name you gave in Q2). Logbook, TIL, and documents become subfolders there. Nothing external to configure. Migrate later by editing preferences. The vault folder will be gitignored, so nothing leaks.
 > - **external** — you have a vault or folder on disk (Obsidian, iCloud, anywhere). I'll ask for its absolute root path, then use `logbook/`, `til/`, `documents/` as subfolders by default. Override any of them later in preferences if you want non-standard layout.
 > - **skip** — no territories right now. I won't write any markdown files until you set at least `vault_path` in preferences later.
 
@@ -83,26 +186,46 @@ Handle the answer:
 
 **If `internal`**:
 
-1. Create the vault and the three default subfolders inside the repo root, using the `project_slug` computed in Q2:
-   ```bash
-   mkdir -p <project_slug>/logbook <project_slug>/til <project_slug>/documents
-   ```
-2. Append the slug to `.gitignore` if not already present, so the vault stays out of git even after the owner forks or commits:
-   ```bash
-   grep -qxF "<project_slug>/" .gitignore || printf '%s\n' "<project_slug>/" >> .gitignore
-   ```
-3. Compute absolute paths from the repo location (where the setup skill is running). Save **four** keys to preferences:
-   - `vault_path: <repo-abs-path>/<project_slug>`
-   - `logbook_path: <repo-abs-path>/<project_slug>/logbook`
-   - `til_path: <repo-abs-path>/<project_slug>/til`
-   - `documents_path: <repo-abs-path>/<project_slug>/documents`
-4. Confirm in one line: *"Got it — notes will live in `./<project_slug>/` inside this repo (gitignored, so they stay private)."*
+Create the vault and its three default subfolders inside the new instance, using the `project_slug` computed in Q2:
+
+```bash
+set -o pipefail
+mkdir -p "<destination>/<project_slug>/logbook" "<destination>/<project_slug>/til" "<destination>/<project_slug>/documents"
+```
+
+Append the slug to the instance's `.gitignore` when it isn't listed yet, so the vault stays out of git if the owner later turns the folder into a repository:
+
+```bash
+set -o pipefail
+python3 - "<destination>/.gitignore" "<project_slug>/" <<'PY'
+import sys
+path, entry = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+except FileNotFoundError:
+    text = ""
+if entry not in text.splitlines():
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(("" if text == "" or text.endswith("\n") else "\n") + entry + "\n")
+print(entry + " is listed in " + path)
+PY
+```
+
+Save **four** absolute keys to preferences:
+
+- `vault_path: <destination>/<project_slug>`
+- `logbook_path: <destination>/<project_slug>/logbook`
+- `til_path: <destination>/<project_slug>/til`
+- `documents_path: <destination>/<project_slug>/documents`
+
+Confirm in one line: *"Got it — notes will live in `<destination>/<project_slug>/` inside the new instance (gitignored, so they stay private)."*
 
 **If `external`**: ask the owner for the vault root first, in a single follow-up:
 
 > Absolute path for your vault root? (e.g., `/Users/you/Obsidian/MyVault`)
 
-Validate the directory exists; offer to create it if not. Once confirmed:
+Validate the directory exists; offer to create it if not (with `mkdir -p` on the absolute path, quoted). Once confirmed:
 
 1. Compute three default subpaths: `<vault_path>/logbook`, `<vault_path>/til`, `<vault_path>/documents`.
 2. For each default subpath, check whether the folder exists. Missing ones: offer to create all three at once in a single yes/no (don't nag per folder).
@@ -113,7 +236,7 @@ Validate the directory exists; offer to create it if not. Once confirmed:
    - `documents_path: <vault_path>/documents`
 4. Confirm in one line, then mention: *"If any subfolder should live elsewhere, edit the corresponding key in `preferences.md` — the orchestrator reads it fresh every session."*
 
-**If `skip`**: record all four keys as empty in preferences. Remind the owner they can set at least `vault_path` anytime by editing `private/preferences.md`.
+**If `skip`**: record all four keys as empty in preferences. Remind the owner they can set at least `vault_path` anytime by editing `<destination>/private/preferences.md`.
 
 ### After the 10 questions — offer to add more context
 
@@ -125,38 +248,40 @@ If the owner wants to add something, accept it as free-form text and save it to 
 
 ## Summary and confirmation
 
-Recap what was collected, grouped by section. Offer a chance to correct any field before writing. Do NOT write any file or run `finalize.sh` until the owner confirms.
+Recap what was collected, grouped by section, with every path absolute. Offer a chance to correct any field before writing. Beyond the extracted template and the internal vault folders, do NOT write any file or run `finalize.sh` until the owner confirms.
 
-## First logbook entry (if `logbook_path` is set)
+## Day-zero logbook (if `logbook_path` is set)
 
 Write a "day zero" logbook note at `<logbook_path>/YYYY-MM-DD-day-zero.md`. Two purposes:
 
-1. Prove the pipeline works — the owner sees a real file created at the path they declared.
+1. Prove the pipeline works: the owner sees a real file created at the path they declared.
 2. Show what a logbook note looks like, in their language, following the frontmatter discipline.
 
 Voice: the **owner's first person** (per the `logbook` skill convention). Language: the owner's default language. Frontmatter must include `tags:` (multi-dimensional) and `description:` (one line).
+
+The note follows the writing register of the new instance (`<destination>/howto/10-writing-register.md`). After writing it, run `"<destination>/bin/register-check" "<file>"` on it, with `<file>` the note's absolute path. Fix every violation it reports and re-run until it exits 0; judge the candidates it lists by reading them.
 
 Template (translate into the owner's language):
 
 ```markdown
 ---
 tags: [installation, setup, day-zero, <orchestrator-slug>, meta]
-description: Day zero — <Orchestrator-Name> was installed and configured for the first time.
+description: The day <Orchestrator-Name> was installed and configured, with the file territories it may write to.
 ---
 
-## <date in owner's language — e.g. "19 April 2026" or "19 Aprile 2026">
+## <date in owner's language, e.g. "19 April 2026" or "19 Aprile 2026">
 
 # Day zero with <Orchestrator-Name>
 
-Today I set up <Orchestrator-Name> as my orchestrator. The setup skill walked me through a short series of questions about my identity, role, context, the people around me, and where I want files to be written for me.
+Today I set up <Orchestrator-Name> as my orchestrator, in `<destination>`. The new-instance skill of the Maestro plugin interviewed me about myself and this project, then asked where it may write files for me.
 
-<Orchestrator-Name> is now configured to talk to me in <language>, with three authorized file territories:
+<Orchestrator-Name> talks to me in <language> and may write in these territories:
 
-- Logbook at `<logbook_path>` — this note is the first one.
+- Logbook at `<logbook_path>`, starting with this note.
 - TIL at `<til_path>`. <!-- omit line if til_path is empty -->
 - Documents at `<documents_path>`. <!-- omit line if documents_path is empty -->
 
-The memory database is ready and the first entry is the installation itself. From here on <Orchestrator-Name> proactively logs what we do, and I pick up at the next session.
+The memory database is ready, and its first entry records the installation. From here on <Orchestrator-Name> logs what we do as we go, and I pick up at the next session by opening Claude Code in `<destination>`.
 ```
 
 Announce:
@@ -167,41 +292,41 @@ Announce:
 
 Skip this step silently if `logbook_path` was left empty in preferences.
 
-## First TIL entry (if `til_path` is set)
+## Day-zero TIL (if `til_path` is set)
 
 Write an orientation TIL note at `<til_path>/YYYY-MM-DD-how-to-work-with-<orchestrator-slug>.md`. Purpose: leave the owner a short reference they can revisit about how the orchestrator is organized.
 
 Voice: owner's first person. Language: owner's default.
+
+The note follows the writing register like the logbook note: run `"<destination>/bin/register-check" "<file>"` on it and fix what it reports before announcing.
 
 Template (translate into the owner's language):
 
 ```markdown
 ---
 tags: [til, <orchestrator-slug>, meta, onboarding, claude-code]
-description: How to work with <Orchestrator-Name> — where preferences, memory, logbook and TIL live, and how to reset.
+description: Where <Orchestrator-Name> keeps preferences, memory, logbook and TIL, and how to change its configuration later.
 ---
 
 ## <date>
 
 # How to work with <Orchestrator-Name>
 
-Three things worth remembering now that <Orchestrator-Name> is set up.
+### Preferences are mine to edit
 
-### Preferences can be edited anytime
+`private/preferences.md` belongs to me. I can open it and change it whenever I want: add people, switch the default language, refine what I need. <Orchestrator-Name> reads it at the start of every session.
 
-`private/preferences.md` is mine. I can open it and edit whenever I want — add people, change the default language, refine what I need. <Orchestrator-Name> reads it at every session start.
+<Orchestrator-Name> also proposes additions over time, based on durable patterns it notices, such as a colleague I mention often. It adds with a one-line notice and asks before changing anything I wrote.
 
-<Orchestrator-Name> also proposes additions over time, based on durable patterns it notices (a colleague mentioned often, a preference revealed). It never silently overwrites — only adds with a one-line notice, and asks for confirmation on modifications.
+### Where things are kept
 
-### Memory, logbook, TIL — three different places
+- Memory (`private/memories.db`): the running log of what happens, what I have to do and the ideas that come up. <Orchestrator-Name> announces every write.
+- Logbook (`<logbook_path>`): the daily synthesis, written when I ask for a recap of the day.
+- TIL (`<til_path>`): single lessons like this one.
 
-- **Memory** (`private/memories.db`) — proactive log of events, tasks, ideas. Every write is announced.
-- **Logbook** (`<logbook_path>`) — daily synthesis, written on demand ("recap of today").
-- **TIL** (`<til_path>`) — discrete lessons like this one.
+### Changing the configuration later
 
-### .disabled/
-
-Retired skills live in `.claude/skills/.disabled/`. The `setup` skill itself moved there after completing. If I ever want to reconfigure from scratch, I can move it back to `.claude/skills/setup/` and flip `setup_completed: false` in preferences.
+To change identity or territories, I edit `private/preferences.md`. To start again from scratch, I run `/maestro:new-instance` with a new empty folder; once that instance is finalized, I can move this `private/memories.db` into it to keep the memory.
 ```
 
 Announce:
@@ -212,17 +337,21 @@ Announce:
 
 Skip silently if `til_path` is empty.
 
-## Run `finalize.sh`
+## Finalize
 
-After logbook and TIL have been written (or skipped), invoke the finalization script in a single Bash call. It handles the mechanical work atomically: writes `private/preferences.md`, copies `memories.db.template` to `private/memories.db`, copies `routines.example.yaml` to `private/routines.yaml`, inserts the first memory log row, removes the three root templates, and moves this skill to `.claude/skills/.disabled/setup/`.
+After the logbook and TIL have been written (or skipped), run `finalize.sh` in the new instance, in a single Bash call: the `cd` and the script go on the same command, because the Bash tool doesn't keep a working directory outside the session's project. The script writes `private/preferences.md`, copies `memories.db.template` to `private/memories.db` and `routines.example.yaml` to `private/routines.yaml`, writes the first memory through the instance's own `bin/mem save`, and removes the three root templates.
 
 Pass the collected answers as environment variables. Required: `MAESTRO_LANGUAGE`, `MAESTRO_PROJECT_NAME`, `MAESTRO_PROJECT_SLUG`, `MAESTRO_ORCHESTRATOR_NAME`, `MAESTRO_OWNER_NICK`, `MAESTRO_OWNER_FULL_NAME`, `MAESTRO_OWNER_ROLE`, `MAESTRO_CONTEXT`. Optional: `MAESTRO_INSPIRED_BY`, `MAESTRO_ADJECTIVES`, `MAESTRO_PEOPLE`, `MAESTRO_VAULT_PATH`, `MAESTRO_LOGBOOK_PATH`, `MAESTRO_TIL_PATH`, `MAESTRO_DOCUMENTS_PATH`, `MAESTRO_NOTES`.
 
-Format for `MAESTRO_PEOPLE`: pre-formatted markdown bullets — one per person, e.g. `- Jane Doe: CTO, technical lead\n- John Smith: Account exec`. Empty string if the owner skipped the people question.
+- Every path value is absolute. For an internal vault they sit under `<destination>/<project_slug>`; for `skip` they are empty strings.
+- `MAESTRO_PEOPLE` holds pre-formatted markdown bullets, one person per line, with real line breaks inside the double quotes (e.g. `- Jane Doe: CTO, technical lead` and `- John Smith: Account exec` on two lines). Empty string if the owner skipped the people question.
+- Values are plain text: the script expands them into a heredoc, so a `$`, a backtick or a double quote inside a value breaks it. Rephrase such characters out of the owner's answers.
 
-Example invocation:
+The values below are an example: replace every one with the owner's answers.
 
 ```bash
+set -o pipefail
+cd "<destination>" && \
 MAESTRO_LANGUAGE="english" \
 MAESTRO_PROJECT_NAME="Acme partnership" \
 MAESTRO_PROJECT_SLUG="acme-partnership" \
@@ -232,13 +361,13 @@ MAESTRO_ADJECTIVES="paternal, calm, discreet, proactive" \
 MAESTRO_OWNER_NICK="Jane" \
 MAESTRO_OWNER_FULL_NAME="Jane Doe" \
 MAESTRO_OWNER_ROLE="Partnership Manager" \
-MAESTRO_CONTEXT="Work — I manage 40+ partner relationships, juggle commitments across weeks, and need help drafting diplomatic messages on short notice." \
+MAESTRO_CONTEXT="Work: I manage 40+ partner relationships, juggle commitments across weeks, and need help drafting diplomatic messages on short notice." \
 MAESTRO_PEOPLE="- A. Smith: CEO" \
-MAESTRO_VAULT_PATH="/abs/path/to/repo/acme-partnership" \
-MAESTRO_LOGBOOK_PATH="/abs/path/to/repo/acme-partnership/logbook" \
-MAESTRO_TIL_PATH="/abs/path/to/repo/acme-partnership/til" \
-MAESTRO_DOCUMENTS_PATH="/abs/path/to/repo/acme-partnership/documents" \
-bash .claude/skills/setup/finalize.sh
+MAESTRO_VAULT_PATH="<destination>/acme-partnership" \
+MAESTRO_LOGBOOK_PATH="<destination>/acme-partnership/logbook" \
+MAESTRO_TIL_PATH="<destination>/acme-partnership/til" \
+MAESTRO_DOCUMENTS_PATH="<destination>/acme-partnership/documents" \
+bash "${CLAUDE_SKILL_DIR}/finalize.sh"
 ```
 
 Read the script's stdout to confirm each step. Announce the first memory write to the owner:
@@ -247,7 +376,29 @@ Read the script's stdout to confirm each step. Announce the first memory write t
 📝 saved: "Orchestrator setup completed" [setup,bootstrap,meta] (memory)
 ```
 
-If the script exits non-zero, surface its stderr to the owner and stop — don't attempt to patch partial state by hand. The script refuses to overwrite an existing `private/preferences.md`, so a failed run can be re-attempted after fixing the cause.
+If the script exits non-zero, surface its stderr to the owner and stop: don't patch partial state by hand. The script refuses to run when `private/preferences.md` or `private/memories.db` already exists, so a run that failed halfway is retried from step 2 with a new empty folder. The answers are still in this conversation, so the interview doesn't need repeating; the day-zero notes are written again if they lived inside the abandoned folder.
+
+## Register
+
+Add the new instance to the machine registry (`~/.claude/maestro-instances.yaml`, or the file `MAESTRO_INSTANCES` names), so `maestro-net` can reach it. Fill the placeholders:
+
+- `<orchestrator-slug>`: the orchestrator's name from Question 4 as a slug (lowercase letters, digits and `-`, starting with a letter or digit), e.g. `jarvis`.
+- `<domain>`: one line taken from the project context of Question 3, with no double quotes and no line breaks.
+
+```bash
+set -o pipefail
+if ! command -v maestro-net >/dev/null 2>&1; then
+  echo "maestro-net is not on PATH: install the Maestro plugin (claude plugin install maestro@maestro --scope user), then run this step again." >&2
+  exit 1
+fi
+maestro-net register "<orchestrator-slug>" --path "<destination>" --domain "<domain>" --accepts recap,ask
+```
+
+On a failure, read the exit code:
+
+- `9`: the name or the path is already registered. Propose another name to the owner (e.g. `<orchestrator-slug>-<project_slug>`) and run the block again with the one they choose.
+- `2`: the slug or the domain was refused. Fix it and run the block again.
+- `7`: the destination lacks `private/preferences.md` or `bin/mem`, so finalize didn't complete. Stop and report.
 
 ## Optional machine dependencies
 
@@ -257,7 +408,11 @@ owner. Check what is present, report what is missing, and install nothing.
 Run the checks in one Bash call and read the results:
 
 ```bash
-command -v yap swiftc >/dev/null 2>&1; sw_vers -productVersion
+set -o pipefail
+for tool in yap swiftc; do
+  if command -v "$tool" >/dev/null 2>&1; then echo "$tool: found"; else echo "$tool: missing"; fi
+done
+sw_vers -productVersion
 ```
 
 | Skill | Needs | Install | Without it |
@@ -268,13 +423,13 @@ command -v yap swiftc >/dev/null 2>&1; sw_vers -productVersion
 
 Report the outcome in one line per missing item, in the owner's language, with
 the command that installs it. Then move on: a missing optional dependency never
-blocks the setup, and the skill that needs it says so again when invoked.
+blocks the new instance, and the skill that needs it says so again when invoked.
 
 Skip the whole section silently when nothing is missing.
 
-## Introduce yourself (with a recap of created files)
+## Hand-off
 
-End with a single sentence in character (owner's language), followed by a short list of the files that were created so the owner can open them and verify:
+End with a single sentence in character (owner's language), the files that were created with their absolute paths, and the command that opens the new instance. This session stays where it is: the new instance starts working in its own folder, at its first session there.
 
 Example (English):
 
@@ -282,28 +437,37 @@ Example (English):
 I am Jarvis. Ready.
 
 Files you can open to verify everything is in place:
-- Preferences: private/preferences.md
-- Memory db:   private/memories.db
-- Routines:    private/routines.yaml
+- Preferences: <destination>/private/preferences.md
+- Memory db:   <destination>/private/memories.db
+- Routines:    <destination>/private/routines.yaml
 - Logbook:     <logbook_path>/YYYY-MM-DD-day-zero.md
 - TIL:         <til_path>/YYYY-MM-DD-how-to-work-with-jarvis.md
 
-If you ever need orientation, just type /guide.
+To start working with me, open a terminal and run:
+
+cd "<destination>" && claude
+
+Once there, type /guide whenever you need orientation.
 ```
 
-Omit the logbook/TIL lines if those territories were skipped. Translate the label and intro into the owner's language.
+Fill `<destination>` and the territory paths with their absolute values. Omit the logbook/TIL lines if those territories were skipped. Translate the labels and the intro into the owner's language.
 
 Then hand control back.
 
 ## Rules
 
-- **Language first** — the very first question is always "what language should I use?" (asked in English). From the next turn on, everything is in the owner's chosen language.
-- **One question per turn, always** — never bundle. Always show the progress indicator (`N/10`) so the owner knows where they are.
-- **Propose defaults** — especially for adjectives (from the inspiration).
-- **Accept brevity, skip optional fields** — the owner may leave territories or people empty. Don't insist.
-- **Validate paths** — for `logbook_path`, `til_path`, `documents_path`, check the directory exists and offer to create it before recording the value.
-- **Never speak as "orchestrator"** — that term stays in CLAUDE.md. In chat, you use the chosen name.
-- **Never invent data** — if a field isn't provided, leave it empty in preferences.
-- **Keep the setup light** — deeper context (objectives, rhythms, communication style, team details, integrations) is for the owner to fill in later by editing `preferences.md`. Don't try to extract everything at setup.
-- **Write the first logbook and TIL before self-disabling** — these are real, useful content, not dummy files. They double as proof that the pipeline works and as the owner's first orientation.
-- **Announce every write** — every db insert and every markdown file creation gets its one-line announcement. The owner should see what happened at each step.
+- **Only on request**: never start this flow on your own.
+- **New or empty folder only**: never configure an instance in place, in the session's folder, in a project repository or over an existing instance.
+- **Mechanical steps first**: steps 1 to 5 run before the interview, and a failing block stops the flow instead of being worked around by hand.
+- **Language first in the interview**: Question 1 is always "what language should I use?". From the next turn on, everything is in the owner's chosen language.
+- **One question per turn, always**: never bundle. Always show the progress indicator (`N/10`) so the owner knows where they are.
+- **Propose defaults**, especially for adjectives (from the inspiration).
+- **Accept brevity, skip optional fields**: the owner may leave territories or people empty. Don't insist.
+- **Absolute paths everywhere**: in the command blocks, in preferences and in the closing message, every path is absolute on the destination. Never write `~` inside quotes.
+- **Validate paths**: for `logbook_path`, `til_path`, `documents_path`, check the directory exists and offer to create it before recording the value.
+- **The mirror is read-only**: this skill only clones and fetches `$HOME/.maestro`; it never commits, checks out or deletes anything there.
+- **Never speak as "orchestrator"**: that term stays in CLAUDE.md. In chat, you use the chosen name once it exists.
+- **Never invent data**: if a field isn't provided, leave it empty in preferences.
+- **Keep the interview light**: deeper context (objectives, rhythms, communication style, team details, integrations) is for the owner to fill in later by editing `preferences.md`. Don't try to extract everything now.
+- **Write the day-zero logbook and TIL before finalize**: they are real, useful content, not dummy files, and they pass `register-check` before they are announced.
+- **Announce every write**: every db insert and every markdown file creation gets its one-line announcement. The owner should see what happened at each step.
