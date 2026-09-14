@@ -524,6 +524,16 @@ class TestSkillText(unittest.TestCase):
     def setUp(self):
         self.text = SKILL.read_text(encoding="utf-8")
 
+    def test_frontmatter_values_with_a_colon_are_quoted(self):
+        # An unquoted `: ` inside a plain scalar makes the whole frontmatter
+        # invalid YAML, and `disable-model-invocation` goes with it.
+        frontmatter = self.text.split("---\n")[1]
+        for line in frontmatter.splitlines():
+            key, _, value = line.partition(": ")
+            with self.subTest(key=key):
+                if ": " in value:
+                    self.assertRegex(value, r'^".*"$')
+
     def test_title_is_new_instance(self):
         self.assertIn("\n# New instance\n", self.text)
 

@@ -1,6 +1,6 @@
 ---
 name: new-instance
-description: Create a new Maestro instance in a new folder: fetch the template at the plugin's commit, run the first-launch interview, finalize and register it. Use only when the owner asks to create a new Maestro instance or runs /maestro:new-instance.
+description: "Create a new Maestro instance in a new folder: fetch the template at the plugin's commit, run the first-launch interview, finalize and register it. Use only when the owner asks to create a new Maestro instance or runs /maestro:new-instance."
 disable-model-invocation: true
 ---
 
