@@ -59,6 +59,17 @@ After the questions and a quick summary, a shipped script (`.claude/skills/setup
 
 Any time you feel lost later, type `/guide`, and the orchestrator will read its own docs and answer. (`/help` is a Claude Code built-in command and won't reach this skill.)
 
+### Cross-instance skills (optional)
+
+An owner running more than one Maestro instance gets `maestro-net`, the channel that lets one instance recap a memory or ask a question of another, through the `maestro` Claude Code plugin:
+
+```bash
+claude plugin marketplace add spleenteo/maestro
+claude plugin install maestro@maestro
+```
+
+User scope, auto-update off. Details in [`howto/11-maestro-net.md`](howto/11-maestro-net.md).
+
 ## The orchestrator pattern
 
 Every instance built from this template has:
@@ -73,7 +84,7 @@ Every instance built from this template has:
 - **`bin/mem`**: CLI wrapper for `memories.db` (escape-safe writes, relative dates, reports), backed by `bin/mem-vec` for the optional semantic layer.
 - **`bin/session-digest`**: pulls the owner's messages from the day's parallel sessions, for the `logbook` skill.
 - **`bin/register-check`**: mechanical check of the writing register prohibitions that carry a syntactic signature.
-- **`user-skills/`**: skills authored here but installed user-level, in `~/.claude/skills/`, because they are called from any session on the machine rather than from an instance. Currently `maestro-net`, the cross-talk channel between several Maestro instances (see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)).
+- **`.claude-plugin/marketplace.json`** and **`plugins/`**: the `maestro` Claude Code plugin, installed separately (see Install above) rather than through `maestro-sync`, because it's meant to be visible from every session on the machine, not carried per instance. Currently `plugins/maestro/skills/maestro-net`, the cross-talk channel between several Maestro instances (see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)).
 - **`.gitignore`**: covers `private/`, workspace artifacts, and local settings.
 
 Everything else you add as you use the orchestrator:

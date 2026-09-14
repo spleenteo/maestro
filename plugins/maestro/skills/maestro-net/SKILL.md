@@ -1,8 +1,6 @@
 ---
-origin: maestro
-maestro_version: v2026.08.26.2
 name: maestro-net
-description: Cross-talk between the owner's Maestro instances. Two verbs, `recap` (write a memory into another instance's db) and `ask` (query another instance headless and report the answer). Use when the owner says "fai un recap ad Alfred", "manda a Pam", "segna su Luigi", "chiedi ad Alfred cosa sa di X", "what does Pam know about Y", or names one of their instances as the recipient of something that happened here. Installed user-level, so it works from any Claude Code session, including ones that know nothing about Maestro.
+description: Cross-talk between the owner's Maestro instances. Two verbs, `recap` (write a memory into another instance's db) and `ask` (query another instance headless and report the answer). Use when the owner says "fai un recap a home", "manda a work", "segna su client", "chiedi a home cosa sa di X", "what does work know about Y", or names one of their instances as the recipient of something that happened here. Ships in the Maestro plugin, so it works from any Claude Code session, including ones that know nothing about Maestro.
 ---
 
 # maestro-net
@@ -15,10 +13,10 @@ That constraint has a history: an instance once read the owner's personal task m
 
 ## The tool
 
-Everything runs through one script, next to this file:
+Everything runs through one script, on the Bash tool's `PATH` while the plugin is enabled:
 
 ```bash
-~/.claude/skills/maestro-net/maestro-net --help
+maestro-net --help
 ```
 
 It is Python, stdlib only, no network beyond what `claude` itself does.
@@ -28,7 +26,7 @@ It is Python, stdlib only, no network beyond what `claude` itself does.
 Writes a memory into the recipient's `memories.db`, invoking the recipient's own `bin/mem` with an absolute path. No model involved, so the cost is zero.
 
 ```bash
-~/.claude/skills/maestro-net/maestro-net recap alfred "titolo della memoria" \
+maestro-net recap home "titolo della memoria" \
   -d "contesto lungo, opzionale" -t tag1,tag2
 ```
 
@@ -44,12 +42,12 @@ Report to the owner in one line what was written and to whom, the same disciplin
 Runs `claude -p` in the recipient's directory, so their `CLAUDE.md`, their preferences and their memory apply, then reports the answer. No persistent session is opened.
 
 ```bash
-~/.claude/skills/maestro-net/maestro-net ask alfred "cosa sappiamo delle biciclette?"
+maestro-net ask home "cosa sappiamo delle biciclette?"
 ```
 
 - The prompt carries a read-only clause: answer, write nothing, open no task, call no state-changing MCP.
 - Default timeout 180s (`--timeout`). It is a real model call in another context: costs tokens, takes seconds.
-- The answer comes back to the owner through you. Attribute it (*"Alfred dice che…"*), and don't merge it into your own knowledge without saying where it came from.
+- The answer comes back to the owner through you. Attribute it (*"home dice che…"*), and don't merge it into your own knowledge without saying where it came from.
 
 `recap` before `ask` when both fit: one is free.
 
@@ -60,9 +58,9 @@ Runs `claude -p` in the recipient's directory, so their `CLAUDE.md`, their prefe
 ```yaml
 version: 1
 instances:
-  alfred:
-    path: /Users/…/spleenteo-majordomo
-    domain: vita personale, clienti a ritenuta
+  home:
+    path: /Users/you/Sites/home-instance
+    domain: vita personale
     accepts: [recap, ask]
 ```
 
@@ -73,8 +71,8 @@ instances:
 First population:
 
 ```bash
-~/.claude/skills/maestro-net/maestro-net scan            # proposes, prints to stdout
-~/.claude/skills/maestro-net/maestro-net scan --write    # writes the file
+maestro-net scan            # proposes, prints to stdout
+maestro-net scan --write    # writes the file
 ```
 
 The scanner reads `~/.claude/projects/`, resolves each project's real `cwd` from its transcripts, and keeps the directories that carry both `private/preferences.md` and `bin/mem`, the signature of a working Maestro instance. Names come from the `Identity` block. It leaves `domain` empty: only the owner can fill that in.

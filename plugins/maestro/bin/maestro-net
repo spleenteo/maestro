@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# origin: maestro
-# maestro_version: v2026.08.26.2
 """maestro-net — canale di cross-talk fra istanze Maestro.
 
 Due verbi soli, `recap` e `ask`, più i comandi di servizio sul registry.
@@ -183,12 +181,17 @@ def _validate(data: dict, source: str) -> None:
             continue
         if not isinstance(accepts, list):
             raise RegistryError(f"{source}: `accepts` di `{name}` non è una lista")
+        kept = []
         for verb in accepts:
             if verb not in VERBS:
-                raise RegistryError(
-                    f"{source}: `accepts` di `{name}` contiene il verbo sconosciuto `{verb}` "
-                    f"(ammessi: {', '.join(VERBS)})"
+                print(
+                    f"maestro-net: `{name}` dichiara il verbo sconosciuto `{verb}` in "
+                    f"`accepts` (ammessi: {', '.join(VERBS)}) — ignorato.",
+                    file=sys.stderr,
                 )
+                continue
+            kept.append(verb)
+        entry["accepts"] = kept
 
 
 def registry_path(arg: Optional[str]) -> Path:
@@ -340,10 +343,12 @@ def clean_env() -> Dict[str, str]:
     """L'ambiente per il processo remoto.
 
     MEM_DB via: se la sessione chiamante ne dichiara uno, `bin/mem` del
-    destinatario scriverebbe nel db del mittente. PWD via: resta quello
-    del chiamante e confonde chi lo legge.
+    destinatario scriverebbe nel db del mittente. MEM_SCOPE via: un recap
+    o un ask partiti da un satellite atterrerebbero nello scope del
+    mittente invece che in quello nullo del destinatario. PWD via: resta
+    quello del chiamante e confonde chi lo legge.
     """
-    return {k: v for k, v in os.environ.items() if k not in ("MEM_DB", "PWD")}
+    return {k: v for k, v in os.environ.items() if k not in ("MEM_DB", "MEM_SCOPE", "PWD")}
 
 
 def run_remote(name: str, verb: str, cmd: List[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess:
@@ -484,7 +489,7 @@ def read_identity_name(prefs: Path) -> Optional[str]:
 
 
 def slugify_name(raw: str) -> str:
-    """`**Alfred** — il maggiordomo` → `alfred`. Stringa vuota se non resta nulla.
+    """`**Home** — l'istanza di casa` → `home`. Stringa vuota se non resta nulla.
 
     Il trattino ASCII non è un separatore: fa parte di nomi legittimi, di
     persona (`Jean-Luc`) e di cartella (`mio-progetto`).

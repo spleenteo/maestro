@@ -1,0 +1,9 @@
+{
+  "name": "maestro",
+  "description": "Cross-instance skills for the Maestro orchestrator template: maestro-net today, more to follow as the satellites work lands.",
+  "author": {
+    "name": "Matteo Papadopoulos",
+    "url": "https://github.com/spleenteo"
+  },
+  "repository": "https://github.com/spleenteo/maestro"
+}

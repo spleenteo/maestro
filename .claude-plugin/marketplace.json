@@ -1,0 +1,15 @@
+{
+  "name": "maestro",
+  "owner": {
+    "name": "Matteo Papadopoulos",
+    "url": "https://github.com/spleenteo"
+  },
+  "description": "Marketplace for the Maestro orchestrator template's own Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "maestro",
+      "source": "./plugins/maestro",
+      "description": "Cross-instance skills for the Maestro orchestrator template: maestro-net today, more to follow as the satellites work lands."
+    }
+  ]
+}
