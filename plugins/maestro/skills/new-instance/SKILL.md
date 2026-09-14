@@ -1,6 +1,6 @@
 ---
 name: new-instance
-description: "Create a new Maestro instance in a new folder: fetch the template at the plugin's commit, run the first-launch interview, finalize and register it. Use only when the owner asks to create a new Maestro instance or runs /maestro:new-instance."
+description: "Create a new Maestro instance in a new folder: fetch the template at the plugin's commit, run the first-launch interview, finalize and register it. Runs only when the owner types /maestro:new-instance; disabled for model invocation, so asked to create an instance, tell the owner to type that command instead."
 disable-model-invocation: true
 ---
 
@@ -12,7 +12,7 @@ The interview collects only the essentials. Richer context (team, objectives, wo
 
 ## When this skill runs
 
-Only on explicit request: the owner runs `/maestro:new-instance` or asks to create a new Maestro instance. It never starts on its own, not even in a folder that has no `private/preferences.md`.
+Only when the owner types `/maestro:new-instance`. `disable-model-invocation: true` keeps the model from running this skill on its own reading of the conversation, in any folder, including one with no `private/preferences.md`: asked to create a new instance, the model tells the owner to type the command instead of starting the flow itself.
 
 Once invoked, **stop all other work** and drive the flow to the end, in order: steps 1 to 5 prepare the folder, then the interview, the day-zero notes, finalize, register and the hand-off. The mechanical steps come first so that a failure there never wastes the owner's answers.
 
