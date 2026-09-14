@@ -52,7 +52,7 @@ case "$DEST" in
   /*) ;;
   *) echo "The destination must be an absolute path: $DEST" >&2; exit 2 ;;
 esac
-if [ -e "$DEST" ] && [ -n "$(ls -A "$DEST")" ]; then
+if [ -e "$DEST" ] && [ -n "$(command ls -A "$DEST")" ]; then
   echo "The destination exists and is not empty: $DEST" >&2
   echo "Choose a new or empty folder." >&2
   exit 1
@@ -178,7 +178,7 @@ The owner's territory is organized around a single **vault root** (the key is `v
 
 > `10/10` — Where should I save your notes? Three options:
 >
-> - **internal** — keep everything inside the new instance, in `<destination>/<project-slug>/` (derived from the project name you gave in Q2). Logbook, TIL, and documents become subfolders there. Nothing external to configure. Migrate later by editing preferences. The vault folder will be gitignored, so nothing leaks.
+> - **internal** — keep everything inside the new instance, in `<destination>/<project_slug>/` (derived from the project name you gave in Q2). Logbook, TIL, and documents become subfolders there. Nothing external to configure. Migrate later by editing preferences. The vault folder will be gitignored, so nothing leaks.
 > - **external** — you have a vault or folder on disk (Obsidian, iCloud, anywhere). I'll ask for its absolute root path, then use `logbook/`, `til/`, `documents/` as subfolders by default. Override any of them later in preferences if you want non-standard layout.
 > - **skip** — no territories right now. I won't write any markdown files until you set at least `vault_path` in preferences later.
 
