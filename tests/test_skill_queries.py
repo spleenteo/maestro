@@ -39,7 +39,6 @@ SOURCE_FILES = [
     ROOT / ".claude" / "agents" / "scheduler.md",
     ROOT / ".claude" / "agents" / "data" / "channels.yaml",
     ROOT / ".claude" / "skills" / "add-external-app" / "SKILL.md",
-    ROOT / ".claude" / "skills" / "maestro-sync" / "SKILL.md",
     ROOT / "howto" / "01-skills.md",
 ]
 
@@ -52,7 +51,6 @@ EXPECTED_SUBCOMMANDS = {
     ROOT / ".claude" / "agents" / "scheduler.md": ["todo", "search", "search", "search"],
     ROOT / ".claude" / "agents" / "data" / "channels.yaml": ["todo", "search", "search", "search"],
     ROOT / ".claude" / "skills" / "add-external-app" / "SKILL.md": ["save"],
-    ROOT / ".claude" / "skills" / "maestro-sync" / "SKILL.md": ["save"],
     ROOT / "howto" / "01-skills.md": ["search"],
 }
 

@@ -26,12 +26,15 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SKILL = ROOT / ".claude" / "skills" / "maestro-sync" / "SKILL.md"
+SKILL = ROOT / "plugins" / "maestro" / "skills" / "maestro-sync" / "SKILL.md"
 
 # Anchors into the skill's Markdown. Each command is the first fenced
 # ```bash block that follows its heading.
 PHASE_4B_HEADING = "### Phase 4b — Reverse scan: new files from upstream"
 PHASE_5B_HEADING = "### Phase 5b — Compare `bin/*` against the mirror"
+PHASE_0_HEADING = "### Phase 0 — Check this is an instance"
+PHASE_3_HEADING = "### Phase 3 — Refresh the read-only mirror, check the plugin"
+PHASE_6B_HEADING = "### Phase 6b — Retired paths"
 
 _BASH_FENCE_RE = re.compile(r"```bash\n(.*?)```", re.DOTALL)
 
@@ -41,6 +44,16 @@ def _first_bash_block_after(text: str, heading: str) -> str:
     m = _BASH_FENCE_RE.search(text, idx)
     if m is None:
         raise AssertionError(f"no fenced bash block found after heading {heading!r}")
+    return m.group(1)
+
+
+def _nth_bash_block_after(text: str, heading: str, n: int) -> str:
+    idx = text.index(heading)
+    for _ in range(n):
+        m = _BASH_FENCE_RE.search(text, idx)
+        if m is None:
+            raise AssertionError(f"fewer than {n} bash blocks after {heading!r}")
+        idx = m.end()
     return m.group(1)
 
 
@@ -354,6 +367,159 @@ class TestPathsWithSpaces(unittest.TestCase):
         r = _run_shell(cmd, self.cwd)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(_output_lines(r), ["differs bin/mem"])
+
+
+# ---------------------------------------------------------------------------
+# Phase 0, Phase 3, Phase 5b copy, Phase 6b — the blocks that decide or write
+# ---------------------------------------------------------------------------
+
+import json
+import os
+import sqlite3
+
+
+class TestInstanceGuard(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(os.path.realpath(self._tmp.name))
+        self.cmd = _nth_bash_block_after(SKILL.read_text(), PHASE_0_HEADING, 1)
+
+    def test_stops_outside_an_instance(self):
+        (self.root / "bin").mkdir()
+        (self.root / "bin" / "mem").write_text("")
+        r = _run_shell(self.cmd, self.root)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not the root of a Maestro instance", r.stderr)
+
+    def test_prints_the_instance_root(self):
+        (self.root / "bin").mkdir()
+        (self.root / "bin" / "mem").write_text("")
+        (self.root / "private").mkdir()
+        (self.root / "private" / "preferences.md").write_text("")
+        r = _run_shell(self.cmd, self.root)
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, str(self.root)), r.stderr)
+
+
+class TestPluginBehindUpstream(unittest.TestCase):
+    """Phase 3 clones or refreshes the mirror, then stops when upstream `main`
+    has commits the installed plugin doesn't."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.work = root / "work"
+        self.work.mkdir()
+        _init_git_repo(self.work)
+        subprocess.run(["git", "checkout", "-q", "-b", "main"], cwd=self.work, check=True)
+        (self.work / "a.md").write_text("one\n")
+        _commit(self.work, ["a.md"], "one")
+        self.old = self._head()
+        (self.work / "a.md").write_text("two\n")
+        _commit(self.work, ["a.md"], "two")
+        self.main = self._head()
+        subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=self.work, check=True)
+        (self.work / "a.md").write_text("three\n")
+        _commit(self.work, ["a.md"], "three")
+        self.ahead = self._head()
+        self.origin = root / "origin.git"
+        subprocess.run(["git", "clone", "-q", "--bare", str(self.work), str(self.origin)], check=True)
+        self.plugin = root / "plugin"
+        (self.plugin / ".claude-plugin").mkdir(parents=True)
+        (self.plugin / ".claude-plugin" / "plugin.json").write_text(json.dumps({"repository": str(self.origin)}))
+        self.bindir = root / "stub"
+        self.bindir.mkdir()
+        self.mirror = root / "mirror dir"
+        self.cmd = _nth_bash_block_after(SKILL.read_text(), PHASE_3_HEADING, 1)
+
+    def _head(self) -> str:
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.work, capture_output=True,
+                              text=True, check=True).stdout.strip()
+
+    def _run(self, version: str) -> subprocess.CompletedProcess:
+        claude = self.bindir / "claude"
+        claude.write_text("#!/bin/sh\ncat <<'EOF'\n" + json.dumps([
+            {"id": "maestro@maestro", "scope": "project", "version": "0000000"},
+            {"id": "maestro@maestro", "scope": "user", "version": version[:12]},
+        ]) + "\nEOF\n")
+        claude.chmod(0o755)
+        env = {"PATH": f"{self.bindir}:/usr/bin:/bin", "HOME": self._tmp.name,
+               "CLAUDE_PLUGIN_ROOT": str(self.plugin)}
+        return subprocess.run(["bash", "-c", self.cmd.replace("<mirror-path>", str(self.mirror))],
+                              cwd=self._tmp.name, capture_output=True, text=True, env=env)
+
+    def test_plugin_at_main_passes_and_clones_the_mirror(self):
+        r = self._run(self.main)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"MIRROR_HEAD {self.main}", r.stdout)
+
+    def test_plugin_ahead_on_a_branch_passes(self):
+        self.assertEqual(self._run(self.ahead).returncode, 0)
+
+    def test_plugin_behind_main_stops(self):
+        r = self._run(self.old)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("behind", r.stderr)
+
+
+class TestBinCopy(unittest.TestCase):
+    """Phase 5b's copy block backs up the db, then copies only drifted files."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.mirror = root / "mirror"
+        self.instance = root / "my instance"
+        self.mirror.mkdir()
+        (self.instance / "bin").mkdir(parents=True)
+        (self.instance / "private").mkdir()
+        _init_git_repo(self.mirror)
+        (self.mirror / "bin").mkdir()
+        mem = self.mirror / "bin" / "mem"
+        mem.write_text("#!/bin/sh\necho stats-v2\n")
+        mem.chmod(0o755)
+        (self.mirror / "bin" / "same").write_text("same\n")
+        _commit(self.mirror, ["bin/mem", "bin/same"])
+        (self.instance / "bin" / "mem").write_text("#!/bin/sh\necho stats-v1\n")
+        (self.instance / "bin" / "same").write_text("same\n")
+        con = sqlite3.connect(self.instance / "private" / "memories.db")
+        con.execute("CREATE TABLE log (id INTEGER PRIMARY KEY, title TEXT)")
+        con.execute("INSERT INTO log (title) VALUES ('kept')")
+        con.commit()
+        con.close()
+
+    def test_backs_up_then_copies_only_drifted_files(self):
+        cmd = (_nth_bash_block_after(SKILL.read_text(), PHASE_5B_HEADING, 2)
+               .replace("<mirror-path>", str(self.mirror))
+               .replace("<instance-path>", str(self.instance)))
+        r = _run_shell(cmd, Path(self._tmp.name))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("copied bin/mem", r.stdout)
+        self.assertNotIn("copied bin/same", r.stdout)
+        self.assertIn("stats-v2", r.stdout)
+        backups = list((self.instance / "private").glob("memories.db.bak.*-pre-sync"))
+        self.assertEqual(len(backups), 1)
+        con = sqlite3.connect(backups[0])
+        self.assertEqual(con.execute("SELECT title FROM log").fetchall(), [("kept",)])
+        con.close()
+
+
+class TestRetiredPaths(unittest.TestCase):
+    def test_lists_only_existing_retired_paths_and_removes_nothing(self):
+        text = SKILL.read_text()
+        cmd = _nth_bash_block_after(text, PHASE_6B_HEADING, 1)
+        self.assertNotRegex(cmd, r"\brm\b")
+        with tempfile.TemporaryDirectory() as tmp:
+            inst = Path(tmp) / "inst"
+            (inst / ".claude" / "skills" / "maestro-sync").mkdir(parents=True)
+            (inst / ".claude" / "skills" / ".disabled" / "setup").mkdir(parents=True)
+            r = _run_shell(cmd.replace("<instance-path>", str(inst)), Path(tmp))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(_output_lines(r), ["retired .claude/skills/maestro-sync",
+                                                "retired .claude/skills/.disabled/setup"])
+            self.assertTrue((inst / ".claude" / "skills" / "maestro-sync").is_dir())
 
 
 if __name__ == "__main__":

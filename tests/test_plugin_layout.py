@@ -94,7 +94,9 @@ class TestNoOriginMarker(unittest.TestCase):
                     text = path.read_text(encoding="utf-8")
                 except (UnicodeDecodeError, OSError):
                     continue
-                if "origin: maestro" in text or "maestro_version:" in text:
+                # Frontmatter only: maestro-sync's body names the marker it scans for.
+                head = text.split("\n---", 1)[0].splitlines() if text.startswith("---") else []
+                if any(ln.startswith(("origin:", "maestro_version:")) for ln in head):
                     offenders.append(str(path.relative_to(ROOT)))
         self.assertEqual(offenders, [])
 
