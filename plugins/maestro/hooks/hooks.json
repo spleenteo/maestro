@@ -1,0 +1,29 @@
+{
+  "description": "Maestro satellites: recognise a registered satellite repo at session start, give it its scope and role, and open its linked vault folder to the file tools.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/satellite-hook\" session-start",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Write|Edit|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/vault-guard\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

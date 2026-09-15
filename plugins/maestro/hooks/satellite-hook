@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""Maestro satellite hook.
+
+session-start   Reads the hook input on stdin. When the session's folder is
+                inside a repo listed under `satellites:` in the Maestro
+                registry, exports MEM_SCOPE through CLAUDE_ENV_FILE, writes a
+                marker for the vault guard, and prints the satellite's role,
+                the mother's identity extract and the memory rules as
+                additional context. Anywhere else it prints nothing.
+pre-tool-use M  Called by vault-guard with the marker M: allows Read, Write,
+                Edit, Grep and Glob on paths under the satellite's vault folder.
+
+The hook runs in every session on the machine: it never fails the session.
+Any error outside a satellite is silent; inside a satellite it becomes one
+line of context.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+PLUGIN_ROOT = HERE.parent
+MIN_SCHEMA_API = 2
+IDENTITY_PREFIXES = (
+    "identity",
+    "owner — basics",
+    "owner - basics",
+    "communication preferences",
+    "writing register",
+)
+
+
+def registry_path() -> Path:
+    env = os.environ.get("MAESTRO_INSTANCES")
+    return Path(env).expanduser() if env else Path.home() / ".claude" / "maestro-instances.yaml"
+
+
+def load_net():
+    loader = SourceFileLoader("maestro_net", str(PLUGIN_ROOT / "bin" / "maestro-net"))
+    spec = spec_from_loader("maestro_net", loader)
+    module = module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def main_checkout(folder: str) -> str | None:
+    """Main checkout root of a git worktree folder; None outside git."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", folder, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    common = os.path.realpath(out.stdout.strip())
+    return os.path.dirname(common) if os.path.basename(common) == ".git" else None
+
+
+def match_satellite(registry: dict, folder: str):
+    """(scope, entry) of the satellite whose repo holds folder, longest repo first."""
+    real = os.path.realpath(folder)
+    satellites = registry.get("satellites", {})
+    ranked = sorted(satellites.items(), key=lambda kv: len(os.path.realpath(kv[1]["repo"])), reverse=True)
+    for scope, entry in ranked:
+        repo = os.path.realpath(entry["repo"])
+        if real == repo or real.startswith(repo + os.sep):
+            return scope, entry
+    root = main_checkout(real)
+    if root:
+        for scope, entry in ranked:
+            if os.path.realpath(entry["repo"]) == root:
+                return scope, entry
+    return None, None
+
+
+def marker_path(project_dir: str) -> Path | None:
+    data = os.environ.get("CLAUDE_PLUGIN_DATA")
+    if not data or not project_dir:
+        return None
+    return Path(data) / "satellites" / project_dir.replace("/", "_")
+
+
+def schema_api(mother: Path) -> int:
+    try:
+        text = (mother / "bin" / "mem_schema.py").read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    m = re.search(r"^SCHEMA_API\s*=\s*(\d+)", text, re.MULTILINE)
+    return int(m.group(1)) if m else 0
+
+
+def satellite_row(mother: Path, scope: str) -> dict | None:
+    env = {k: v for k, v in os.environ.items() if k not in ("MEM_DB", "MEM_SCOPE")}
+    try:
+        out = subprocess.run(
+            [str(mother / "bin" / "mem"), "satellite", "show", scope, "--json"],
+            capture_output=True, text=True, env=env, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    try:
+        return json.loads(out.stdout)
+    except ValueError:
+        return None
+
+
+def identity_extract(mother: Path) -> str:
+    """Whitelisted `## ` sections of the mother's preferences, nothing else."""
+    try:
+        text = (mother / "private" / "preferences.md").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        text = text[end + 4:] if end != -1 else text
+    kept, keep = [], False
+    for line in text.splitlines():
+        if line.startswith("## "):
+            keep = line[3:].strip().lower().startswith(IDENTITY_PREFIXES)
+        elif line.startswith("# "):
+            keep = False
+        if keep:
+            kept.append(line)
+    return "\n".join(kept).strip()
+
+
+def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity: str) -> str:
+    mem = mother / "bin" / "mem"
+    lines = [
+        f"# Satellite session: {scope}",
+        "",
+        f"This repository is a satellite of the Maestro instance `{mother_name}` ({mother}). "
+        "Speak with that instance's identity and voice; the role below adds a project mandate and "
+        "method, never a persona of its own.",
+        "",
+        "## Role",
+    ]
+    for label, key in (("Project type", "project_type"), ("Mandate", "mandate"), ("Method", "method"),
+                       ("Constraints", "constraints"), ("Language", "language")):
+        if row.get(key):
+            lines.append(f"- {label}: {row[key]}")
+    if identity:
+        lines += ["", "## Identity (from the mother instance)", "", identity]
+    lines += [
+        "",
+        "## Memory",
+        f"- Memory lives in the mother's db under scope `{scope}`; `MEM_SCOPE` is set for Bash. "
+        f"Use `{mem}` with its absolute path (save, task, idea, search, today, todo): it reads and "
+        "writes only this scope.",
+        f"- Announce every write in one line. Full rules: `{mother / 'CLAUDE.md'}`, section `## Memory`.",
+        "- Never run `bin/mem embed` or the warm task channel garbage collector: they belong to the mother.",
+        f"- For anything outside this scope, ask the mother: `maestro-net ask {mother_name} \"…\"`.",
+    ]
+    if row.get("vault_folder"):
+        lines += [
+            "",
+            "## Documents",
+            f"- The linked vault folder is `{row['vault_folder']}`: documents for this project go there.",
+            f"- Every document passes `{mother / 'bin' / 'register-check'} <file>` before delivery.",
+        ]
+    return "\n".join(lines)
+
+
+def emit_context(text: str) -> None:
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
+
+
+def session_start() -> int:
+    try:
+        data = json.load(sys.stdin)
+    except ValueError:
+        data = {}
+    folder = data.get("cwd") or os.getcwd()
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or folder
+    marker = marker_path(project_dir)
+
+    reg_file = registry_path()
+    try:
+        raw = reg_file.read_text(encoding="utf-8")
+    except OSError:
+        raw = ""
+    if "satellites:" not in raw:
+        if marker and marker.exists():
+            marker.unlink()
+        return 0
+
+    net = load_net()
+    try:
+        registry = net.parse_registry(raw, str(reg_file))
+    except Exception:
+        return 0
+    scope, entry = match_satellite(registry, folder)
+    if scope is None:
+        if marker and marker.exists():
+            marker.unlink()
+        return 0
+
+    mother_name = entry["mother"]
+    mother_entry = registry["instances"].get(mother_name)
+    if not mother_entry:
+        emit_context(f"Maestro: this repo is registered as satellite `{scope}` of `{mother_name}`, "
+                     "which the registry doesn't list. Satellite mode is off.")
+        return 0
+    mother = Path(mother_entry["path"]).expanduser()
+    if schema_api(mother) < MIN_SCHEMA_API:
+        emit_context(f"Maestro: this repo is satellite `{scope}` of `{mother_name}`, but that "
+                     f"instance's bin/mem is too old for satellites (needs SCHEMA_API {MIN_SCHEMA_API}). "
+                     "Satellite mode is off until the mother is updated.")
+        return 0
+    row = satellite_row(mother, scope)
+    if row is None:
+        emit_context(f"Maestro: this repo is satellite `{scope}` in the registry, but `{mother_name}` "
+                     f"has no satellites row for it (`{mother / 'bin' / 'mem'} satellite add`). "
+                     "Satellite mode is off.")
+        return 0
+
+    env_file = os.environ.get("CLAUDE_ENV_FILE")
+    if env_file:
+        with open(env_file, "a", encoding="utf-8") as f:
+            f.write(f"export MEM_SCOPE={scope}\n")
+    if marker:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({"scope": scope, "vault": row.get("vault_folder")}), encoding="utf-8")
+    emit_context(context_text(scope, mother_name, mother, row, identity_extract(mother)))
+    return 0
+
+
+def pre_tool_use(marker: str) -> int:
+    try:
+        info = json.loads(Path(marker).read_text(encoding="utf-8"))
+        data = json.load(sys.stdin)
+    except (OSError, ValueError):
+        return 0
+    vault = info.get("vault")
+    tool_input = data.get("tool_input") or {}
+    target = tool_input.get("file_path") or tool_input.get("path")
+    if not vault or not target:
+        return 0
+    real_vault = os.path.realpath(vault)
+    real_target = os.path.realpath(target)
+    if real_target == real_vault or real_target.startswith(real_vault + os.sep):
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": "Maestro satellite: linked vault folder",
+        }}))
+    return 0
+
+
+def main() -> int:
+    mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    try:
+        if mode == "session-start":
+            return session_start()
+        if mode == "pre-tool-use" and len(sys.argv) > 2:
+            return pre_tool_use(sys.argv[2])
+    except Exception:
+        return 0
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -37,3 +37,6 @@ tests/test_finalize.py export-ignore
 # This test clones the template's own .git to stand in for GitHub and runs
 # the new-instance skill's command blocks out of plugins/.
 tests/test_new_instance.py export-ignore
+
+# This test runs the plugin's hooks out of plugins/.
+tests/test_satellite_hook.py export-ignore

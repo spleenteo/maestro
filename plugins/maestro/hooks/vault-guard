@@ -1,0 +1,9 @@
+#!/bin/sh
+# PreToolUse guard for Maestro satellites. It runs on every file tool call in
+# every session on the machine, so it must cost nothing outside a satellite:
+# no marker for this project (written by `satellite-hook session-start`) means
+# exit at once, without starting Python.
+[ -n "$CLAUDE_PLUGIN_DATA" ] && [ -n "$CLAUDE_PROJECT_DIR" ] || exit 0
+marker="$CLAUDE_PLUGIN_DATA/satellites/$(printf '%s' "$CLAUDE_PROJECT_DIR" | tr '/' '_')"
+[ -f "$marker" ] || exit 0
+exec python3 "${0%/*}/satellite-hook" pre-tool-use "$marker"
