@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.08.14.1
+maestro_version: v2026.09.15.1
 tags: [howto, writing-register, prose, style, register, humanizer, orchestrator, discipline]
 description: "Full reference for the writing register: the seven prose prohibitions, the perimeter they apply to, the removal test for judgment, the optional post-pass through the `writing-register` skill, the `bin/register-check` tool, and the per-instance exceptions block. The condensed rules live in CLAUDE.md."
 ---

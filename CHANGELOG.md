@@ -8,6 +8,49 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.09.15.1 — 2026-09-15
+
+**Theme**: **satellites and the Maestro plugin**. A project repository can now work as a context of an instance you already have, its mother: same identity, same memory (under its own scope), a linked vault folder, and no files added to the repo. Everything that has to be the same for every instance on the machine moves into one Claude Code plugin: creating an instance, the channel between instances, satellites, and the template sync itself.
+
+### Added
+
+- **The `maestro` Claude Code plugin** (`plugins/maestro/`, marketplace in `.claude-plugin/`), installed once at user scope: `claude plugin marketplace add spleenteo/maestro`, `claude plugin install maestro@maestro`. It carries `/maestro:new-instance`, `/maestro:maestro-sync`, `maestro-net`, the `satellite` skill and the session hooks.
+- **Scoped memory** — `log` gains a `scope` column through `bin/mem_schema.py` (`SCHEMA_API` 2), added by `bin/mem` and `bin/mem-vec` the first time they open an older db. A satellite session (`MEM_SCOPE=<slug>`) reads and writes only its scope; the mother reads its own rows by default and a satellite's with `--scope` or `--all-scopes`. `todo` and `overdue` list every scope in the mother.
+- **`bin/mem satellite add|list|show|remove`** — the mother's registry of the repos it lends its memory to: project type, mandate, method, constraints, language, vault folder.
+- **`/maestro:new-instance`** — creates an instance in a new folder from the template at the plugin's commit (`git archive`, with `.gitattributes` keeping template-only material out), runs the first-launch interview, finalizes and registers it. Replaces the `setup` skill.
+- **Satellites** — the `satellite` skill registers a repo (role in the mother, repo in `~/.claude/maestro-instances.yaml`), checks the chain and hands off. The plugin's `SessionStart` hook recognises the repo in every new session, exports `MEM_SCOPE`, and injects the role, the mother's identity sections and the memory rules; a `PreToolUse` hook opens the vault folder to the file tools. See `howto/12-satellites.md`.
+- **`maestro-net request`** — from a satellite, opens a visible background session in the mother (`claude --bg`), which judges the request against the satellite's row, works with its own tools, replies with a message and saves one memory in the satellite's scope. Granted per instance in `accepts`, never by default.
+- **`## Requests from satellites` in `CLAUDE.md`** — how a mother serves a request or a question from a satellite, and the boundary of what it hands back.
+
+### Changed
+
+- **`maestro-net`** moves from `user-skills/` into the plugin, gains `register`, `unregister` and `satellite add|remove`, and from a satellite `ask` reaches only the mother, within the satellite's boundary.
+- **`/maestro:maestro-sync`** — the sync moves into the plugin. It runs only in an instance root, stops when the loaded plugin is stale or behind upstream `main`, offers to copy a drifted `bin/` after backing up the db and the replaced scripts, and proposes the removal of retired paths. The old local skill at `.claude/skills/maestro-sync/` becomes a redirect.
+- **Skills and agents read `log` through `bin/mem` only** (`logbook`, `scheduler`, `add-external-app`, `guide`): the logbook reads every scope and writes a Satellites section.
+- **`CLAUDE.md`** — scope rules, satellite commands, session start points to `/maestro:new-instance` and recognises the template repository; `howto/` 08 to 12 updated, `howto/README.md` lists them.
+
+### Removed
+
+- **`.claude/skills/setup/`** (now `/maestro:new-instance`) and **`user-skills/`** (now in the plugin).
+
+### Why
+
+A project repo needed the orchestrator already running the owner's context, and the only way was a copy of the instance inside the repo: two memories drifting apart and files a team doesn't want. A scope column in one db keeps a single memory with per-context views; a plugin hook gives a repo its context without writing into it. The same pressure moved the shared skills into the plugin: a skill copied into every instance is as old as the instance, and a sync that can't know what changed after it can't protect the release that changes it.
+
+- **Work**: `satellites-plugin`
+- **Decision**: [scope column in a single db](docs/decisions-log/2026-09-13-scope-column-single-db.md), [bin/mem stays in each instance](docs/decisions-log/2026-09-13-bin-mem-stays-in-instance.md), [plugin at user scope](docs/decisions-log/2026-09-13-plugin-user-scope.md), [identity extract whitelist](docs/decisions-log/2026-09-13-identity-extract-whitelist.md), [satellite leaves no repo files](docs/decisions-log/2026-09-14-satellite-leaves-no-repo-files.md), [scope is not access control](docs/decisions-log/2026-09-14-scope-is-not-access-control.md), [satellite request opens a mother session](docs/decisions-log/2026-09-15-satellite-request-opens-mother-session.md), [maestro-sync in the plugin](docs/decisions-log/2026-09-15-maestro-sync-in-plugin.md)
+
+### Migration
+
+1. **Install the plugin** at user scope (commands above) and restart Claude Code. If `maestro-net` was installed by hand under `~/.claude/skills/maestro-net`, remove that copy.
+2. **Start the first sync as `/maestro:maestro-sync`**, typed exactly. `/maestro-sync` or "sync maestro" still reach the old local skill until the redirect lands, and that copy has none of the new checks.
+3. **Say yes to the `bin/` copy** when the sync offers it: the new skills call `bin/mem` options an older copy lacks, and the copy runs the `scope` migration right after a checked backup.
+4. **Remove the retired paths** the sync proposes: `.claude/skills/maestro-sync/`, `.claude/skills/setup/`, `.claude/skills/.disabled/setup/`, `user-skills/maestro-net/`.
+5. **`.claude/agents/data/channels.yaml`** isn't distributed: if the instance's copy still queries `memories.db` with raw `sqlite3`, rewrite those queries with `bin/mem` as in the template.
+6. A **mother** of satellites needs `SCHEMA_API` 2 (step 3) before any satellite session; `request` is granted by adding it to the mother's `accepts` in the registry.
+
+---
+
 ## v2026.09.10.1 — 2026-09-10
 
 **Theme**: the orchestrator learns to **listen to a call while it is happening**. Meeting tools transcribe and hand back a summary once everyone has hung up, which is the moment the transcript stops being useful for the conversation itself. The `listen` skill keeps a transcript growing on disk, so the owner can ask what was already said, what a name was, whether a topic from their own list has come up yet, while they are still in a position to act on the answer. Everything runs on the machine: nothing is uploaded, and no bot joins the call.

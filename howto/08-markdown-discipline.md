@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.07.15.2
+maestro_version: v2026.09.15.1
 tags: [howto, markdown, frontmatter, yaml, wikilinks, obsidian, discipline, orchestrator]
 description: "Full reference for the markdown discipline: frontmatter (tags + description) style, YAML safety in frontmatter values, and Obsidian wikilink rules. The condensed rules live in CLAUDE.md; this file carries the details and examples."
 ---
