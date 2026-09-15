@@ -177,7 +177,8 @@ def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity
     lines += [
         f"- Announce every write in one line. Full rules: `{mother / 'CLAUDE.md'}`, section `## Memory`.",
         "- Never run `bin/mem embed` or the warm task channel garbage collector: they belong to the mother.",
-        f"- For anything outside this scope, ask the mother: `maestro-net ask {mother_name} \"…\"`.",
+        f"- For a question the mother can answer about this project: `maestro-net ask {mother_name} \"…\"`. "
+        "The mother answers only from this scope's memories, its row and its vault folder.",
         f"- Prose for a human reader follows the writing register: `{mother / 'CLAUDE.md'}`, "
         "section `## Writing register`.",
     ]

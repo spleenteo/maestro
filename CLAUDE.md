@@ -165,6 +165,7 @@ A session whose first message starts with `Maestro satellite request` was opened
 - Skip the greeting and session start steps 4-5; read preferences and the roster as usual.
 - Every memory command uses this instance's absolute `bin/mem`. Read the satellite's row (`<absolute bin/mem> satellite show <requesting_scope>`) and do the request only when it serves that project's mandate. Otherwise refuse in one sentence with the reason. Never hand over memories of other scopes or private data outside the row.
 - Write documents only in the satellite's vault folder (none when it is `none`: refuse a request that needs one), and edit no file of this repository (a background session would move into a worktree, where `bin/mem` finds no db).
+- What goes back to the satellite stays inside its boundary: its row, the memories of its scope, the files in its vault folder. Never list, name or quote other vault folders or their files, memories of other scopes, or private data outside the row, not even to say what is off-limits. A headless run whose prompt starts with `Maestro satellite question` (from `maestro-net ask`) follows the same boundary, read-only.
 - Save no memory while working, in any scope. Before finishing, save exactly one with `MEM_SCOPE=<requesting_scope>`, `request <request_name>: done` or `request <request_name>: refused`, with a short summary and absolute paths; then reply once with `SendMessage` to `reply_to` (skip when `none`), without retrying on failure. Pattern: `howto/12-satellites.md`.
 
 ## Requests that don't belong to any app

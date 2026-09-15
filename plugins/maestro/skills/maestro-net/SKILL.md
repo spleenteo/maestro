@@ -51,6 +51,8 @@ maestro-net ask home "cosa sappiamo delle biciclette?"
 
 `recap` before `ask` when both fit: one is free.
 
+From a satellite repo, `ask` reaches only its mother, and the mother answers only from the satellite's scope, row and vault folder. When the answer says the rest stays with the mother, pass that on as it is: don't try another verb or another instance to get it.
+
 ## Verb 3 — request (satellites only)
 
 From a satellite repo, when the owner asks for work that belongs to the mother (a dossier in the vault, something only the mother's skills or agents can do):
@@ -123,7 +125,7 @@ Every failure is explicit and named. Report it to the owner as it is; never retr
 | 3 | Registry missing | Nothing is registered yet, offer to run `scan` |
 | 4 | Registry malformed | Report the line number the tool gives |
 | 5 | Unknown or ambiguous name; `request` outside a satellite, or its mother not registered | List the known instances and ask which one; for `request`, say it works only from a satellite repo whose mother is in the registry |
-| 6 | Verb not in `accepts` | Say that the instance doesn't accept it, and that the registry is where it changes |
+| 6 | Verb not in `accepts`, or `ask` from a satellite to an instance other than its mother | Say that the instance doesn't accept it, and that the registry is where it changes; from a satellite, that only the mother can be asked |
 | 7 | Path gone, or not a Maestro instance | The instance moved (or `register` was pointed at the wrong folder), offer to re-run `scan` or fix `--path` |
 | 8 | Remote command failed; for `request`, no satellite row in the mother or a row for another repo | Report the recipient's own error output |
 | 9 | `register` or `satellite add` found the name, path, scope or repo already in the registry, or overlapping | Say which existing entry it collides with; suggest `unregister` or `satellite remove` first if it should be replaced |

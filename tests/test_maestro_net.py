@@ -904,8 +904,8 @@ exit 1
 """
 
 
-class TestRequest(RegistryFixture):
-    """`request` launches a background session in the mother, only from a satellite."""
+class SatelliteFixture(RegistryFixture):
+    """A mother `home` accepting request, a satellite `acme` with a vault folder, a recorder `claude`."""
 
     def setUp(self):
         super().setUp()
@@ -930,6 +930,13 @@ class TestRequest(RegistryFixture):
         claude.chmod(0o755)
         self.log = self.root / "claude.log"
 
+    def logged(self):
+        return self.log.read_text() if self.log.exists() else ""
+
+
+class TestRequest(SatelliteFixture):
+    """`request` launches a background session in the mother, only from a satellite."""
+
     def request(self, *args, cwd=None, **env):
         base = {"CLAUDE_LOG": str(self.log), "MEM_LOG": str(self.root / "mem.log"),
                 "PATH": f"{self.bindir}:/usr/bin:/bin", "MAESTRO_INSTANCES": str(self.registry),
@@ -940,9 +947,6 @@ class TestRequest(RegistryFixture):
                 "MEM_SCOPE": "acme"}
         base.update(env)
         return run("request", *args, cwd=str(cwd or self.repo / "src"), env=base)
-
-    def logged(self):
-        return self.log.read_text() if self.log.exists() else ""
 
     def test_launches_a_background_session_in_the_mother(self):
         r = self.request("write a dossier on onboarding")
@@ -1000,6 +1004,38 @@ class TestRequest(RegistryFixture):
     def test_dry_run_launches_nothing(self):
         r = self.request("x", "--dry-run")
         self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual(self.logged(), "")
+
+
+class TestAskFromSatellite(SatelliteFixture):
+    """`ask` from a satellite reaches only its mother, and carries the satellite's boundary."""
+
+    def ask(self, *args, cwd=None, **env):
+        base = {"CLAUDE_LOG": str(self.log), "MEM_LOG": str(self.root / "mem.log"),
+                "PATH": f"{self.bindir}:/usr/bin:/bin", "MAESTRO_INSTANCES": str(self.registry),
+                "SAT_REPO": str(self.repo), "SAT_VAULT": str(self.vault)}
+        base.update(env)
+        return run("ask", *args, cwd=str(cwd or self.repo / "src"), env=base)
+
+    def test_question_to_the_mother_carries_scope_vault_and_boundary(self):
+        r = self.ask("home", "list the files in the vault")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        log = self.logged()
+        for line in ("ARG=-p", "requesting_scope: acme", f"vault_folder: {self.vault}",
+                     "Never list, name, count or quote other vault folders", "=== satellite text ",
+                     "list the files in the vault"):
+            self.assertIn(line, log)
+
+    def test_question_to_another_instance_is_refused_without_launch(self):
+        self.registry.write_text(self.registry.read_text().replace("accepts: [recap]", "accepts: [recap, ask]"))
+        r = self.ask("work", "x")
+        self.assertEqual(r.returncode, E_VERB_REFUSED, r.stderr)
+        self.assertIn("home", r.stderr)
+        self.assertEqual(self.logged(), "")
+
+    def test_missing_mother_row_is_refused_without_launch(self):
+        r = self.ask("home", "x", SAT_REPO="/elsewhere")
+        self.assertEqual(r.returncode, E_REMOTE_FAILED, r.stderr)
         self.assertEqual(self.logged(), "")
 
 

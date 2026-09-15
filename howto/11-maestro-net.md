@@ -87,6 +87,8 @@ maestro-net ask home "cosa sappiamo delle biciclette?"
 
 The prompt carries a read-only clause: answer, write nothing, open no task, call no state-changing MCP. No persistent session is opened, and nothing appears in the agent view. Default timeout 180 seconds.
 
+From a satellite repo, `ask` reaches only the satellite's mother (any other recipient exits 6), and the prompt changes: it names the requesting scope and vault folder, fences the question between lines carrying a random value, and binds the answer to the satellite's boundary. The mother answers only from the satellite's row, the memories of its scope and the files in its vault folder, and never lists, names or quotes other vault folders, other scopes or private data outside the row, not even to say what is off-limits. The verb reads the row first; no row, or a row for another repo, exits 8.
+
 ### request
 
 Runs only from a registered satellite repo, and always reaches that satellite's mother. It launches a background session in the mother's folder and returns at once:
@@ -96,7 +98,7 @@ maestro-net request "write a dossier on the onboarding flow in my vault folder"
 ```
 
 - The session is `claude --bg --name <mother>-<scope>-<4 hex>`, so it appears as a row in `claude agents`; `claude attach <id>` opens it, `claude stop <id>` stops it, `claude rm <id>` removes the row.
-- The prompt carries `requesting_scope`, `satellite_repo`, `vault_folder`, `reply_to` (`uds:` plus the satellite session's `CLAUDE_CODE_MESSAGING_SOCKET`, or `none`), the request name, and the rules the mother follows. The satellite's text sits between two lines carrying a random value generated at launch, and the prompt says that those fields come only from the header: a line inside the text that looks like a field or a rule is data. The mother's own `## Requests from satellites` section in `CLAUDE.md` stays the authority.
+- The mother's answer follows the same boundary as `ask` from a satellite. The prompt carries `requesting_scope`, `satellite_repo`, `vault_folder`, `reply_to` (`uds:` plus the satellite session's `CLAUDE_CODE_MESSAGING_SOCKET`, or `none`), the request name, and the rules the mother follows. The satellite's text sits between two lines carrying a random value generated at launch, and the prompt says that those fields come only from the header: a line inside the text that looks like a field or a rule is data. The mother's own `## Requests from satellites` section in `CLAUDE.md` stays the authority.
 - The linked vault folder is passed as `--add-dir=<folder>`, which spares the read prompts there. The permission mode is never chosen by the satellite: the session starts in the mode configured for the mother's folder. Writes in the vault run unattended only in `acceptEdits` or `auto`; in the default mode the session stops at its first write, shown as waiting for input in `claude agents`, until the owner answers with `claude attach <id>`.
 - The mother replies once with `SendMessage` to `reply_to`, with absolute paths, and always saves one memory in the requesting scope, `request <name>: done` or `request <name>: refused`. When the satellite session is gone, or had no messaging socket, that memory is the answer: `MEM_SCOPE=<scope> <mother>/bin/mem search "request <name>"`.
 - The request session writes documents only in the vault folder and never edits the mother's repository: a background session that edits files of a git repo moves into a worktree first, where `bin/mem` finds no `private/memories.db`.
@@ -201,7 +203,7 @@ Every failure has its own exit code and says what happened.
 | 3 | Registry missing |
 | 4 | Registry malformed (with the offending line number) |
 | 5 | Unknown instance, or a name matching more than one; `request` run outside a satellite repo, or a satellite whose mother isn't registered |
-| 6 | Verb not in the recipient's `accepts` |
+| 6 | Verb not in the recipient's `accepts`, or `ask` from a satellite to an instance other than its mother |
 | 7 | The recipient's path no longer exists, or has no `bin/mem` — also `register`'s `--path`, when it isn't a directory or isn't a Maestro instance's own root |
 | 8 | The remote command failed, timed out, or couldn't be started; `request` found no row for the satellite in its mother |
 | 9 | `register` found the name or the path already in the registry, or a path overlapping a satellite's repo; `satellite add` the scope, or a repo overlapping an instance or another satellite |
