@@ -92,9 +92,11 @@ Opening `memories.db` directly is for maintenance only (integrity checks, `VACUU
 
 ### Satellites — `bin/mem satellite`
 
-A satellite is a project repo that borrows the mother's memory instead of carrying its own. `bin/mem satellite add SLUG --repo PATH --type {ux,consulting,development}` registers one in a `satellites` table: the repo path is resolved and stored absolute, and optional flags record a mandate, a method, constraints, a language and a vault folder. `bin/mem satellite list` and `bin/mem satellite show SLUG` read the registry back: a table on a terminal, JSON on a pipe or with `--json`. All three commands run in the mother only; a satellite session gets exit code 4.
+A satellite is a project repo that borrows the mother's memory instead of carrying its own. `bin/mem satellite add SLUG --repo PATH --type {ux,consulting,development}` registers one in a `satellites` table: the repo path is resolved and stored absolute, and optional flags record a mandate, a method, constraints, a language and a vault folder. `bin/mem satellite list` and `bin/mem satellite show SLUG` read the registry back: a table on a terminal, JSON on a pipe or with `--json`. `bin/mem satellite remove SLUG` deletes one row and leaves the scope's memories in place. All four commands run in the mother only; a satellite session gets exit code 4.
 
-Exit code 7 marks a `--repo` that is relative or does not exist, or a `--vault` that is relative. Exit code 8 marks a slug or a repo path already registered.
+Exit code 7 marks a `--repo` that is relative or isn't an existing directory, or a `--vault` given as a relative path. Exit code 8 marks a slug or a repo path already registered, or a repo that contains, or sits inside, the mother instance or another satellite's repo.
+
+The `satellite` skill of the Maestro plugin runs these commands for you and wires the session side: see `howto/12-satellites.md`.
 
 ## Extending the db
 

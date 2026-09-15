@@ -1026,7 +1026,7 @@ def build_parser() -> argparse.ArgumentParser:
             "or db not found.\n"
             "Exit code 3: strato semantico non disponibile (uv/Ollama mancanti) — fallback keyword.\n"
             "Exit code 4: --scope or --all-scopes refused, or embed or satellite\n"
-            "add/list/show run under MEM_SCOPE.\n"
+            "add/list/show/remove run under MEM_SCOPE.\n"
             "Exit code 5: bin/mem_schema.py missing or incompatible next to bin/mem.\n"
             "Exit code 6: invalid MEM_SCOPE, --scope slug, or satellite add SLUG.\n"
             "Exit code 7: satellite add's --repo is relative or not an existing\n"

@@ -80,7 +80,7 @@ Every instance built from this template has:
 - **`bin/mem`**: CLI wrapper for `memories.db` (escape-safe writes, relative dates, reports), backed by `bin/mem-vec` for the optional semantic layer.
 - **`bin/session-digest`**: pulls the owner's messages from the day's parallel sessions, for the `logbook` skill.
 - **`bin/register-check`**: mechanical check of the writing register prohibitions that carry a syntactic signature.
-- **`.claude-plugin/marketplace.json`** and **`plugins/`**: the `maestro` Claude Code plugin, installed separately (see Install above) rather than through `maestro-sync`, because it's meant to be visible from every session on the machine, not carried per instance. Currently `plugins/maestro/skills/new-instance` (creates a new instance) and `plugins/maestro/skills/maestro-net` (the cross-talk channel between several Maestro instances, see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)).
+- **`.claude-plugin/marketplace.json`** and **`plugins/`**: the `maestro` Claude Code plugin, installed separately (see Install above) rather than through `maestro-sync`, because it's meant to be visible from every session on the machine, not carried per instance. Currently `plugins/maestro/skills/new-instance` (creates a new instance), `plugins/maestro/skills/maestro-net` (the cross-talk channel between several Maestro instances, see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)), and `plugins/maestro/skills/satellite` with the plugin's hooks (a project repo borrows an instance's identity and memory without files of its own, see [`howto/12-satellites.md`](howto/12-satellites.md)).
 - **`.gitignore`**: covers `private/`, workspace artifacts, and local settings.
 
 Everything else you add as you use the orchestrator:

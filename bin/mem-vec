@@ -608,8 +608,9 @@ def cmd_similar(args) -> int:
     row = con.execute(
         "SELECT embedding, model FROM log_vec WHERE log_id=?", (args.id,)).fetchone()
     if row is None:
-        sys.stderr.write(
-            f"mem-vec: nessun embedding per #{args.id} — esegui prima 'mem embed'\n")
+        hint = ("the mother instance embeds new rows ('mem embed')" if scope
+                else "run 'mem embed' first")
+        sys.stderr.write(f"mem-vec: no embedding for #{args.id}: {hint}\n")
         return 1
     rows = _similar_rows(con, row["embedding"], row["model"], args.id, args)
     emit([_scored(r) for r in rows if _score(r) >= args.min_score])

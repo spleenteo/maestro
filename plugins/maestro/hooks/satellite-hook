@@ -129,8 +129,8 @@ def identity_extract(mother: Path) -> str:
             keep = line[3:].strip().lower().startswith(IDENTITY_PREFIXES)
         elif line.startswith("# "):
             keep = False
-        if keep:
-            kept.append(line)
+        if keep and line.strip() != "---":
+            kept.append("#" + line if line.startswith("## ") else line)
     return "\n".join(kept).strip()
 
 
@@ -160,6 +160,8 @@ def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity
         f"- Announce every write in one line. Full rules: `{mother / 'CLAUDE.md'}`, section `## Memory`.",
         "- Never run `bin/mem embed` or the warm task channel garbage collector: they belong to the mother.",
         f"- For anything outside this scope, ask the mother: `maestro-net ask {mother_name} \"…\"`.",
+        f"- Prose for a human reader follows the writing register: `{mother / 'CLAUDE.md'}`, "
+        "section `## Writing register`.",
     ]
     if row.get("vault_folder"):
         lines += [

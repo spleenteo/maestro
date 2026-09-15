@@ -96,6 +96,10 @@ maestro-net register home --path /Users/you/Sites/home-instance \
 
 `unregister <name>` removes one instance the same surgical way; an unknown name behaves like everywhere else in this tool: exit 5, known names listed.
 
+### Satellites
+
+A top-level `satellites:` block maps a project repo to its mother instance (`<scope>: {repo, mother}`); the plugin's session hook reads it. `maestro-net satellite add SCOPE --repo ABS --mother NAME` and `maestro-net satellite remove SCOPE` edit that block only. The `satellite` skill runs them; run them by hand only when the owner asks. A satellite is never a recipient of `recap` or `ask`.
+
 ## When something fails
 
 Every failure is explicit and named. Report it to the owner as it is; never retry a different way, never fall back silently to writing in the local db.
@@ -108,7 +112,7 @@ Every failure is explicit and named. Report it to the owner as it is; never retr
 | 6 | Verb not in `accepts` | Say that the instance doesn't accept it, and that the registry is where it changes |
 | 7 | Path gone, or not a Maestro instance | The instance moved (or `register` was pointed at the wrong folder), offer to re-run `scan` or fix `--path` |
 | 8 | Remote command failed | Report the recipient's own error output |
-| 9 | `register` found the name or path already in the registry | Say which existing entry it collides with; suggest `unregister` first if it should be replaced |
+| 9 | `register` or `satellite add` found the name, path, scope or repo already in the registry, or overlapping | Say which existing entry it collides with; suggest `unregister` or `satellite remove` first if it should be replaced |
 
 A missing registry is not a reason to write the memory somewhere else. The owner asked to reach another instance; if the channel is down, they need to know.
 

@@ -37,7 +37,7 @@ Ask:
 
 > Do you want a full instance or a satellite? A full instance is a complete Maestro with its own identity, memory and vault, in a new folder. A satellite attaches a project repository to an instance you already have.
 
-If the owner picks **satellite**: tell them satellites arrive with the `satellite` skill of the Maestro plugin, which this version doesn't ship yet, and stop here.
+If the owner picks **satellite**: stop here and tell them to open a session in the project repository and ask to make it a satellite of an existing instance; the plugin's `satellite` skill runs there (`howto/12-satellites.md`).
 
 If the owner picks **full instance**: go on.
 

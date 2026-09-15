@@ -252,7 +252,7 @@ Everything else goes through `bin/mem`: skills and agents never open the memory 
 
 A satellite session sets `MEM_SCOPE` to a slug; the mother's is unset. Writes (`save`, `task`, `idea`, `marker set`) carry the session's scope (`null` for the mother); `search`, `today`, `stats` and `marker get` read only that scope. `todo` and `overdue` read every scope in the mother, with a `scope` column, so no task drops out of the list — a satellite still sees only its own. In the mother, `--scope SLUG` narrows `today`/`search`/`stats`/`todo`/`overdue` to one scope, `--all-scopes` opens every scope; a satellite refuses both (exit 4). Every `--json` row carries `scope`.
 
-`bin/mem satellite add SLUG --repo PATH --type {ux,consulting,development}` registers a satellite the mother lends its memory to (optional `--mandate`, `--method`, `--constraints`, `--language`, `--vault`); `satellite list` and `satellite show SLUG` read the registry back. Mother-only, like the scope flags.
+`bin/mem satellite add SLUG --repo PATH --type {ux,consulting,development}` registers a satellite the mother lends its memory to (optional `--mandate`, `--method`, `--constraints`, `--language`, `--vault`); `satellite list` and `satellite show SLUG` read the registry back, `satellite remove SLUG` deletes one row. Mother-only, like the scope flags. The Maestro plugin's `satellite` skill runs `add` and wires the repo's sessions (`howto/12-satellites.md`).
 
 "What do you know about <satellite>" runs both `bin/mem search --scope <satellite> --limit 0` (its own log) and `bin/mem search "<satellite>" --limit 0` (mentions of it elsewhere).
 

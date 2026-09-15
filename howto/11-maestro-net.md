@@ -148,6 +148,30 @@ maestro-net unregister home
 
 Both assume a single writer: nothing locks the registry file, so two `register`/`unregister` calls racing on it can each read before the other writes, and the second write silently loses the first's change.
 
+### Satellites
+
+A satellite is a project repo attached to an instance, its mother (`howto/12-satellites.md`). The registry keeps satellites in their own top-level block, read by the plugin's session hook to recognise the repo:
+
+```yaml
+satellites:
+  acme:
+    repo: /Users/you/Sites/acme
+    mother: home
+```
+
+```bash
+maestro-net satellite add acme --repo /Users/you/Sites/acme --mother home
+maestro-net satellite remove acme
+```
+
+- The scope is a lowercase slug, like an instance name (exit 2 otherwise). `--repo` must be an absolute path to an existing directory (exit 2, exit 7) and is stored as its real path.
+- `--mother` must be a registered instance (exit 5).
+- A scope already registered, or a repo equal to, inside or containing an instance path or another satellite's repo, exits 9.
+- `satellite remove` edits only the `satellites:` block; an unknown scope exits 5.
+- A satellite is never a recipient: `recap` and `ask` resolve instance names only. `list` shows satellites apart.
+
+The `satellite` skill of the plugin calls `satellite add` after `bin/mem satellite add` in the mother; used by hand, the two registrations have to agree.
+
 ## Degradation
 
 Every failure has its own exit code and says what happened.
@@ -162,7 +186,7 @@ Every failure has its own exit code and says what happened.
 | 6 | Verb not in the recipient's `accepts` |
 | 7 | The recipient's path no longer exists, or has no `bin/mem` — also `register`'s `--path`, when it isn't a directory or isn't a Maestro instance's own root |
 | 8 | The remote command failed, timed out, or couldn't be started |
-| 9 | `register` found the name or the path already in the registry |
+| 9 | `register` found the name or the path already in the registry, or `satellite add` the scope, or a repo overlapping an instance or another satellite |
 
 The rule behind the table: a channel that can't deliver says so. A recap that can't reach its recipient is never written somewhere else, and a malformed registry never degrades into an empty one.
 
