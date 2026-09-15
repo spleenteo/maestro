@@ -9,7 +9,7 @@
     {
       "name": "maestro",
       "source": "./plugins/maestro",
-      "description": "Skills and hooks for the Maestro orchestrator template: new-instance, maestro-net between instances, and satellites (project repos that borrow an instance's identity and memory)."
+      "description": "Skills and hooks for the Maestro orchestrator template: new-instance, maestro-sync, maestro-net between instances, and satellites (project repos that borrow an instance's identity and memory)."
     }
   ]
 }

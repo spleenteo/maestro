@@ -27,7 +27,7 @@ The plugin distributes the cross-instance skills, and plugins can put executable
 
 - The satellite runs whatever `bin/mem` version its mother has: the mother must be updated first.
 - `bin/*` is still outside `maestro-sync` scope, so the mother gets a new `bin/mem` through a manual copy, as in every release so far.
-- Moving `bin/*` into sync scope, or into the plugin once schemas are versioned, stays a separate question.
+- Moving `bin/*` into sync scope, or into the plugin once schemas are versioned, stays a separate question. (Amended 2026-09-15: `/maestro:maestro-sync` now copies drifted `bin/*` on the owner's yes, see `2026-09-15-maestro-sync-in-plugin.md`; `bin/mem` still lives in each instance.)
 
 ## References
 

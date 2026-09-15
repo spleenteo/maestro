@@ -1,20 +1,20 @@
 ---
 name: maestro-sync
-description: Sync the Maestro instance this session runs in with the latest Maestro template. Updates the read-only mirror at `~/.maestro/`, checks the Maestro plugin isn't behind it, offers to copy a drifted `bin/` after backing up the memory db, applies per-file diffs of files marked `origin: maestro` with confirmation, proposes new upstream files and the removal of retired ones. Use when the owner says "sync maestro", "update from maestro", "pull maestro changes", "/maestro:maestro-sync", or asks whether new patterns are available from the template. Runs only in an instance root.
+description: "Sync the Maestro instance this session runs in with the latest Maestro template. Updates the read-only mirror at ~/.maestro, checks the loaded Maestro plugin isn't behind it, offers to copy a drifted bin/ after backing up the memory db and the old scripts, applies per-file diffs of Maestro-distributed files with confirmation, proposes new upstream files and the removal of retired ones. Use when the owner says \"sync maestro\", \"update from maestro\", \"pull maestro changes\", \"/maestro:maestro-sync\", or asks whether new patterns are available from the template. Runs only in an instance root."
 ---
 
 # maestro-sync
 
 This skill keeps the orchestrator instance aligned with the **Maestro template** at `https://github.com/spleenteo/maestro`. It applies upstream pattern changes (CLAUDE.md sections, base hub skills, base craft agents, `bin/`) without ever touching the instance's personalizations.
 
-It ships in the Maestro plugin, so it is the same for every instance on the machine and updates with the plugin (`claude plugin update maestro@maestro`), never through its own sync. Instances created before it moved carry an old copy at `.claude/skills/maestro-sync/`: Phase 6b proposes removing it.
+It ships in the Maestro plugin, so it is the same for every instance on the machine and updates with the plugin (`claude plugin update maestro@maestro`), never through its own sync. Instances created before it moved carry an old local skill at `.claude/skills/maestro-sync/`: the first sync after the move must be started as `/maestro:maestro-sync`, and Phase 6b proposes removing the old copy.
 
 ## Architecture
 
 Two paths, two roles (decided 2026-04-30):
 
 - **Primary working tree** (optional, `maestro_worktree_path:` in preferences) — a clone of the template where the owner promotes new patterns from this instance to the template (modify, commit, push). This skill **never writes here**. It only reads its git status to warn the owner if there are uncommitted changes that should be pushed before syncing.
-- **`~/.maestro/`** — read-only mirror used by this skill as a stable comparison point. This skill updates it with `git fetch origin && git reset --hard origin/main`. The Maestro plugin's `new-instance` skill also touches it, to clone it when missing or fetch it when present, so it holds the commit a new instance is built from; it never moves the mirror's `HEAD`, so `main` stays what this skill compares against. Never committed to, never modified by hand.
+- **`~/.maestro/`** — read-only mirror used by this skill as a stable comparison point. Phase 3 fetches every branch from the plugin's repository URL and resets the mirror to `origin/main`. The Maestro plugin's `new-instance` skill also touches it, to clone it when missing or fetch it when present, so it holds the commit a new instance is built from; it never moves the mirror's `HEAD`, so `main` stays what this skill compares against. Never committed to, never modified by hand.
 
 The skill scans the **instance** (the orchestrator that invokes the skill) for files with `origin: maestro` in their frontmatter, compares each with the mirror version, and proposes a diff per file with confirmation. It also scans the **mirror** in the opposite direction: files marked `origin: maestro` that exist upstream but not in the instance are proposed as **new files**, with the same per-file confirmation.
 
@@ -33,9 +33,9 @@ Files **never** in scope:
 - Custom skills/agents added by the instance (no `origin: maestro` marker)
 - `.claude/roster.yaml` (instance-specific list of active agents — Maestro doesn't choose which agents an instance enrolls)
 - `docs/`, `plugins/`, `.claude-plugin/` and `user-skills/` (template-only and plugin-distributed material — the same exclusion list the reverse scan applies in Phase 4b)
-- Retired paths (Phase 6b): they are proposed for removal, never diffed
+- The retired paths of Phase 6b: never diffed, never counted in the version floor, proposed for removal only
 
-`bin/*` files carry no frontmatter: Phase 5b compares them by checksum and copies them only on the owner's yes, after backing up the memory db.
+`bin/*` files carry no frontmatter: Phase 5b compares them by checksum and copies them only on the owner's yes, after backing up the memory db and the scripts it replaces.
 
 ## When this skill runs
 
@@ -46,15 +46,21 @@ Invoke it when the owner says something like:
 - *"Are there new patterns from the template?"*
 - *"Bring this instance up to date with the latest Maestro"*
 
+When the instance still has a local skill named `maestro-sync`, this one is the skill to use: the local copy is retired.
+
 ## Operational flow
 
-Stop and report on the first error — never continue past a failure silently. Each fenced `bash` block runs as one Bash call, exactly as written except for the placeholders.
+Stop and report on the first error — never continue past a failure silently. Each fenced `bash` block runs as one Bash call, exactly as written except for the placeholders. Every answer of the owner covers only the question it answers: an `[A]` in Phase 6 never extends to the `bin/` copy or to removals.
 
 ### Phase 0 — Check this is an instance
 
 ```bash
 set -eo pipefail
 INSTANCE="$(pwd -P)"
+if [ -d "$INSTANCE/plugins/maestro" ]; then
+  echo "$INSTANCE is the Maestro template repository, not an instance." >&2
+  exit 1
+fi
 if [ ! -f "$INSTANCE/private/preferences.md" ] || [ ! -f "$INSTANCE/bin/mem" ]; then
   echo "$INSTANCE is not the root of a Maestro instance (no private/preferences.md next to bin/mem)." >&2
   echo "Open a session in the instance folder and run /maestro:maestro-sync there." >&2
@@ -72,7 +78,7 @@ Resolve from preferences (or use sensible defaults):
 - **Mirror path**: `~/.maestro/` (default). If preferences declare `maestro_mirror_path:`, use that.
 - **Working tree path**: the value of `maestro_worktree_path:` in preferences. No default: an instance that doesn't declare it has no primary working tree.
 
-Paths are written with `~` for readability only. Before substituting a path into any `<mirror-path>`, `<worktree-path>` or `<instance-path>` placeholder in the commands below, expand it to an absolute path with `$HOME` resolved (e.g. `/Users/<name>/.maestro`) — **never** the literal `~`. Every placeholder in this skill's commands is quoted (`"<mirror-path>"`), and a quoted `~` is not a home-directory shortcut to the shell: it's just two characters, `cd`/`git -C` fail on a path that doesn't exist, and — for the piped commands in Phase 4b and 5b — that failure would otherwise go unnoticed (see the `set -o pipefail` note there).
+Paths are written with `~` for readability only. Before substituting a path into any `<mirror-path>`, `<worktree-path>` or `<instance-path>` placeholder in the commands below, expand it to an absolute path with `$HOME` resolved (e.g. `/Users/<name>/.maestro`) — **never** the literal `~`. Every placeholder in this skill's commands is quoted (`"<mirror-path>"`), and a quoted `~` is not a home-directory shortcut to the shell: it's just two characters, `git -C` fails on a path that doesn't exist, and — for the piped commands in Phase 4b and 5b — that failure would otherwise go unnoticed (see the `set -o pipefail` note there). Where no working tree is declared, fill `<worktree-path>` with `none`.
 
 If the **mirror** doesn't exist yet, Phase 3 clones it. Tell the owner: *"First run: I'm cloning the Maestro mirror at <mirror-path>."*
 
@@ -83,9 +89,8 @@ If preferences declare no working tree, or the **working tree** doesn't exist, t
 This is the hook that catches in-flight promotions before they get clobbered by a sync. Run on the **primary working tree**, never on the mirror.
 
 ```bash
-cd "<worktree-path>"
-git status --porcelain          # any uncommitted changes?
-git log @{u}..HEAD --oneline    # any local commits not yet pushed?
+git -C "<worktree-path>" status --porcelain          # any uncommitted changes?
+git -C "<worktree-path>" log @{u}..HEAD --oneline    # any local commits not yet pushed?
 ```
 
 - If `git status --porcelain` returns non-empty → there are uncommitted changes.
@@ -104,27 +109,50 @@ In either case, **stop** and ask the owner:
 > - `continue` — sync anyway, knowing the local work isn't reflected
 > - `abort` — stop here, you handle it manually
 
-Wait for the owner. If `push`, run `git push origin main` from the working tree. If `continue`, proceed to Phase 3. If `abort`, exit with a clean message.
+Wait for the owner. If `push`, run `git -C "<worktree-path>" push origin main`. If `continue`, proceed to Phase 3. If `abort`, exit with a clean message.
 
 ### Phase 3 — Refresh the read-only mirror, check the plugin
 
 ```bash
 set -eo pipefail
 MIRROR="<mirror-path>"
-if [ ! -d "$MIRROR/.git" ]; then
-  REPO_URL=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["repository"])' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json")
+INSTANCE="<instance-path>"
+case "$MIRROR" in
+  "$INSTANCE"|"<worktree-path>") echo "The mirror path $MIRROR is the instance or the working tree: refusing to reset it." >&2; exit 1 ;;
+esac
+REPO_URL=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["repository"])' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json")
+if [ -e "$MIRROR/.git" ]; then
+  if [ -n "$(git -C "$MIRROR" status --porcelain --untracked-files=no)" ]; then
+    echo "The mirror at $MIRROR has local edits: it is not a plain mirror, refusing to reset it." >&2
+    exit 1
+  fi
+else
   git clone --quiet "$REPO_URL" "$MIRROR"
 fi
-git -C "$MIRROR" fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*'
+git -C "$MIRROR" fetch --quiet "$REPO_URL" '+refs/heads/*:refs/remotes/origin/*'
 git -C "$MIRROR" reset --quiet --hard origin/main
-SHA=$(claude plugin list --json | python3 -c '
-import json, re, sys
+if ! command -v claude >/dev/null 2>&1; then
+  echo "The claude command isn't on PATH, so the installed plugin can't be checked." >&2
+  exit 1
+fi
+PLUGIN=$(claude plugin list --json | python3 -c '
+import json, os, re, sys
 rows = [r for r in json.load(sys.stdin) if r.get("id") == "maestro@maestro" and r.get("scope") == "user"]
-version = str(rows[0].get("version", "")) if rows else ""
-print(version if re.fullmatch(r"[0-9a-f]{7,40}", version) else "")
+row = rows[0] if rows else {}
+version = str(row.get("version", ""))
+path = os.path.realpath(row.get("installPath") or "")
+print((version if re.fullmatch(r"[0-9a-f]{7,40}", version) else "") + " " + path)
 ')
+SHA="${PLUGIN%% *}"
+INSTALLED="${PLUGIN#* }"
 if [ -z "$SHA" ]; then
   echo "maestro@maestro isn't installed at user scope from its marketplace, so its commit is unknown." >&2
+  exit 1
+fi
+LOADED="$(cd -P -- "${CLAUDE_PLUGIN_ROOT}" >/dev/null && pwd -P)"
+if [ "$INSTALLED" != "$LOADED" ]; then
+  echo "This session runs the Maestro plugin from $LOADED, but $INSTALLED is installed." >&2
+  echo "Restart Claude Code, then run /maestro:maestro-sync again." >&2
   exit 1
 fi
 if ! git -C "$MIRROR" cat-file -e "$SHA^{commit}" 2>/dev/null || ! git -C "$MIRROR" merge-base --is-ancestor origin/main "$SHA"; then
@@ -132,28 +160,31 @@ if ! git -C "$MIRROR" cat-file -e "$SHA^{commit}" 2>/dev/null || ! git -C "$MIRR
   echo "Update it, restart Claude Code, then run /maestro:maestro-sync again:" >&2
   echo "  claude plugin marketplace update maestro" >&2
   echo "  claude plugin update maestro@maestro" >&2
+  echo "If the marketplace was added from a branch, remove it and add spleenteo/maestro again without one." >&2
   exit 1
 fi
 echo "MIRROR_HEAD $(git -C "$MIRROR" rev-parse HEAD)"
 echo "PLUGIN $SHA"
 ```
 
-The fetch and the reset are the only writes on the mirror: it becomes whatever `origin/main` is, a reproducible snapshot of upstream, never trusted as a working tree. The fetch takes every branch, so a plugin installed from a branch is still found.
+The clone on first run, the fetch and the reset are the only writes on the mirror: it becomes whatever `origin/main` is, a reproducible snapshot of upstream, never trusted as a working tree. The fetch reads the plugin's repository URL directly and takes every branch, so it needs no SSH key and still finds a plugin installed from a branch.
 
-The plugin check stops the sync when upstream `main` holds commits the installed plugin doesn't: the instance's files would then align with a template whose plugin skills (this one included) the machine doesn't have yet.
+The plugin checks stop the sync in two cases. When the installed plugin differs from the one this session loaded, the skill text running now is stale: the owner restarts Claude Code. Never run the update commands and retry in the same session. When upstream `main` holds commits the installed plugin doesn't, the instance's files would align with a template whose plugin skills (this one included) the machine doesn't have yet: the owner updates the plugin and restarts.
 
 After this, capture:
 
-- `MIRROR_HEAD` = `git -C "<mirror-path>" rev-parse HEAD` (commit SHA at the mirror)
+- `MIRROR_HEAD` = the commit printed by the block
 - `MIRROR_VERSION` = the latest `## v...` heading in `<mirror-path>/CHANGELOG.md`
 
 ### Phase 4 — Scan the instance
 
-Walk the instance's repository (cwd from which the skill was invoked, expected to be the orchestrator instance root) and collect files with `origin: maestro` in their frontmatter. The scan should cover:
+Walk the instance's repository (`<instance-path>`) and collect files with `origin: maestro` in their frontmatter. The scan should cover:
 
 - `CLAUDE.md` (root)
 - `.claude/skills/*/SKILL.md`
 - `.claude/agents/*.md`
+
+Leave out every file under a retired path of Phase 6b (`.claude/skills/maestro-sync/`, `.claude/skills/setup/`, `.claude/skills/.disabled/setup/`): they are never diffed and never lower the version floor.
 
 For each match, read the file's `maestro_version` value. Build a list:
 
@@ -170,7 +201,7 @@ If `maestro_version` is missing in a file that has `origin: maestro`, treat it a
 
 ### Phase 4b — Reverse scan: new files from upstream
 
-Walk the **mirror** for `*.md` files with `origin: maestro` in their frontmatter, excluding the folders that hold template-only or plugin-distributed material: `docs/` (shaping and devflow material for the template itself), `plugins/` and `.claude-plugin/` (the Maestro Claude Code plugin, distributed separately, never through this skill), `user-skills/` (skills installed at user level, outside `maestro-sync`). Any remaining file whose path does **not** exist in the instance is a **new upstream file** — the instance-side scan cannot see it, so without this step it would never be delivered.
+Walk the **mirror** for `*.md` files with `origin: maestro` in their frontmatter, excluding the folders that hold template-only or plugin-distributed material: `docs/` (shaping and devflow material for the template itself), `plugins/` and `.claude-plugin/` (the Maestro Claude Code plugin, distributed separately, never through this skill), `user-skills/` (skills installed at user level, outside `maestro-sync`), and `.claude/skills/maestro-sync/` (a redirect left upstream for instances still running the retired local skill). Any remaining file whose path does **not** exist in the instance is a **new upstream file** — the instance-side scan cannot see it, so without this step it would never be delivered.
 
 The reverse scan is glob-based on purpose (the whole mirror, not just the Phase 4 path list): future distributed files may live in paths that don't exist yet in older instances (e.g. a marked `howto/` guide).
 
@@ -178,7 +209,7 @@ List the candidates, then keep only the ones whose frontmatter (the lines betwee
 
 ```bash
 set -o pipefail
-git -C "<mirror-path>" ls-files -- '*.md' ':!:docs/**' ':!:plugins/**' ':!:.claude-plugin/**' ':!:user-skills/**' | while read -r f; do
+git -C "<mirror-path>" ls-files -- '*.md' ':!:docs/**' ':!:plugins/**' ':!:.claude-plugin/**' ':!:user-skills/**' ':!:.claude/skills/maestro-sync/**' | while read -r f; do
   if awk 'NR==1 && !/^---$/{exit} /^---$/{n++; print; if(n==2) exit; next} {print}' "<mirror-path>/$f" | grep -q '^origin: maestro$'; then
     echo "$f"
   fi
@@ -245,30 +276,61 @@ Each line is `differs bin/<name>` or `missing bin/<name>`; a file that matches p
 
 > ⚠ Your `bin/` is behind the mirror: <list of `differs`/`missing` lines>. Copy these from `<mirror-path>/bin/` before applying skill diffs — a skill may call an option your current `bin/mem` doesn't support yet.
 
-Then ask: *"Copy them now? I back up `private/memories.db` first."* A `bin/` file the owner changed by hand is overwritten, so name any `differs` line they recognize as theirs. On yes, run:
+Then ask: *"Copy them now? I back up `private/memories.db` and the scripts I replace first."* A `bin/` file the owner changed by hand is overwritten, so name any `differs` line they recognize as theirs. On yes, run:
 
 ```bash
 set -eo pipefail
 MIRROR="<mirror-path>"
 INSTANCE="<instance-path>"
+STAMP="$(date +%Y%m%d-%H%M%S)"
 DB="$INSTANCE/private/memories.db"
+BINBAK="$INSTANCE/private/bin.bak.$STAMP-pre-sync"
 if [ -f "$DB" ]; then
-  BACKUP="$DB.bak.$(date +%Y%m%d-%H%M%S)-pre-sync"
-  sqlite3 "$DB" ".backup '$BACKUP'"
-  [ "$(sqlite3 "$BACKUP" 'PRAGMA integrity_check;')" = "ok" ] || { echo "The backup failed its integrity check: $BACKUP" >&2; exit 1; }
+  BACKUP="$DB.bak.$STAMP-pre-sync"
+  python3 -c '
+import sqlite3, sys
+src = sqlite3.connect(sys.argv[1]); dst = sqlite3.connect(sys.argv[2])
+src.backup(dst)
+dst.execute("PRAGMA journal_mode=DELETE")
+ok = dst.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+same = src.execute("PRAGMA page_count").fetchone() == dst.execute("PRAGMA page_count").fetchone()
+dst.close(); src.close()
+sys.exit(0 if ok and same else "The backup failed its integrity or size check: " + sys.argv[2])
+' "$DB" "$BACKUP"
+  [ -s "$BACKUP" ] || { echo "The backup is empty: $BACKUP" >&2; exit 1; }
   echo "backup $BACKUP"
 fi
 git -C "$MIRROR" ls-files bin/ | while read -r f; do
   if [ ! -f "$INSTANCE/$f" ] || ! cmp -s "$MIRROR/$f" "$INSTANCE/$f"; then
+    if [ -f "$INSTANCE/$f" ]; then
+      mkdir -p "$(dirname "$BINBAK/$f")"
+      command cp -p "$INSTANCE/$f" "$BINBAK/$f" </dev/null
+    fi
     mkdir -p "$(dirname "$INSTANCE/$f")"
-    cp -p "$MIRROR/$f" "$INSTANCE/$f"
+    command cp -p "$MIRROR/$f" "$INSTANCE/$f" </dev/null
     echo "copied $f"
   fi
 done
+[ -d "$BINBAK" ] && echo "old scripts $BINBAK"
 env -u MEM_DB -u MEM_SCOPE "$INSTANCE/bin/mem" stats
 ```
 
-`bin/mem stats` opens the db right after the copy, so a schema migration that the new `bin/mem` carries runs while the backup is minutes old. On no, go on to Phase 6 with the warning standing.
+`bin/mem stats` opens the db right after the copy, so a schema migration that the new `bin/mem` carries runs while the backup is minutes old. On no, go on to Phase 6 with the warning standing. Scripts upstream deleted stay in the instance's `bin/`; the drift check never lists them.
+
+**When the block exits non-zero after copying** (the output shows `copied` lines): stop the sync and show the output. Offer the way back, and run it only on the owner's yes, with the paths the block printed:
+
+```bash
+set -eo pipefail
+INSTANCE="<instance-path>"
+BINBAK="<old-scripts-path>"
+BACKUP="<backup-path>"
+command cp -Rp "$BINBAK/bin/." "$INSTANCE/bin/" </dev/null
+command rm -f -- "$INSTANCE/private/memories.db-wal" "$INSTANCE/private/memories.db-shm"
+command cp -p "$BACKUP" "$INSTANCE/private/memories.db" </dev/null
+echo "restored bin/ and private/memories.db"
+```
+
+Scripts that were missing before the copy stay in `bin/` after the restore; they are unused by the old ones.
 
 ### Phase 6 — Per-file diff and confirmation
 
@@ -336,21 +398,46 @@ On `a` or `A`: copy the mirror file to the instance at the same relative path (c
 
 ### Phase 6b — Retired paths
 
-Some paths Maestro once distributed are gone upstream, and a sync can't see them through markers. List the ones still in the instance:
+Some paths Maestro once distributed are gone upstream, and a sync can't see them through markers. List the ones still in the instance whose `SKILL.md` carries `origin: maestro`, so a skill of the owner's that happens to share a name is never proposed:
 
 ```bash
 INSTANCE="<instance-path>"
-for p in .claude/skills/maestro-sync .claude/skills/setup .claude/skills/.disabled/setup user-skills; do
-  if [ -e "$INSTANCE/$p" ]; then echo "retired $p"; fi
+for p in .claude/skills/maestro-sync .claude/skills/setup .claude/skills/.disabled/setup user-skills/maestro-net; do
+  f="$INSTANCE/$p/SKILL.md"
+  if [ -f "$f" ] && awk 'NR==1 && !/^---$/{exit} /^---$/{n++; if(n==2) exit; next} {print}' "$f" | grep -q '^origin: maestro$'; then
+    echo "retired $p"
+    find "$INSTANCE/$p" -type f | sed "s|^$INSTANCE/|    |"
+  fi
 done
 true
 ```
 
-- `.claude/skills/maestro-sync/`: this skill's old local copy; it now ships in the plugin.
+- `.claude/skills/maestro-sync/`: the old local copy of this skill, or the redirect that replaced it.
 - `.claude/skills/setup/` and `.claude/skills/.disabled/setup/`: instance creation moved to `/maestro:new-instance`.
-- `user-skills/`: `maestro-net` moved into the plugin.
+- `user-skills/maestro-net/`: `maestro-net` moved into the plugin.
 
-For each printed path ask *"Remove `<path>`? It was retired upstream."* and, only on yes, run `command rm -rf -- "<instance-path>/<path>"` for that path alone. Log it in `private/maestro-sync.log` with the marker `(retired, removed)` or `(retired, kept by owner)`. Files under these paths are never shown as orphans in Phase 7.
+For each printed path, show its files and ask *"Remove `<path>`? It was retired upstream."* A yes covers that path only. On yes, run this block once for that path:
+
+```bash
+set -eo pipefail
+INSTANCE="<instance-path>"
+RETIRED="<retired-path>"
+case "$RETIRED" in
+  .claude/skills/maestro-sync|.claude/skills/setup|.claude/skills/.disabled/setup|user-skills/maestro-net) ;;
+  *) echo "Refusing to remove '$RETIRED': not a retired path." >&2; exit 2 ;;
+esac
+if [ ! -f "$INSTANCE/private/preferences.md" ] || [ ! -f "$INSTANCE/bin/mem" ]; then
+  echo "Not an instance root: $INSTANCE" >&2
+  exit 2
+fi
+command rm -rf -- "$INSTANCE/$RETIRED"
+if [ "$RETIRED" = "user-skills/maestro-net" ]; then
+  rmdir "$INSTANCE/user-skills" 2>/dev/null || true
+fi
+echo "removed $RETIRED"
+```
+
+Log it in `private/maestro-sync.log` with the marker `(retired, removed)` or `(retired, kept by owner)`. Files under these paths are never shown as orphans in Phase 7.
 
 ### Phase 7 — Final summary
 
@@ -381,37 +468,37 @@ If everything was identical:
 
 ## Updating this skill
 
-This skill carries no `origin: maestro` marker and never appears in its own scan. A new version arrives with the plugin: `claude plugin marketplace update maestro`, `claude plugin update maestro@maestro`, then a restart. Phase 3 refuses to sync with a plugin older than upstream `main`, so the skill that runs is never older than the files it applies.
+This skill carries no distribution marker and never appears in its own scan. A new version arrives with the plugin: `claude plugin marketplace update maestro`, `claude plugin update maestro@maestro`, then a restart. Phase 3 refuses to sync with a loaded plugin that differs from the installed one or is older than upstream `main`, so the skill that runs is never older than the files it applies.
 
 ## Bootstrap notes
 
 **Brand new instance** (instance was just created from the template, never synced before):
 
 - Files already carry the `maestro_version` declared in their frontmatter at template-clone time.
-- First run of `maestro-sync` finds the mirror at `<MIRROR_VERSION>`. If the instance was cloned recently from `origin/main`, files match the mirror exactly → sync reports "already up to date".
-- If the instance was cloned from an older commit, the diff workflow handles it normally.
+- First run of `maestro-sync` finds the mirror at `<MIRROR_VERSION>`. If the instance was created recently from `origin/main`, files match the mirror exactly → sync reports "already up to date".
+- If the instance was created from an older commit, the diff workflow handles it normally.
 
 **Old instance** (predates the introduction of `origin: maestro` frontmatter, ~before v2026.04.30.1):
 
 - Files have no `maestro_version` (and possibly no `origin: maestro` either). Two recovery options:
-  1. **Owner adds the markers manually** to the files they recognize as Maestro-distributed (CLAUDE.md, hub skills, base agents), using `maestro_version: v2026.04.29.1` as the safe baseline. Then runs `maestro-sync`.
-  2. **Re-clone the instance scaffold separately and reconcile by hand.** Heavier, but clean.
+  1. **Owner adds the markers manually** to the files they recognize as Maestro-distributed (CLAUDE.md, hub skills, base agents), using `maestro_version: v2026.04.29.1` as the safe baseline. Then runs `/maestro:maestro-sync`.
+  2. **Create a new instance and reconcile by hand.** Heavier, but clean.
 
 The skill itself does not auto-mark files — that would risk misclassifying instance customizations as upstream patterns.
 
 ## What this skill does NOT do
 
 - Push to upstream. Promotions happen in the primary working tree (`maestro_worktree_path`), not from this skill.
-- Edit files in `private/` (except the db backup and the log it writes), `apps/`, or any file without `origin: maestro` marker, except `bin/*` and retired paths, each on the owner's explicit yes.
+- Edit files in `private/` (except the backups and the log it writes), `apps/`, or any file without `origin: maestro` marker, except `bin/*` and retired paths, each on the owner's explicit yes.
 - Resolve conflicts when the owner has hand-edited a file marked `origin: maestro` and upstream also changed it. The diff is shown, the owner decides per file. Hand-editing `origin: maestro` files is discouraged in `CLAUDE.md` → "Distribution and modifications" precisely to avoid this.
-- Run silently. Every phase that touches state (mirror reset, file copy, log append) reports to the owner.
+- Run silently. Every phase that touches state (mirror reset, backups, file copy, removal, log append) reports to the owner.
 
 ## Memory log
 
 Per the "Announce every write" rule, after the sync, insert one memory entry summarizing the run:
 
 ```bash
-bin/mem save "Maestro sync: <FROM_VERSION> → <TO_VERSION> (<N> files updated, <M> added)" -t maestro,sync,upstream -d "<list of updated/added files, comma-separated>. Skipped: <list>. Log: private/maestro-sync.log."
+env -u MEM_DB -u MEM_SCOPE "<instance-path>/bin/mem" save "Maestro sync: <FROM_VERSION> → <TO_VERSION> (<N> files updated, <M> added)" -t maestro,sync,upstream -d "<list of updated/added files, comma-separated>. Skipped: <list>. Log: private/maestro-sync.log."
 ```
 
 Announce:
@@ -422,8 +509,10 @@ Announce:
 
 ## Failure modes
 
-- **Mirror clone fails (no network)**: stop, report the error.
+- **Mirror clone or fetch fails (no network)**: stop, report the error.
+- **Loaded plugin differs from the installed one**: Phase 3 stops; the owner restarts Claude Code and runs the sync again.
 - **Plugin behind upstream `main`**: Phase 3 stops with the update commands; the owner updates, restarts Claude Code and runs the sync again.
+- **`bin/` copy fails after copying**: Phase 5b's restore block puts back the old scripts and the db backup, on the owner's yes.
 - **Working tree has uncommitted changes and owner picks `push` but staging is needed**: refuse silently to `git add -A` (would risk staging files the owner didn't intend); ask the owner to stage manually and re-run.
 - **CHANGELOG.md missing or unparseable in the mirror**: warn but continue — files are still diffable, just no high-level context.
-- **A file marked `origin: maestro` exists in the instance but not in the mirror** (e.g. an old skill that has since been retired upstream): show this in the summary as "orphan: file is no longer in upstream — keep, archive, or delete by hand?". Do not auto-delete.
+- **A file marked `origin: maestro` exists in the instance but not in the mirror** (e.g. an old skill that has since been retired upstream and isn't in Phase 6b's list): show this in the summary as "orphan: file is no longer in upstream — keep, archive, or delete by hand?". Do not auto-delete.

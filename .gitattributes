@@ -38,5 +38,9 @@ tests/test_finalize.py export-ignore
 # the new-instance skill's command blocks out of plugins/.
 tests/test_new_instance.py export-ignore
 
+# Redirect left for instances still running the retired local maestro-sync:
+# old syncs read it from the mirror; new instances never need it.
+.claude/skills/maestro-sync/ export-ignore
+
 # This test runs the plugin's hooks out of plugins/.
 tests/test_satellite_hook.py export-ignore

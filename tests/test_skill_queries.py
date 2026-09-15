@@ -411,6 +411,7 @@ _RAW_SQLITE_RE = re.compile(r"sqlite3.*\blog\b|INSERT INTO log|FROM log")
 # export-ignored) still runs.
 PLUGIN_SOURCE_FILES = [
     ROOT / "plugins" / "maestro" / "skills" / "new-instance" / "finalize.sh",
+    ROOT / "plugins" / "maestro" / "skills" / "maestro-sync" / "SKILL.md",
 ]
 
 

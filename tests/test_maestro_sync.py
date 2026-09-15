@@ -437,16 +437,19 @@ class TestPluginBehindUpstream(unittest.TestCase):
         return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.work, capture_output=True,
                               text=True, check=True).stdout.strip()
 
-    def _run(self, version: str) -> subprocess.CompletedProcess:
+    def _run(self, version: str, install_path=None) -> subprocess.CompletedProcess:
         claude = self.bindir / "claude"
         claude.write_text("#!/bin/sh\ncat <<'EOF'\n" + json.dumps([
             {"id": "maestro@maestro", "scope": "project", "version": "0000000"},
-            {"id": "maestro@maestro", "scope": "user", "version": version[:12]},
+            {"id": "maestro@maestro", "scope": "user", "version": version[:12],
+             "installPath": str(install_path or self.plugin)},
         ]) + "\nEOF\n")
         claude.chmod(0o755)
         env = {"PATH": f"{self.bindir}:/usr/bin:/bin", "HOME": self._tmp.name,
                "CLAUDE_PLUGIN_ROOT": str(self.plugin)}
-        return subprocess.run(["bash", "-c", self.cmd.replace("<mirror-path>", str(self.mirror))],
+        cmd = (self.cmd.replace("<mirror-path>", str(self.mirror))
+               .replace("<instance-path>", self._tmp.name + "/instance").replace("<worktree-path>", "none"))
+        return subprocess.run(["bash", "-c", cmd],
                               cwd=self._tmp.name, capture_output=True, text=True, env=env)
 
     def test_plugin_at_main_passes_and_clones_the_mirror(self):
@@ -456,6 +459,20 @@ class TestPluginBehindUpstream(unittest.TestCase):
 
     def test_plugin_ahead_on_a_branch_passes(self):
         self.assertEqual(self._run(self.ahead).returncode, 0)
+
+    def test_loaded_plugin_other_than_installed_stops(self):
+        other = Path(self._tmp.name) / "newer-install"
+        other.mkdir()
+        r = self._run(self.main, install_path=other)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("Restart Claude Code", r.stderr)
+
+    def test_stale_mirror_moves_forward_to_the_new_main(self):
+        subprocess.run(["git", "clone", "-q", str(self.origin), str(self.mirror)], check=True)
+        subprocess.run(["git", "-C", str(self.mirror), "reset", "-q", "--hard", self.old], check=True)
+        r = self._run(self.main)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"MIRROR_HEAD {self.main}", r.stdout)
 
     def test_plugin_behind_main_stops(self):
         r = self._run(self.old)
@@ -505,21 +522,73 @@ class TestBinCopy(unittest.TestCase):
         self.assertEqual(con.execute("SELECT title FROM log").fetchall(), [("kept",)])
         con.close()
 
+    def test_failed_stats_leaves_a_restorable_instance(self):
+        (self.mirror / "bin" / "mem").write_text("#!/bin/sh\necho broken >&2\nexit 1\n")
+        _commit(self.mirror, ["bin/mem"], "broken mem")
+        text = SKILL.read_text()
+        cmd = (_nth_bash_block_after(text, PHASE_5B_HEADING, 2)
+               .replace("<mirror-path>", str(self.mirror)).replace("<instance-path>", str(self.instance)))
+        r = _run_shell(cmd, Path(self._tmp.name))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("copied bin/mem", r.stdout)
+        binbak = next(ln.split(" ", 2)[2] for ln in r.stdout.splitlines() if ln.startswith("old scripts "))
+        backup = next(ln.split(" ", 1)[1] for ln in r.stdout.splitlines() if ln.startswith("backup "))
+        restore = (_nth_bash_block_after(text, PHASE_5B_HEADING, 3)
+                   .replace("<instance-path>", str(self.instance))
+                   .replace("<old-scripts-path>", binbak).replace("<backup-path>", backup))
+        r2 = _run_shell(restore, Path(self._tmp.name))
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+        self.assertEqual((self.instance / "bin" / "mem").read_text(), "#!/bin/sh\necho stats-v1\n")
+
 
 class TestRetiredPaths(unittest.TestCase):
-    def test_lists_only_existing_retired_paths_and_removes_nothing(self):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.inst = Path(self._tmp.name) / "my inst"
+        (self.inst / "bin").mkdir(parents=True)
+        (self.inst / "bin" / "mem").write_text("")
+        (self.inst / "private").mkdir()
+        (self.inst / "private" / "preferences.md").write_text("")
+        for rel, marked in ((".claude/skills/maestro-sync", True), (".claude/skills/setup", False),
+                            (".claude/skills/.disabled/setup", True), ("user-skills/maestro-net", True),
+                            ("user-skills/mine", False)):
+            d = self.inst / rel
+            d.mkdir(parents=True)
+            (d / "SKILL.md").write_text(_marked_md() if marked else _unmarked_md())
         text = SKILL.read_text()
-        cmd = _nth_bash_block_after(text, PHASE_6B_HEADING, 1)
-        self.assertNotRegex(cmd, r"\brm\b")
-        with tempfile.TemporaryDirectory() as tmp:
-            inst = Path(tmp) / "inst"
-            (inst / ".claude" / "skills" / "maestro-sync").mkdir(parents=True)
-            (inst / ".claude" / "skills" / ".disabled" / "setup").mkdir(parents=True)
-            r = _run_shell(cmd.replace("<instance-path>", str(inst)), Path(tmp))
-            self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertEqual(_output_lines(r), ["retired .claude/skills/maestro-sync",
-                                                "retired .claude/skills/.disabled/setup"])
-            self.assertTrue((inst / ".claude" / "skills" / "maestro-sync").is_dir())
+        self.listing = _nth_bash_block_after(text, PHASE_6B_HEADING, 1)
+        self.removal = _nth_bash_block_after(text, PHASE_6B_HEADING, 2)
+
+    def remove(self, retired: str) -> subprocess.CompletedProcess:
+        cmd = self.removal.replace("<instance-path>", str(self.inst)).replace("<retired-path>", retired)
+        return _run_shell(cmd, Path(self._tmp.name))
+
+    def test_lists_only_marked_retired_paths_and_removes_nothing(self):
+        self.assertNotRegex(self.listing, r"\brm\b")
+        r = _run_shell(self.listing.replace("<instance-path>", str(self.inst)), Path(self._tmp.name))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        retired = [ln for ln in _output_lines(r) if ln.startswith("retired ")]
+        self.assertEqual(retired, ["retired .claude/skills/maestro-sync",
+                                   "retired .claude/skills/.disabled/setup",
+                                   "retired user-skills/maestro-net"])
+        self.assertIn("    .claude/skills/maestro-sync/SKILL.md", r.stdout)
+        self.assertTrue((self.inst / ".claude" / "skills" / "maestro-sync").is_dir())
+
+    def test_removal_refuses_anything_outside_the_allowlist(self):
+        for bad in ("", ".", "private", "user-skills", "../x"):
+            with self.subTest(path=bad):
+                r = self.remove(bad)
+                self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertTrue((self.inst / "private" / "preferences.md").is_file())
+        self.assertTrue((self.inst / "user-skills" / "mine").is_dir())
+
+    def test_removal_deletes_one_path_and_keeps_a_non_empty_user_skills(self):
+        self.assertEqual(self.remove("user-skills/maestro-net").returncode, 0)
+        self.assertFalse((self.inst / "user-skills" / "maestro-net").exists())
+        self.assertTrue((self.inst / "user-skills" / "mine").is_dir())
+        self.assertEqual(self.remove(".claude/skills/maestro-sync").returncode, 0)
+        self.assertFalse((self.inst / ".claude" / "skills" / "maestro-sync").exists())
 
 
 if __name__ == "__main__":
