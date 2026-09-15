@@ -52,6 +52,10 @@ The `PreToolUse` hook opens the vault folder to `Read`, `Write`, `Edit`, `Grep` 
 
 When the registry names a mother that is missing or too old, has no row for the scope, or has a row pointing to another repo, the session gets one line of context saying so, no scope and no vault access.
 
+## Asking the mother
+
+A satellite session can hand work to its mother with `maestro-net request "<goal and where the result goes>"`, once the owner has added `request` to the mother's `accepts` in the registry. The verb opens a background session in the mother, visible in `claude agents`, and returns. The mother judges the request against the satellite's row, works with its own skills and agents, writes documents in the linked vault folder, and replies with a message to the satellite session. It also saves one memory in the satellite's scope, `request <name>: done` or `refused`, which is the answer when the satellite session is closed. Details and failure codes: `howto/11-maestro-net.md`.
+
 ## From the mother
 
 ```bash
@@ -76,5 +80,5 @@ The scope's memories stay in the mother's db. The next session in the repo drops
 - One mother per repo, one repo per scope. A repo inside another satellite or inside an instance is refused, and so is an instance registered inside a satellite repo.
 - No `satellite update`: to change a role, remove and add again.
 - Semantic search from a satellite ranks its own memories and the whole vault index.
-- A satellite doesn't reach its mother except through `maestro-net ask` and `recap`.
+- A satellite reaches its mother only through `maestro-net recap`, `ask` and `request`; a request grants no permission, and the mother decides.
 - The hook needs `python3` and `git` on the machine.

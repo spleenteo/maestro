@@ -145,7 +145,7 @@ def identity_extract(mother: Path) -> str:
 
 
 def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity: str,
-                 exported: bool, vault_open: bool) -> str:
+                 exported: bool, vault_open: bool, can_request: bool) -> str:
     mem = mother / "bin" / "mem"
     lines = [
         f"# Satellite session: {scope}",
@@ -181,6 +181,10 @@ def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity
         f"- Prose for a human reader follows the writing register: `{mother / 'CLAUDE.md'}`, "
         "section `## Writing register`.",
     ]
+    if can_request:
+        lines.append(f"- For work that belongs to the mother (its skills, agents, vault documents): "
+                     f"`maestro-net request \"<goal and where the result goes>\"`. The answer arrives as a "
+                     f"message from the request session, or as the memory `request <name>` in this scope.")
     if row.get("vault_folder"):
         lines += [
             "",
@@ -247,7 +251,8 @@ def start_satellite(scope: str, entry: dict, registry: dict, marker: Path | None
     identity = identity_extract(mother)
     vault_open = write_marker(marker, scope, row.get("vault_folder"))
     exported = export_scope(scope)
-    emit_context(context_text(scope, mother_name, mother, row, identity, exported, vault_open))
+    can_request = "request" in (mother_entry.get("accepts") or [])
+    emit_context(context_text(scope, mother_name, mother, row, identity, exported, vault_open, can_request))
 
 
 def session_start() -> int:

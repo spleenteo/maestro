@@ -55,13 +55,15 @@ On a second machine chezmoi manages, `chezmoi forget` isn't the instruction to r
 
 **The channel carries memories, not permissions.**
 
-No verb touches files, MCP servers or tasks belonging to another instance. A session that needs to *act* inside another instance opens a session there. What crosses the channel is a memory or a question.
+No verb touches files, MCP servers or tasks belonging to another instance. A session that needs to *act* inside another instance opens a session there. What crosses the channel is a memory, a question, or, from a satellite to its mother, a request.
+
+A request still carries no permission. The satellite asks; the mother opens its own session, judges the request against the satellite's row and its own rules, and acts with its own tools. The request text can't widen what the mother does, and `request` is granted per instance in `accepts`, never by default.
 
 The constraint comes from an incident: a work instance read the owner's personal task manager to answer a question about the day, because MCP servers load user-level and are therefore visible to every session regardless of the folder it runs in. Preferences declared the boundary; nothing enforced it. Here the boundary is a field in a file, `accepts`, that the owner can read and change.
 
 Enforcement, concretely: the remote command's environment is stripped of `MEM_DB` (a sender-side override would otherwise make the recipient's `bin/mem` write into the sender's own database) and of `MEM_SCOPE` (a `recap` or `ask` launched from inside a satellite session would otherwise land in the sender's scope inside the recipient's db, instead of the recipient's own null scope). `PWD` and `CLAUDE_PROJECT_DIR` are stripped too, so the recipient's tools and the plugin's session hook see the recipient's folder, not the sender's.
 
-## The two verbs
+## The verbs
 
 ### recap
 
@@ -84,6 +86,22 @@ maestro-net ask home "cosa sappiamo delle biciclette?"
 ```
 
 The prompt carries a read-only clause: answer, write nothing, open no task, call no state-changing MCP. No persistent session is opened, and nothing appears in the agent view. Default timeout 180 seconds.
+
+### request
+
+Runs only from a registered satellite repo, and always reaches that satellite's mother. It launches a background session in the mother's folder and returns at once:
+
+```bash
+maestro-net request "write a dossier on the onboarding flow in my vault folder"
+```
+
+- The session is `claude --bg --name <mother>-<scope>-<4 hex>`, so it appears as a row in `claude agents`; `claude attach <id>` opens it, `claude stop <id>` stops it, `claude rm <id>` removes the row.
+- The prompt carries `requesting_scope`, `satellite_repo`, `vault_folder`, `reply_to` (`uds:` plus the satellite session's `CLAUDE_CODE_MESSAGING_SOCKET`, or `none`), the request name, and the rules the mother follows. The mother's own `## Requests from satellites` section in `CLAUDE.md` stays the authority.
+- The linked vault folder is passed as `--add-dir`, so writes there don't stop on a permission prompt. No permission mode is passed unless `--permission-mode` is given: the session starts in the mode configured for the mother's folder.
+- The mother replies once with `SendMessage` to `reply_to`, with absolute paths, and always saves one memory in the requesting scope, `request <name>: done` or `request <name>: refused`. When the satellite session is gone, or had no messaging socket, that memory is the answer: `MEM_SCOPE=<scope> <mother>/bin/mem search "request <name>"`.
+- The request session writes documents only in the vault folder and never edits the mother's repository: a background session that edits files of a git repo moves into a worktree first, where `bin/mem` finds no `private/memories.db`.
+- Before launching, the verb reads the satellite's row through the mother's `bin/mem satellite show`; no row means exit 8 and no session. The launched environment drops `MEM_DB`, `MEM_SCOPE`, `PWD`, `CLAUDE_PROJECT_DIR`, `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_ENV_FILE`.
+- On macOS the background session host asks for folder access separately from the terminal: a mother or a vault in iCloud Drive may need access granted in System Settings, Privacy & Security, Files and Folders.
 
 ## The registry
 
@@ -168,7 +186,7 @@ maestro-net satellite remove acme
 - `--mother` must be a registered instance (exit 5).
 - A scope already registered, or a repo equal to, inside or containing an instance path or another satellite's repo, exits 9. `register` applies the mirror check: an instance path inside or containing a satellite's repo exits 9.
 - `satellite remove` edits only the `satellites:` block; an unknown scope exits 5.
-- A satellite is never a recipient: `recap` and `ask` resolve instance names only. `list` shows satellites apart.
+- A satellite is never a recipient: `recap` and `ask` resolve instance names only, and `request` only goes from a satellite to its mother. `list` shows satellites apart.
 
 The `satellite` skill of the plugin calls `satellite add` after `bin/mem satellite add` in the mother; used by hand, the two registrations have to agree.
 
@@ -182,10 +200,10 @@ Every failure has its own exit code and says what happened.
 | 2 | Usage error |
 | 3 | Registry missing |
 | 4 | Registry malformed (with the offending line number) |
-| 5 | Unknown instance, or a name matching more than one |
+| 5 | Unknown instance, or a name matching more than one; `request` run outside a satellite repo, or a satellite whose mother isn't registered |
 | 6 | Verb not in the recipient's `accepts` |
 | 7 | The recipient's path no longer exists, or has no `bin/mem` — also `register`'s `--path`, when it isn't a directory or isn't a Maestro instance's own root |
-| 8 | The remote command failed, timed out, or couldn't be started |
+| 8 | The remote command failed, timed out, or couldn't be started; `request` found no row for the satellite in its mother |
 | 9 | `register` found the name or the path already in the registry, or a path overlapping a satellite's repo; `satellite add` the scope, or a repo overlapping an instance or another satellite |
 
 The rule behind the table: a channel that can't deliver says so. A recap that can't reach its recipient is never written somewhere else, and a malformed registry never degrades into an empty one.

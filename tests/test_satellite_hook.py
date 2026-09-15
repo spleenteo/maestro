@@ -162,6 +162,7 @@ class TestSessionStart(HookCase):
         self.assertIn("Kept: a parenthetical suffix is allowed", ctx)
         self.assertIn(f'MEM_SCOPE=acme "{self.mother / "bin" / "mem"}"', ctx)
         self.assertEqual(json.loads(self.marker().read_text())["vault"], str(self.vault))
+        self.assertNotIn("maestro-net request", ctx)
 
     def test_without_env_file_the_context_says_scope_is_not_exported(self):
         self.write_registry()

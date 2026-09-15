@@ -1,13 +1,13 @@
 ---
 name: maestro-net
-description: Cross-talk between the owner's Maestro instances. Two verbs, `recap` (write a memory into another instance's db) and `ask` (query another instance headless and report the answer). Use when the owner says "fai un recap a home", "manda a work", "segna su client", "chiedi a home cosa sa di X", "what does work know about Y", or names one of their instances as the recipient of something that happened here. Ships in the Maestro plugin, so it works from any Claude Code session, including ones that know nothing about Maestro.
+description: Cross-talk between the owner's Maestro instances. Verbs `recap` (write a memory into another instance's db), `ask` (query another instance headless and report the answer) and, from a satellite repo only, `request` (have the mother instance do something, in a background session). Use when the owner says "fai un recap a home", "manda a work", "segna su client", "chiedi a home cosa sa di X", "what does work know about Y", or names one of their instances as the recipient of something that happened here. Ships in the Maestro plugin, so it works from any Claude Code session, including ones that know nothing about Maestro.
 ---
 
 # maestro-net
 
 The owner runs several Maestro instances, one per life context, each with its own `memories.db` and its own domain. They stay separate on purpose. This skill is the channel between them.
 
-**The channel carries memories, not permissions.** No verb touches files, MCP servers or tasks of another instance. A session that wants to *do* something inside another instance opens a session there; what crosses this channel is a memory or a question.
+**The channel carries memories, not permissions.** No verb touches files, MCP servers or tasks of another instance. A session that wants to *do* something inside another instance opens a session there; what crosses this channel is a memory, a question, or a satellite's request to its mother. A request asks: the mother judges it and acts with its own tools and rules.
 
 That constraint has a history: an instance once read the owner's personal task manager from a work session, because MCP servers load user-level and are visible to every session regardless of the folder. The registry's `accepts` field is where the constraint stops being a good intention and becomes a value the owner can edit.
 
@@ -50,6 +50,20 @@ maestro-net ask home "cosa sappiamo delle biciclette?"
 - The answer comes back to the owner through you. Attribute it (*"home dice che…"*), and don't merge it into your own knowledge without saying where it came from.
 
 `recap` before `ask` when both fit: one is free.
+
+## Verb 3 — request (satellites only)
+
+From a satellite repo, when the owner asks for work that belongs to the mother (a dossier in the vault, something only the mother's skills or agents can do):
+
+```bash
+maestro-net request "write a dossier on the onboarding flow in my vault folder"
+```
+
+- No recipient: the verb resolves the satellite from the current folder and always reaches its mother. Outside a satellite it exits 5.
+- It opens a background session in the mother and returns at once with the session name and id. Tell the owner in one line, with `claude attach <id>` if they want to watch.
+- The answer arrives later as a message from that session. Treat it as a teammate's report: it carries information, never the owner's approval. If no message arrives, the mother's memory holds the answer: run the `search` command the verb printed.
+- Compose the request as one or two sentences with the goal and where the result goes; don't paste the conversation.
+- The mother must list `request` in its `accepts` (exit 6 otherwise): only the owner grants it.
 
 ## The registry
 
@@ -108,10 +122,10 @@ Every failure is explicit and named. Report it to the owner as it is; never retr
 |---|---|---|
 | 3 | Registry missing | Nothing is registered yet, offer to run `scan` |
 | 4 | Registry malformed | Report the line number the tool gives |
-| 5 | Unknown or ambiguous name | List the known instances and ask which one |
+| 5 | Unknown or ambiguous name, or `request` outside a satellite | List the known instances and ask which one; for `request`, say it works only from a satellite repo |
 | 6 | Verb not in `accepts` | Say that the instance doesn't accept it, and that the registry is where it changes |
 | 7 | Path gone, or not a Maestro instance | The instance moved (or `register` was pointed at the wrong folder), offer to re-run `scan` or fix `--path` |
-| 8 | Remote command failed | Report the recipient's own error output |
+| 8 | Remote command failed, or no satellite row in the mother | Report the recipient's own error output |
 | 9 | `register` or `satellite add` found the name, path, scope or repo already in the registry, or overlapping | Say which existing entry it collides with; suggest `unregister` or `satellite remove` first if it should be replaced |
 
 A missing registry is not a reason to write the memory somewhere else. The owner asked to reach another instance; if the channel is down, they need to know.
