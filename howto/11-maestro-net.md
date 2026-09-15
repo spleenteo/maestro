@@ -59,7 +59,7 @@ No verb touches files, MCP servers or tasks belonging to another instance. A ses
 
 The constraint comes from an incident: a work instance read the owner's personal task manager to answer a question about the day, because MCP servers load user-level and are therefore visible to every session regardless of the folder it runs in. Preferences declared the boundary; nothing enforced it. Here the boundary is a field in a file, `accepts`, that the owner can read and change.
 
-Enforcement, concretely: the remote command's environment is stripped of `MEM_DB` (a sender-side override would otherwise make the recipient's `bin/mem` write into the sender's own database) and of `MEM_SCOPE` (a `recap` or `ask` launched from inside a satellite session would otherwise land in the sender's scope inside the recipient's db, instead of the recipient's own null scope). `PWD` is stripped too, so it doesn't confuse the recipient's tools with the sender's directory.
+Enforcement, concretely: the remote command's environment is stripped of `MEM_DB` (a sender-side override would otherwise make the recipient's `bin/mem` write into the sender's own database) and of `MEM_SCOPE` (a `recap` or `ask` launched from inside a satellite session would otherwise land in the sender's scope inside the recipient's db, instead of the recipient's own null scope). `PWD` and `CLAUDE_PROJECT_DIR` are stripped too, so the recipient's tools and the plugin's session hook see the recipient's folder, not the sender's.
 
 ## The two verbs
 
@@ -125,7 +125,7 @@ The registry itself stays out of chezmoi when instance paths differ between mach
 
 ### Adding or removing one instance
 
-`scan --write --force` rewrites the whole file, so it loses every `domain` and `accepts` the owner filled in by hand, and it can't see an instance that has no transcript yet. `register` adds one instance without touching the others — the way `/maestro:new-instance` registers the instance it just created:
+`scan --write --force` rewrites the whole file, so it loses every `domain` and `accepts` the owner filled in by hand (the `satellites:` block is carried over; a malformed registry holding one is refused with exit 4), and it can't see an instance that has no transcript yet. `register` adds one instance without touching the others — the way `/maestro:new-instance` registers the instance it just created:
 
 ```bash
 maestro-net register home --path /Users/you/Sites/home-instance \
@@ -166,7 +166,7 @@ maestro-net satellite remove acme
 
 - The scope is a lowercase slug, like an instance name (exit 2 otherwise). `--repo` must be an absolute path to an existing directory (exit 2, exit 7) and is stored as its real path.
 - `--mother` must be a registered instance (exit 5).
-- A scope already registered, or a repo equal to, inside or containing an instance path or another satellite's repo, exits 9.
+- A scope already registered, or a repo equal to, inside or containing an instance path or another satellite's repo, exits 9. `register` applies the mirror check: an instance path inside or containing a satellite's repo exits 9.
 - `satellite remove` edits only the `satellites:` block; an unknown scope exits 5.
 - A satellite is never a recipient: `recap` and `ask` resolve instance names only. `list` shows satellites apart.
 
@@ -186,7 +186,7 @@ Every failure has its own exit code and says what happened.
 | 6 | Verb not in the recipient's `accepts` |
 | 7 | The recipient's path no longer exists, or has no `bin/mem` — also `register`'s `--path`, when it isn't a directory or isn't a Maestro instance's own root |
 | 8 | The remote command failed, timed out, or couldn't be started |
-| 9 | `register` found the name or the path already in the registry, or `satellite add` the scope, or a repo overlapping an instance or another satellite |
+| 9 | `register` found the name or the path already in the registry, or a path overlapping a satellite's repo; `satellite add` the scope, or a repo overlapping an instance or another satellite |
 
 The rule behind the table: a channel that can't deliver says so. A recap that can't reach its recipient is never written somewhere else, and a malformed registry never degrades into an empty one.
 

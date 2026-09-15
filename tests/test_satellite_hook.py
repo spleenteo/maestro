@@ -41,6 +41,32 @@ setup_completed: true
 ## Communication preferences
 
 - Short answers
+
+## Notes
+
+```
+## Identity
+- LEAK inside a fence
+```
+
+- LEAK after the fence
+
+## Identity theft notes
+
+- LEAK prefix match
+
+## Owner — basics (private)
+
+- Kept: a parenthetical suffix is allowed
+   ## LEAK indented heading closes the section
+- LEAK under the indented heading
+
+## Writing register
+
+Setext heading LEAK
+-------------------
+
+- LEAK under the setext heading
 """
 
 
@@ -101,7 +127,7 @@ class HookCase(unittest.TestCase):
         return json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
 
     def marker(self):
-        return self.plugin_data / "satellites" / str(self.repo).replace("/", "_")
+        return self.plugin_data / "satellites" / str(self.repo).replace("%", "%25").replace("/", "%2F")
 
 
 class TestSessionStart(HookCase):
@@ -132,7 +158,32 @@ class TestSessionStart(HookCase):
         self.assertIn("Short answers", ctx)
         self.assertIn(str(self.mother / "bin" / "mem"), ctx)
         self.assertNotIn("private contact", ctx)
+        self.assertNotIn("LEAK", ctx)
+        self.assertIn("Kept: a parenthetical suffix is allowed", ctx)
+        self.assertIn(f'MEM_SCOPE=acme "{self.mother / "bin" / "mem"}"', ctx)
         self.assertEqual(json.loads(self.marker().read_text())["vault"], str(self.vault))
+
+    def test_without_env_file_the_context_says_scope_is_not_exported(self):
+        self.write_registry()
+        self.add_satellite_row()
+        env = self.env()
+        del env["CLAUDE_ENV_FILE"]
+        r = subprocess.run(["python3", str(HOOK), "session-start"], input=json.dumps({"cwd": str(self.repo)}),
+                           capture_output=True, text=True, env=env, timeout=30)
+        ctx = self.context(r)
+        self.assertIn("not exported", ctx)
+        self.assertNotIn("is also exported", ctx)
+
+    def test_instance_inside_a_satellite_repo_stays_silent(self):
+        inner = self.repo / "tools" / "inner"
+        inner.mkdir(parents=True)
+        self.write_registry()
+        self.registry.write_text(self.registry.read_text().replace(
+            "satellites:", f"  inner:\n    path: {inner}\n    accepts: [recap]\nsatellites:"))
+        self.add_satellite_row()
+        r = self.session_start(inner)
+        self.assertEqual(r.stdout, "")
+        self.assertEqual(self.env_file.read_text(), "")
 
     def test_symlinked_repo_path_matches(self):
         self.write_registry()
@@ -142,8 +193,10 @@ class TestSessionStart(HookCase):
         r = self.session_start(link / "src")
         self.assertIn("Satellite session: acme", self.context(r))
 
-    def test_old_mother_warns_and_sets_nothing(self):
+    def test_old_mother_warns_sets_nothing_and_drops_the_marker(self):
         self.write_registry()
+        self.marker().parent.mkdir(parents=True)
+        self.marker().write_text("{}")
         schema = self.mother / "bin" / "mem_schema.py"
         schema.write_text("SCHEMA_API = 1\n")
         r = self.session_start(self.repo)
@@ -153,9 +206,11 @@ class TestSessionStart(HookCase):
 
 
 class TestVaultGuard(HookCase):
-    def guard(self, target, path=BASE_PATH):
+    def guard(self, target, path=BASE_PATH, tool="Read", **extra):
+        key = "file_path" if tool == "Read" else "path"
+        payload = {"tool_name": tool, "tool_input": {key: str(target), **extra}}
         return subprocess.run(["sh", str(GUARD)],
-                              input=json.dumps({"tool_name": "Read", "tool_input": {"file_path": str(target)}}),
+                              input=json.dumps(payload),
                               capture_output=True, text=True, env=self.env(PATH=path), timeout=30)
 
     def test_without_marker_runs_no_python(self):
@@ -178,6 +233,8 @@ class TestVaultGuard(HookCase):
                         Path(str(self.vault) + "-evil") / "a.md"):
             r = self.guard(outside)
             self.assertEqual((r.returncode, r.stdout), (0, ""), outside)
+        r = self.guard(self.vault, tool="Glob", pattern="../../**")
+        self.assertEqual(r.stdout, "")
 
 
 if __name__ == "__main__":

@@ -41,16 +41,16 @@ Open a session in the repo and ask: "make this repo a satellite of home". The pl
 
 ## What a session in the repo gets
 
-The plugin's `SessionStart` hook runs at every session start, resume, `/clear` and compaction. It resolves the session folder (symlinks and worktrees included) against the `satellites:` block of the registry. Outside a registered repo it prints nothing. Inside one it:
+The plugin's `SessionStart` hook runs at every session start, whatever its source (startup, resume, `/clear`, compaction). It resolves the session folder (symlinks and worktrees included) against the `satellites:` block of the registry. Outside a registered repo, and inside a folder that is itself a registered instance, it prints nothing. Inside a satellite repo it:
 
-- appends `export MEM_SCOPE=<scope>` to the session's environment file, so every Bash call in the session carries the scope;
+- appends `export MEM_SCOPE=<scope>` to the session's environment file, when Claude Code provides one, so Bash calls carry the scope;
 - asks the mother's `bin/mem satellite show` for the role;
-- reads the mother's `private/preferences.md` and keeps only the sections whose heading starts with `Identity`, `Owner — basics`, `Communication preferences` or `Writing register` (people, integrations and the rest never leave the mother);
-- injects role, identity and the operating rules as context: the mother's `bin/mem` by absolute path, the pointer to the mother's `## Memory` and `## Writing register` sections, the vault folder, and two prohibitions (no `bin/mem embed`, no warm task channel garbage collector: both belong to the mother).
+- reads the mother's `private/preferences.md` and keeps only the level-2 sections named `Identity`, `Owner — basics`, `Communication preferences` or `Writing register`, optionally followed by a parenthetical such as `(the orchestrator)`. Code fences never open a section, and any other heading or `---` rule closes one: people, integrations and the rest stay in the mother;
+- injects role, identity and the operating rules as context: every memory command written as `MEM_SCOPE=<scope> "<mother>/bin/mem" …`, so the scope holds even without the environment file (the context says when the export didn't happen), the pointer to the mother's `## Memory` and `## Writing register` sections, the vault folder, and two prohibitions (no `bin/mem embed`, no warm task channel garbage collector: both belong to the mother).
 
 The `PreToolUse` hook opens the vault folder to `Read`, `Write`, `Edit`, `Grep` and `Glob`. It runs on every file tool call on the machine, so a shell guard exits at once unless the session start wrote a marker for the project under the plugin's data folder.
 
-When the registry names a mother that is missing, too old, or has no row for the scope, the session gets one line of context saying so, and no scope.
+When the registry names a mother that is missing or too old, has no row for the scope, or has a row pointing to another repo, the session gets one line of context saying so, no scope and no vault access.
 
 ## From the mother
 
@@ -69,12 +69,12 @@ bin/mem satellite remove acme            # in the mother
 maestro-net satellite remove acme
 ```
 
-The scope's memories stay in the mother's db. The next session in the repo starts as an ordinary session and drops the marker.
+The scope's memories stay in the mother's db. The next session in the repo drops the marker: after the first command it prints the one-line notice, after both it starts as an ordinary session.
 
 ## Limits
 
-- One mother per repo, one repo per scope. A repo inside another satellite or inside an instance is refused.
+- One mother per repo, one repo per scope. A repo inside another satellite or inside an instance is refused, and so is an instance registered inside a satellite repo.
 - No `satellite update`: to change a role, remove and add again.
-- Semantic search from a satellite ranks its own memories and the whole vault index, not only the linked folder.
+- Semantic search from a satellite ranks its own memories and the whole vault index.
 - A satellite doesn't reach its mother except through `maestro-net ask` and `recap`.
 - The hook needs `python3` and `git` on the machine.

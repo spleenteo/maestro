@@ -9,7 +9,7 @@
     {
       "name": "maestro",
       "source": "./plugins/maestro",
-      "description": "Cross-instance skills for the Maestro orchestrator template: maestro-net today, more to follow as the satellites work lands."
+      "description": "Skills and hooks for the Maestro orchestrator template: new-instance, maestro-net between instances, and satellites (project repos that borrow an instance's identity and memory)."
     }
   ]
 }

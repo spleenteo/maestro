@@ -645,6 +645,12 @@ def cmd_register(args) -> int:
                 E_EXISTS,
                 f"path già registrato con il nome `{existing_name}`: {real_path}.",
             )
+    for scope, sat in data.get("satellites", {}).items():
+        if _overlaps(real_path, os.path.realpath(Path(sat["repo"]).expanduser())):
+            raise NetError(
+                E_EXISTS,
+                f"path sovrapposto al repo del satellite `{scope}`: {sat['repo']}.",
+            )
 
     entry_text = render_entry(name, real_path, domain, accepts)
     new_text = insert_entry(text, entry_text)
@@ -937,6 +943,22 @@ def cmd_scan(args) -> int:
         )
         return E_USAGE
 
+    if dest.exists():
+        old_text = dest.read_text(encoding="utf-8")
+        try:
+            satellites = parse_registry(old_text, str(dest)).get("satellites", {})
+        except RegistryError as exc:
+            if "satellites:" in old_text:
+                raise NetError(
+                    E_BAD_REGISTRY,
+                    f"registry malformato, non lo sovrascrivo perdendo i satelliti: {exc}",
+                )
+            satellites = {}
+        if satellites:
+            text += "satellites:\n" + "".join(
+                render_satellite(scope, sat["repo"], sat["mother"])
+                for scope, sat in satellites.items())
+
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text, encoding="utf-8")
     print(f"maestro-net: registry scritto in {dest} — {len(instances)} istanze.")
@@ -1034,6 +1056,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     except NetError as exc:
         print(f"maestro-net: {exc}", file=sys.stderr)
         return exc.code
+    except RegistryError as exc:
+        print(f"maestro-net: registry malformato: {exc}", file=sys.stderr)
+        return E_BAD_REGISTRY
 
 
 if __name__ == "__main__":

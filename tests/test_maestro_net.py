@@ -563,6 +563,17 @@ class TestScan(unittest.TestCase):
         self.assertEqual(r.returncode, OK, r.stderr)
         self.assertIn("home:", self.registry.read_text())
 
+    def test_write_force_keeps_the_satellites_block(self):
+        inst = fake_instance(self.root, "home")
+        transcript(self.projects, "-x-1", inst)
+        self.registry.write_text(
+            f"version: 1\ninstances:\n  home:\n    path: {inst}\n"
+            f"satellites:\n  acme:\n    repo: /code/acme\n    mother: home\n")
+        r = self.scan("--write", "--force")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        listed = json.loads(run("--registry", str(self.registry), "list", "--json").stdout)
+        self.assertEqual(listed["satellites"], {"acme": {"repo": "/code/acme", "mother": "home"}})
+
     def test_missing_projects_root_is_explicit(self):
         r = run("--registry", str(self.registry), "scan",
                 env={"CLAUDE_PROJECTS_ROOT": str(self.root / "nowhere")})
@@ -869,6 +880,12 @@ class TestSatellites(RegistryFixture):
                          E_EXISTS)
         self.assertEqual(self.sat("remove", "nope").returncode, E_UNKNOWN_INSTANCE)
         self.assertEqual(run("list", env=env).returncode, OK)
+
+    def test_register_refuses_an_instance_inside_a_satellite_repo(self):
+        self.sat("add", "acme", "--repo", str(self.repo), "--mother", "home")
+        inner = fake_instance(self.repo, "tools")
+        r = run("register", "tools", "--path", str(inner), env={"MAESTRO_INSTANCES": str(self.registry)})
+        self.assertEqual(r.returncode, E_EXISTS, r.stderr)
 
     def test_satellite_without_mother_is_malformed(self):
         self.registry.write_text(self.registry.read_text() + "satellites:\n  acme:\n    repo: /x\n")

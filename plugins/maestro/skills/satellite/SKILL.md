@@ -11,7 +11,7 @@ This skill registers one satellite, checks the chain end to end, and hands off t
 
 ## Command blocks
 
-Each fenced `bash` block runs as one Bash call, exactly as written except for the placeholders. Replace each placeholder and keep the double quotes around it. Expand a leading `~` yourself: a quoted `~` doesn't expand. If a block exits non-zero, show its stderr to the owner and stop, unless its section says what to do. Never complete a step by hand.
+Each fenced `bash` block runs as one Bash call, exactly as written except for the placeholders. Replace each placeholder and keep the double quotes around it. Every placeholder value, paths included, sits inside double quotes: put a backslash before each `\`, `"`, `$` and backtick it contains. Expand a leading `~` yourself: a quoted `~` doesn't expand. If a block exits non-zero, show its stderr to the owner and stop, unless its section says what to do. Never complete a step by hand.
 
 Placeholders: `<folder>` and `<repo>` (step 1), `<mother>` and `<mother-path>` (step 2), `<scope>` and the role values (step 3).
 
@@ -24,10 +24,11 @@ set -eo pipefail
 FOLDER="<folder>"
 COMMON=$(git -C "$FOLDER" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
 if [ -n "$COMMON" ] && [ "$(basename "$COMMON")" = ".git" ]; then
-  REPO=$(cd "$(dirname "$COMMON")" && pwd -P)
+  REPO=$(dirname "$COMMON")
 else
-  REPO=$(cd "$FOLDER" && pwd -P)
+  REPO=$(git -C "$FOLDER" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$FOLDER")
 fi
+REPO=$(cd -P -- "$REPO" >/dev/null && pwd -P)
 if [ -f "$REPO/private/preferences.md" ] && [ -f "$REPO/bin/mem" ]; then
   echo "$REPO is a Maestro instance, not a project repository." >&2
   exit 1
@@ -78,8 +79,6 @@ Ask one question per turn, in the language the owner is using, each with a propo
 
 The role describes a mandate and a method. The voice and the identity stay the mother's: when an answer sounds like a persona ("a grumpy senior engineer"), keep the method it implies and drop the persona.
 
-Every value sits inside double quotes in the next block: put a backslash before each `"`, `$` and backtick.
-
 ## 4. Register
 
 First the role in the mother, then the repo in the machine registry. When the second command fails, the block removes the first row, so nothing stays half registered.
@@ -101,7 +100,8 @@ env -u MEM_DB -u MEM_SCOPE "$MEM" satellite add "<scope>" --repo "<repo>" --type
 
 Drop each optional flag the owner left empty (`--method`, `--constraints`, `--language`, `--vault`) instead of passing an empty string. On a failure, read the exit code:
 
-- `6` (`bin/mem`) or `2` (`maestro-net`): the slug was refused. Normalise it and run the block again.
+- `6` (`bin/mem`): the slug was refused. Normalise it and run the block again.
+- `2` (`maestro-net`): a usage error, the slug or the repo path among them. Read stderr, fix that value, run the block again.
 - `7` (`bin/mem`): the repo or the vault folder isn't an absolute path, or the repo doesn't exist.
 - `8` (`bin/mem`) or `9` (`maestro-net`): the scope or the repo is already registered, or the repo contains or sits inside the mother or another satellite. Show the message; `bin/mem satellite list` and `maestro-net list` show what is there. A wrong earlier registration is removed with `satellite remove` in both, by the owner's decision.
 - `5` (`maestro-net`): the mother isn't in the registry.
@@ -113,15 +113,24 @@ Run the checks the new session relies on. The memory written here stays in the s
 ```bash
 set -eo pipefail
 MEM="<mother-path>/bin/mem"
+TITLE="Satellite <scope> attached to <mother>"
 BEFORE=$(git -C "<repo>" status --porcelain 2>/dev/null || true)
-env -u MEM_DB MEM_SCOPE="<scope>" "$MEM" save "Satellite <scope> attached to <mother>" -t satellite,setup,<scope> \
-  -d "Repo <repo>; role and vault folder in the mother's satellites table."
-env -u MEM_DB MEM_SCOPE="<scope>" "$MEM" search "Satellite <scope> attached" --json | grep "attached to" >/dev/null \
-  || { echo "The memory isn't found in scope <scope>." >&2; exit 1; }
-if env -u MEM_DB -u MEM_SCOPE "$MEM" search "Satellite <scope> attached" --json | grep "attached to" >/dev/null; then
-  echo "The memory leaks into the mother's default search." >&2; exit 1
-fi
-echo "memory: saved and found in scope <scope>, invisible from the mother's default search"
+ID=$(env -u MEM_DB MEM_SCOPE="<scope>" "$MEM" save "$TITLE" -t satellite,setup,<scope> \
+  -d "Repo <repo>; role and vault folder in the mother's satellites table." --json \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])')
+echo "saved: \"$TITLE\" [satellite,setup,<scope>] (memory) #$ID"
+IN_SCOPE=$(env -u MEM_DB MEM_SCOPE="<scope>" "$MEM" search "$TITLE" --limit 0 --json)
+DEFAULT=$(env -u MEM_DB -u MEM_SCOPE "$MEM" search "$TITLE" --limit 0 --json)
+python3 -c '
+import json, sys
+rid = int(sys.argv[1])
+ids = lambda text: {row["id"] for row in json.loads(text)}
+if rid not in ids(sys.argv[2]):
+    sys.exit("The memory is not found in its scope.")
+if rid in ids(sys.argv[3]):
+    sys.exit("The memory leaks into the mother default search.")
+print("memory: found in its scope, absent from the mother default search")
+' "$ID" "$IN_SCOPE" "$DEFAULT"
 AFTER=$(git -C "<repo>" status --porcelain 2>/dev/null || true)
 [ "$BEFORE" = "$AFTER" ] || { echo "git status in <repo> changed." >&2; exit 1; }
 echo "repo: git status unchanged"

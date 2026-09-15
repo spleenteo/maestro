@@ -4,6 +4,6 @@
 # no marker for this project (written by `satellite-hook session-start`) means
 # exit at once, without starting Python.
 [ -n "$CLAUDE_PLUGIN_DATA" ] && [ -n "$CLAUDE_PROJECT_DIR" ] || exit 0
-marker="$CLAUDE_PLUGIN_DATA/satellites/$(printf '%s' "$CLAUDE_PROJECT_DIR" | tr '/' '_')"
+marker="$CLAUDE_PLUGIN_DATA/satellites/$(printf '%s' "$CLAUDE_PROJECT_DIR" | sed -e 's/%/%25/g' -e 's|/|%2F|g')"
 [ -f "$marker" ] || exit 0
 exec python3 "${0%/*}/satellite-hook" pre-tool-use "$marker"

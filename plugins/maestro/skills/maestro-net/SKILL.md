@@ -81,7 +81,7 @@ The scanner reads `~/.claude/projects/`, resolves each project's real `cwd` from
 
 ### Adding or removing one instance
 
-`scan --write --force` rewrites the whole file and loses every `domain` and `accepts` the owner already filled in. `register` adds one instance without touching the others — this is what `/maestro:new-instance` calls after it finishes setting up a new instance:
+`scan --write --force` rewrites the whole file and loses every `domain` and `accepts` the owner already filled in (it keeps the `satellites:` block). `register` adds one instance without touching the others — this is what `/maestro:new-instance` calls after it finishes setting up a new instance:
 
 ```bash
 maestro-net register home --path /Users/you/Sites/home-instance \
@@ -98,7 +98,7 @@ maestro-net register home --path /Users/you/Sites/home-instance \
 
 ### Satellites
 
-A top-level `satellites:` block maps a project repo to its mother instance (`<scope>: {repo, mother}`); the plugin's session hook reads it. `maestro-net satellite add SCOPE --repo ABS --mother NAME` and `maestro-net satellite remove SCOPE` edit that block only. The `satellite` skill runs them; run them by hand only when the owner asks. A satellite is never a recipient of `recap` or `ask`.
+A top-level `satellites:` block maps a project repo to its mother instance (`<scope>: {repo, mother}`); the plugin's session hook reads it. `maestro-net satellite add SCOPE --repo ABS --mother NAME` and `maestro-net satellite remove SCOPE` edit that block only. The `satellite` skill runs them; run them by hand only when the owner asks. A satellite is never a recipient of `recap` or `ask`, and `register` refuses an instance path that overlaps a satellite's repo.
 
 ## When something fails
 

@@ -29,13 +29,14 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 PLUGIN_ROOT = HERE.parent
 MIN_SCHEMA_API = 2
-IDENTITY_PREFIXES = (
-    "identity",
-    "owner — basics",
-    "owner - basics",
-    "communication preferences",
-    "writing register",
-)
+
+# Sections of the mother's preferences a satellite may see: the exact name,
+# optionally followed by a parenthetical ("Identity (the orchestrator)").
+IDENTITY_RE = re.compile(
+    r"(identity|owner [—-] basics|communication preferences|writing register)(\s*\(.*\))?")
+HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+UNDERLINE_RE = re.compile(r"^ {0,3}(?:-+|=+)[ \t]*$")
 
 
 def registry_path() -> Path:
@@ -49,6 +50,10 @@ def load_net():
     module = module_from_spec(spec)
     loader.exec_module(module)
     return module
+
+
+def inside(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
 
 
 def main_checkout(folder: str) -> str | None:
@@ -66,13 +71,19 @@ def main_checkout(folder: str) -> str | None:
 
 
 def match_satellite(registry: dict, folder: str):
-    """(scope, entry) of the satellite whose repo holds folder, longest repo first."""
-    real = os.path.realpath(folder)
+    """(scope, entry) of the satellite whose repo holds folder, longest repo first.
+
+    A folder inside a registered instance is that instance's, never a satellite's."""
     satellites = registry.get("satellites", {})
+    if not satellites:
+        return None, None
+    real = os.path.realpath(folder)
+    for entry in registry.get("instances", {}).values():
+        if inside(real, os.path.realpath(os.path.expanduser(entry["path"]))):
+            return None, None
     ranked = sorted(satellites.items(), key=lambda kv: len(os.path.realpath(kv[1]["repo"])), reverse=True)
     for scope, entry in ranked:
-        repo = os.path.realpath(entry["repo"])
-        if real == repo or real.startswith(repo + os.sep):
+        if inside(real, os.path.realpath(entry["repo"])):
             return scope, entry
     root = main_checkout(real)
     if root:
@@ -83,15 +94,24 @@ def match_satellite(registry: dict, folder: str):
 
 
 def marker_path(project_dir: str) -> Path | None:
+    """Marker for a project; the name escapes `%` and `/` like vault-guard does."""
     data = os.environ.get("CLAUDE_PLUGIN_DATA")
     if not data or not project_dir:
         return None
-    return Path(data) / "satellites" / project_dir.replace("/", "_")
+    return Path(data) / "satellites" / project_dir.replace("%", "%25").replace("/", "%2F")
+
+
+def drop_marker(marker: Path | None) -> None:
+    try:
+        if marker:
+            marker.unlink()
+    except OSError:
+        pass
 
 
 def schema_api(mother: Path) -> int:
     try:
-        text = (mother / "bin" / "mem_schema.py").read_text(encoding="utf-8")
+        text = (mother / "bin" / "mem_schema.py").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return 0
     m = re.search(r"^SCHEMA_API\s*=\s*(\d+)", text, re.MULTILINE)
@@ -109,32 +129,60 @@ def satellite_row(mother: Path, scope: str) -> dict | None:
     if out.returncode != 0:
         return None
     try:
-        return json.loads(out.stdout)
+        row = json.loads(out.stdout)
     except ValueError:
         return None
+    return row if isinstance(row, dict) else None
 
 
 def identity_extract(mother: Path) -> str:
-    """Whitelisted `## ` sections of the mother's preferences, nothing else."""
+    """Whitelisted level-2 sections of the mother's preferences, nothing else.
+
+    Fails closed: fenced code never opens a section, and any level-1 or
+    level-2 heading, setext underline or `---` rule closes the current one."""
     try:
-        text = (mother / "private" / "preferences.md").read_text(encoding="utf-8")
+        text = (mother / "private" / "preferences.md").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
     if text.startswith("---"):
         end = text.find("\n---", 3)
-        text = text[end + 4:] if end != -1 else text
-    kept, keep = [], False
-    for line in text.splitlines():
-        if line.startswith("## "):
-            keep = line[3:].strip().lower().startswith(IDENTITY_PREFIXES)
-        elif line.startswith("# "):
+        text = text[end + 4:] if end != -1 else ""
+    lines = text.splitlines()
+    kept, keep, fence = [], False, None
+    for i, line in enumerate(lines):
+        if fence:
+            if re.match(r"^ {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}[ \t]*$", line):
+                fence = None
+            if keep:
+                kept.append(line)
+            continue
+        m = FENCE_RE.match(line)
+        if m:
+            fence = m.group(1)
+            if keep:
+                kept.append(line)
+            continue
+        h = HEADING_RE.match(line)
+        if h and len(h.group(1)) <= 2:
+            name = (h.group(2) or "").strip()
+            keep = len(h.group(1)) == 2 and bool(IDENTITY_RE.fullmatch(name.lower()))
+            if keep:
+                kept.append("### " + name)
+            continue
+        if UNDERLINE_RE.match(line):
             keep = False
-        if keep and line.strip() != "---":
-            kept.append("#" + line if line.startswith("## ") else line)
+            continue
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        if line.strip() and UNDERLINE_RE.match(nxt):
+            keep = False
+            continue
+        if keep:
+            kept.append(line)
     return "\n".join(kept).strip()
 
 
-def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity: str) -> str:
+def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity: str,
+                 exported: bool, vault_open: bool) -> str:
     mem = mother / "bin" / "mem"
     lines = [
         f"# Satellite session: {scope}",
@@ -154,9 +202,16 @@ def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity
     lines += [
         "",
         "## Memory",
-        f"- Memory lives in the mother's db under scope `{scope}`; `MEM_SCOPE` is set for Bash. "
-        f"Use `{mem}` with its absolute path (save, task, idea, search, today, todo): it reads and "
-        "writes only this scope.",
+        f"- Memory lives in the mother's db under scope `{scope}`. Run every memory command with the "
+        f"scope in front: `MEM_SCOPE={scope} \"{mem}\" save …` (also task, idea, done, search, today, "
+        "todo). Without the prefix the command reads and writes the mother's own memory.",
+    ]
+    if exported:
+        lines.append(f"- `MEM_SCOPE={scope}` is also exported to this session's Bash environment.")
+    else:
+        lines.append("- Warning: the session environment couldn't be set, so `MEM_SCOPE` is not exported: "
+                     "the prefix is the only thing keeping memory in this scope.")
+    lines += [
         f"- Announce every write in one line. Full rules: `{mother / 'CLAUDE.md'}`, section `## Memory`.",
         "- Never run `bin/mem embed` or the warm task channel garbage collector: they belong to the mother.",
         f"- For anything outside this scope, ask the mother: `maestro-net ask {mother_name} \"…\"`.",
@@ -170,6 +225,9 @@ def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity
             f"- The linked vault folder is `{row['vault_folder']}`: documents for this project go there.",
             f"- Every document passes `{mother / 'bin' / 'register-check'} <file>` before delivery.",
         ]
+        if not vault_open:
+            lines.append("- The plugin couldn't record this session for the vault guard: file tools on "
+                         "that folder will ask for permission.")
     return "\n".join(lines)
 
 
@@ -177,64 +235,98 @@ def emit_context(text: str) -> None:
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
 
 
-def session_start() -> int:
+def export_scope(scope: str) -> bool:
+    env_file = os.environ.get("CLAUDE_ENV_FILE")
+    if not env_file:
+        return False
     try:
-        data = json.load(sys.stdin)
-    except ValueError:
-        data = {}
-    folder = data.get("cwd") or os.getcwd()
-    project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or folder
-    marker = marker_path(project_dir)
-
-    reg_file = registry_path()
-    try:
-        raw = reg_file.read_text(encoding="utf-8")
+        with open(env_file, "a", encoding="utf-8") as f:
+            f.write(f"export MEM_SCOPE={scope}\n")
     except OSError:
-        raw = ""
-    if "satellites:" not in raw:
-        if marker and marker.exists():
-            marker.unlink()
-        return 0
+        return False
+    return True
 
-    net = load_net()
+
+def write_marker(marker: Path | None, scope: str, vault: str | None) -> bool:
+    if not marker:
+        return False
     try:
-        registry = net.parse_registry(raw, str(reg_file))
-    except Exception:
-        return 0
-    scope, entry = match_satellite(registry, folder)
-    if scope is None:
-        if marker and marker.exists():
-            marker.unlink()
-        return 0
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({"scope": scope, "vault": vault}), encoding="utf-8")
+    except OSError:
+        return False
+    return True
 
+
+def start_satellite(scope: str, entry: dict, registry: dict, marker: Path | None) -> None:
     mother_name = entry["mother"]
     mother_entry = registry["instances"].get(mother_name)
     if not mother_entry:
         emit_context(f"Maestro: this repo is registered as satellite `{scope}` of `{mother_name}`, "
                      "which the registry doesn't list. Satellite mode is off.")
-        return 0
+        return
     mother = Path(mother_entry["path"]).expanduser()
     if schema_api(mother) < MIN_SCHEMA_API:
         emit_context(f"Maestro: this repo is satellite `{scope}` of `{mother_name}`, but that "
                      f"instance's bin/mem is too old for satellites (needs SCHEMA_API {MIN_SCHEMA_API}). "
                      "Satellite mode is off until the mother is updated.")
-        return 0
+        return
     row = satellite_row(mother, scope)
     if row is None:
         emit_context(f"Maestro: this repo is satellite `{scope}` in the registry, but `{mother_name}` "
                      f"has no satellites row for it (`{mother / 'bin' / 'mem'} satellite add`). "
                      "Satellite mode is off.")
-        return 0
+        return
+    if os.path.realpath(row.get("repo_path") or "") != os.path.realpath(entry["repo"]):
+        emit_context(f"Maestro: satellite `{scope}` points to {entry['repo']} in the registry and to "
+                     f"{row.get('repo_path')} in `{mother_name}`. Satellite mode is off until they agree.")
+        return
+    identity = identity_extract(mother)
+    vault_open = write_marker(marker, scope, row.get("vault_folder"))
+    exported = export_scope(scope)
+    emit_context(context_text(scope, mother_name, mother, row, identity, exported, vault_open))
 
-    env_file = os.environ.get("CLAUDE_ENV_FILE")
-    if env_file:
-        with open(env_file, "a", encoding="utf-8") as f:
-            f.write(f"export MEM_SCOPE={scope}\n")
-    if marker:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(json.dumps({"scope": scope, "vault": row.get("vault_folder")}), encoding="utf-8")
-    emit_context(context_text(scope, mother_name, mother, row, identity_extract(mother)))
+
+def session_start() -> int:
+    try:
+        data = json.load(sys.stdin)
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    folder = data.get("cwd") or os.getcwd()
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or folder
+    marker = marker_path(project_dir)
+    drop_marker(marker)
+
+    reg_file = registry_path()
+    try:
+        raw = reg_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return 0
+    if "satellites:" not in raw:
+        return 0
+    try:
+        registry = load_net().parse_registry(raw, str(reg_file))
+    except Exception:
+        return 0
+    scope, entry = match_satellite(registry, folder)
+    if scope is None:
+        return 0
+    try:
+        start_satellite(scope, entry, registry, marker)
+    except Exception as exc:
+        drop_marker(marker)
+        emit_context(f"Maestro: satellite `{scope}` failed at session start "
+                     f"({exc.__class__.__name__}: {exc}). Satellite mode may be incomplete.")
     return 0
+
+
+def unsafe_pattern(tool_name: str, tool_input: dict) -> bool:
+    """A Glob pattern or a Grep glob that can climb out of the path it's given."""
+    key = {"Glob": "pattern", "Grep": "glob"}.get(tool_name)
+    value = tool_input.get(key) if key else None
+    return isinstance(value, str) and (".." in value or value.startswith(("/", "~")))
 
 
 def pre_tool_use(marker: str) -> int:
@@ -243,14 +335,16 @@ def pre_tool_use(marker: str) -> int:
         data = json.load(sys.stdin)
     except (OSError, ValueError):
         return 0
-    vault = info.get("vault")
-    tool_input = data.get("tool_input") or {}
-    target = tool_input.get("file_path") or tool_input.get("path")
-    if not vault or not target:
+    if not isinstance(info, dict) or not isinstance(data, dict):
         return 0
-    real_vault = os.path.realpath(vault)
-    real_target = os.path.realpath(target)
-    if real_target == real_vault or real_target.startswith(real_vault + os.sep):
+    vault = info.get("vault")
+    tool_input = data.get("tool_input")
+    if not vault or not isinstance(tool_input, dict):
+        return 0
+    target = tool_input.get("file_path") or tool_input.get("path")
+    if not isinstance(target, str) or not target or unsafe_pattern(data.get("tool_name", ""), tool_input):
+        return 0
+    if inside(os.path.realpath(target), os.path.realpath(vault)):
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "allow",

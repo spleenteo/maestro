@@ -800,7 +800,7 @@ _SATELLITE_COLS = ["scope", "repo_path", "project_type", "mandate", "method",
 
 def _refuse_satellite_scope(action: str) -> int | None:
     """None in the mother; in a satellite, a stderr message naming `action`
-    and EXIT_SCOPE_REFUSED — satellite add/list/show are mother-only."""
+    and EXIT_SCOPE_REFUSED — satellite add/list/show/remove are mother-only."""
     scope = mem_schema.current_scope()
     if scope is None:
         return None
