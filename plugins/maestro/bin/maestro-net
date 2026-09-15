@@ -65,6 +65,8 @@ E_REMOTE_FAILED = 8
 E_EXISTS = 9
 
 VERBS = ("recap", "ask", "request")
+# `request` apre una sessione nella madre: si concede istanza per istanza, mai di default.
+DEFAULT_ACCEPTS = ("recap", "ask")
 SUPPORTED_VERSIONS = (1,)
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -1182,16 +1184,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("scan", help="Censisce le istanze Maestro sul disco")
     sp.add_argument("--write", action="store_true", help="scrive il registry invece di stamparlo")
     sp.add_argument("--force", action="store_true", help="sovrascrive un registry esistente")
-    sp.add_argument("--accepts", default=",".join(VERBS),
-                    help=f"verbi proposti per ogni istanza (default: {','.join(VERBS)})")
+    sp.add_argument("--accepts", default=",".join(DEFAULT_ACCEPTS),
+                    help=f"verbi proposti per ogni istanza (default: {','.join(DEFAULT_ACCEPTS)})")
     sp.set_defaults(func=cmd_scan)
 
     sp = sub.add_parser("register", help="Aggiunge un'istanza al registry senza toccare le altre")
     sp.add_argument("name", help="slug minuscolo, es. home")
     sp.add_argument("--path", required=True, help="path assoluto della root dell'istanza")
     sp.add_argument("--domain", default="", help="a cosa serve l'istanza (facoltativo)")
-    sp.add_argument("--accepts", default=",".join(VERBS),
-                    help=f"verbi ammessi per questa istanza (default: {','.join(VERBS)})")
+    sp.add_argument("--accepts", default=",".join(DEFAULT_ACCEPTS),
+                    help=f"verbi ammessi per questa istanza (default: {','.join(DEFAULT_ACCEPTS)})")
     sp.set_defaults(func=cmd_register)
 
     sp = sub.add_parser("unregister", help="Toglie un'istanza dal registry")

@@ -311,13 +311,13 @@ class TestRecap(RegistryFixture):
     def test_unknown_verb_in_accepts_does_not_block_known_verbs(self):
         self.registry.write_text(
             f"version: 1\ninstances:\n  home:\n    path: {self.home}\n"
-            f"    accepts: [recap, ask, request]\n"
+            f"    accepts: [recap, ask, teleport]\n"
         )
         r = self.recap("home", "ciao")
         self.assertEqual(r.returncode, OK, r.stderr)
         self.assertIn("ARG=save", self.logged())
         self.assertIn("home", r.stderr)
-        self.assertIn("request", r.stderr)
+        self.assertIn("teleport", r.stderr)
 
     def test_runs_bin_mem_from_the_recipient_directory(self):
         self.recap("home", "ciao")
