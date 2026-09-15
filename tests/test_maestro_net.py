@@ -825,6 +825,57 @@ class TestUnregister(RegistryFixture):
         self.assertIn("work:", text)
 
 
+class TestSatellites(RegistryFixture):
+    """The `satellites:` block: parse, add, remove, refusals."""
+
+    def sat(self, *args):
+        return run("satellite", *args, env={"MAESTRO_INSTANCES": str(self.registry)})
+
+    def setUp(self):
+        super().setUp()
+        self.repo = self.root / "code" / "acme"
+        self.repo.mkdir(parents=True)
+
+    def test_add_then_list_then_remove_keeps_instances(self):
+        before = self.registry.read_text()
+        r = self.sat("add", "acme", "--repo", str(self.repo), "--mother", "home")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        listed = json.loads(run("list", "--json", env={"MAESTRO_INSTANCES": str(self.registry)}).stdout)
+        self.assertEqual(listed["satellites"]["acme"],
+                         {"repo": os.path.realpath(self.repo), "mother": "home"})
+        self.assertEqual(set(listed["instances"]), {"home", "work"})
+        r = self.sat("remove", "acme")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual(self.registry.read_text(), before + "satellites:\n")
+
+    def test_satellite_is_never_a_recipient(self):
+        self.sat("add", "acme", "--repo", str(self.repo), "--mother", "home")
+        r = run("recap", "acme", "x", "--dry-run", env={"MAESTRO_INSTANCES": str(self.registry)})
+        self.assertEqual(r.returncode, E_UNKNOWN_INSTANCE)
+
+    def test_refusals(self):
+        env = {"MAESTRO_INSTANCES": str(self.registry)}
+        self.assertEqual(self.sat("add", "acme", "--repo", str(self.repo), "--mother", "nobody").returncode,
+                         E_UNKNOWN_INSTANCE)
+        self.assertEqual(self.sat("add", "acme", "--repo", "code/acme", "--mother", "home").returncode, E_USAGE)
+        self.assertEqual(self.sat("add", "Acme", "--repo", str(self.repo), "--mother", "home").returncode, E_USAGE)
+        self.assertEqual(self.sat("add", "home-repo", "--repo", str(self.home), "--mother", "home").returncode,
+                         E_EXISTS)
+        self.assertEqual(self.sat("add", "acme", "--repo", str(self.repo), "--mother", "home").returncode, OK)
+        nested = self.repo / "sub"
+        nested.mkdir()
+        self.assertEqual(self.sat("add", "sub", "--repo", str(nested), "--mother", "home").returncode, E_EXISTS)
+        self.assertEqual(self.sat("add", "acme", "--repo", str(self.root / "code"), "--mother", "work").returncode,
+                         E_EXISTS)
+        self.assertEqual(self.sat("remove", "nope").returncode, E_UNKNOWN_INSTANCE)
+        self.assertEqual(run("list", env=env).returncode, OK)
+
+    def test_satellite_without_mother_is_malformed(self):
+        self.registry.write_text(self.registry.read_text() + "satellites:\n  acme:\n    repo: /x\n")
+        r = run("list", env={"MAESTRO_INSTANCES": str(self.registry)})
+        self.assertEqual(r.returncode, E_BAD_REGISTRY)
+
+
 class TestCli(unittest.TestCase):
     def test_no_verb_exits_2(self):
         r = run()

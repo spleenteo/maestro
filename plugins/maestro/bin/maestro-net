@@ -16,6 +16,10 @@ Due verbi soli, `recap` e `ask`, più i comandi di servizio sul registry.
                                    toccare le altre (a differenza di
                                    `scan --write --force`).
     unregister <nome>              toglie un'istanza dal registry.
+    satellite add <scope> --repo R --mother M
+                                   registra un repo come satellite di
+                                   un'istanza madre (blocco `satellites:`).
+    satellite remove <scope>       toglie un satellite dal registry.
 
 VINCOLO CARDINE: il canale trasporta memorie, non permessi. Nessun verbo
 tocca file, MCP o task di un'altra istanza. Il campo `accepts` del registry
@@ -34,7 +38,7 @@ Exit code — la degradazione è sempre esplicita, mai silenziosa:
     6  verbo non ammesso dal destinatario
     7  path del destinatario non più valido
     8  il comando remoto è fallito
-    9  nome o path già registrati
+    9  nome, path o repo già registrati o sovrapposti
 """
 
 from __future__ import annotations
@@ -109,9 +113,9 @@ def _scalar(raw: str, lineno: int, source: str):
 def parse_registry(text: str, source: str) -> dict:
     """Legge il registry. Solleva RegistryError su qualunque scostamento."""
     data: Dict[str, object] = {}
-    instances: Dict[str, dict] = {}
+    blocks: Dict[str, Dict[str, dict]] = {"instances": {}, "satellites": {}}
     current: Optional[str] = None
-    in_instances = False
+    block: Optional[str] = None
     seen_instances = False
 
     for lineno, line in enumerate(text.splitlines(), start=1):
@@ -129,33 +133,36 @@ def parse_registry(text: str, source: str) -> dict:
         raw = raw.strip()
 
         if indent == 0:
-            in_instances = key == "instances"
+            block = key if key in blocks else None
             current = None
-            if in_instances:
-                seen_instances = True
+            if block is not None:
+                if key == "instances":
+                    seen_instances = True
                 if raw:
                     raise RegistryError(
-                        f"{source}:{lineno}: `instances:` non prende un valore sulla stessa riga"
+                        f"{source}:{lineno}: `{key}:` non prende un valore sulla stessa riga"
                     )
                 continue
             if key not in ("version",):
                 raise RegistryError(f"{source}:{lineno}: chiave di primo livello sconosciuta: {key}")
             data[key] = _scalar(raw, lineno, source)
         elif indent == 2:
-            if not in_instances:
-                raise RegistryError(f"{source}:{lineno}: blocco indentato fuori da `instances:`")
+            if block is None:
+                raise RegistryError(
+                    f"{source}:{lineno}: blocco indentato fuori da `instances:` o `satellites:`"
+                )
             if raw:
                 raise RegistryError(
-                    f"{source}:{lineno}: il nome istanza `{key}` non prende un valore sulla stessa riga"
+                    f"{source}:{lineno}: il nome `{key}` non prende un valore sulla stessa riga"
                 )
-            if key in instances:
-                raise RegistryError(f"{source}:{lineno}: istanza duplicata: {key}")
+            if key in blocks[block]:
+                raise RegistryError(f"{source}:{lineno}: voce duplicata in `{block}`: {key}")
             current = key
-            instances[key] = {}
+            blocks[block][key] = {}
         elif indent == 4:
-            if current is None:
-                raise RegistryError(f"{source}:{lineno}: campo `{key}` fuori da un blocco istanza")
-            instances[current][key] = _scalar(raw, lineno, source)
+            if current is None or block is None:
+                raise RegistryError(f"{source}:{lineno}: campo `{key}` fuori da un blocco")
+            blocks[block][current][key] = _scalar(raw, lineno, source)
         else:
             raise RegistryError(
                 f"{source}:{lineno}: indentazione di {indent} spazi, attesi 0, 2 o 4"
@@ -163,7 +170,8 @@ def parse_registry(text: str, source: str) -> dict:
 
     if not seen_instances:
         raise RegistryError(f"{source}: manca la chiave `instances`")
-    data["instances"] = instances
+    data["instances"] = blocks["instances"]
+    data["satellites"] = blocks["satellites"]
     _validate(data, source)
     return data
 
@@ -199,6 +207,11 @@ def _validate(data: dict, source: str) -> None:
                 continue
             kept.append(verb)
         entry["accepts"] = kept
+
+    for scope, entry in data.get("satellites", {}).items():
+        for field in ("repo", "mother"):
+            if not entry.get(field) or not isinstance(entry.get(field), str):
+                raise RegistryError(f"{source}: satellite `{scope}` senza campo `{field}`")
 
 
 def registry_path(arg: Optional[str]) -> Path:
@@ -311,6 +324,10 @@ def cmd_list(args) -> int:
                     }
                     for name, entry in instances.items()
                 },
+                "satellites": {
+                    scope: {"repo": entry.get("repo"), "mother": entry.get("mother")}
+                    for scope, entry in registry.get("satellites", {}).items()
+                },
             },
             sys.stdout, ensure_ascii=False, indent=2,
         )
@@ -329,6 +346,13 @@ def cmd_list(args) -> int:
         if entry.get("domain"):
             print(f"    dominio: {entry['domain']}")
         print(f"    path: {entry['path']}")
+    satellites = registry.get("satellites", {})
+    if satellites:
+        print(f"\n# {len(satellites)} satelliti\n")
+        for scope, entry in satellites.items():
+            alive = "" if Path(entry["repo"]).expanduser().is_dir() else "  [repo assente]"
+            print(f"- {scope}  (madre: {entry['mother']}){alive}")
+            print(f"    repo: {entry['repo']}")
     return OK
 
 
@@ -353,9 +377,12 @@ def clean_env() -> Dict[str, str]:
     destinatario scriverebbe nel db del mittente. MEM_SCOPE via: un recap
     o un ask partiti da un satellite atterrerebbero nello scope del
     mittente invece che in quello nullo del destinatario. PWD via: resta
-    quello del chiamante e confonde chi lo legge.
+    quello del chiamante e confonde chi lo legge. CLAUDE_PROJECT_DIR via:
+    la sessione remota deve riconoscersi dalla propria cartella, non da
+    quella del satellite che la chiama.
     """
-    return {k: v for k, v in os.environ.items() if k not in ("MEM_DB", "MEM_SCOPE", "PWD")}
+    dropped = ("MEM_DB", "MEM_SCOPE", "PWD", "CLAUDE_PROJECT_DIR")
+    return {k: v for k, v in os.environ.items() if k not in dropped}
 
 
 def run_remote(name: str, verb: str, cmd: List[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess:
@@ -501,13 +528,13 @@ def _block_end(lines: List[str], start: int, boundary_indent: int) -> int:
     return len(lines)
 
 
-def _instances_header_index(lines: List[str]) -> int:
-    """Riga `instances:` di primo livello. Il chiamante l'ha già validata con parse_registry."""
+def _block_header_index(lines: List[str], block: str = "instances") -> Optional[int]:
+    """Riga `<block>:` di primo livello, o None se il blocco non c'è."""
     for i, line in enumerate(lines):
         indent = _line_indent(line)
-        if indent == 0 and line.strip().split(":", 1)[0].strip() == "instances":
+        if indent == 0 and line.strip().split(":", 1)[0].strip() == block:
             return i
-    raise RegistryError("`instances:` non trovata")
+    return None
 
 
 def render_entry(name: str, path: str, domain: str, accepts: List[str]) -> str:
@@ -524,31 +551,39 @@ def render_entry(name: str, path: str, domain: str, accepts: List[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def insert_entry(text: str, entry_text: str) -> str:
-    """Inserisce entry_text alla fine del blocco `instances:`. Il resto non cambia."""
+def insert_entry(text: str, entry_text: str, block: str = "instances") -> str:
+    """Inserisce entry_text alla fine del blocco `<block>:`, creandolo in coda se manca."""
     lines = text.splitlines(keepends=True)
-    header = _instances_header_index(lines)
+    header = _block_header_index(lines, block)
+    if header is None:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        return "".join(lines) + f"{block}:\n" + entry_text
     insert_at = _block_end(lines, header + 1, 0)
     if insert_at == len(lines) and lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
     return "".join(lines[:insert_at]) + entry_text + "".join(lines[insert_at:])
 
 
-def remove_entry(text: str, name: str) -> str:
-    """Toglie il blocco della singola istanza `name`. Il resto non cambia."""
+def remove_entry(text: str, name: str, block: str = "instances") -> str:
+    """Toglie la voce `name` dal blocco `<block>:`. Il resto non cambia."""
     lines = text.splitlines(keepends=True)
-    for i, line in enumerate(lines):
-        indent = _line_indent(line)
-        if indent == 2 and line.strip().split(":", 1)[0].strip() == name:
+    header = _block_header_index(lines, block)
+    if header is None:
+        raise RegistryError(f"blocco `{block}` non trovato nel testo")
+    block_end = _block_end(lines, header + 1, 0)
+    for i in range(header + 1, block_end):
+        line = lines[i]
+        if _line_indent(line) == 2 and line.strip().split(":", 1)[0].strip() == name:
             end = _block_end(lines, i + 1, 2)
             return "".join(lines[:i]) + "".join(lines[end:])
-    raise RegistryError(f"istanza `{name}` non trovata nel testo")
+    raise RegistryError(f"voce `{name}` non trovata in `{block}`")
 
 
 def _load_registry_text(dest: Path) -> Tuple[str, dict]:
     """Testo grezzo + dati validati, o un registry vuoto in memoria se il file non c'è."""
     if not dest.is_file():
-        return "version: 1\ninstances:\n", {"version": 1, "instances": {}}
+        return "version: 1\ninstances:\n", {"version": 1, "instances": {}, "satellites": {}}
     try:
         text = dest.read_text(encoding="utf-8")
     except OSError as exc:
@@ -642,6 +677,78 @@ def cmd_unregister(args) -> int:
     new_text = remove_entry(text, name)
     dest.write_text(new_text, encoding="utf-8")
     print(f"maestro-net: `{name}` tolta dal registry — {entry.get('path')}.")
+    return OK
+
+
+def _real(p: str) -> str:
+    try:
+        return os.path.realpath(Path(p).expanduser())
+    except OSError:
+        return p
+
+
+def _overlaps(a: str, b: str) -> bool:
+    """Due path reali coincidono o uno contiene l'altro."""
+    a_ = a.rstrip(os.sep) + os.sep
+    b_ = b.rstrip(os.sep) + os.sep
+    return a_.startswith(b_) or b_.startswith(a_)
+
+
+def render_satellite(scope: str, repo: str, mother: str) -> str:
+    if '"' in repo:
+        raise NetError(E_USAGE, f"repo con virgolette, non rappresentabile: {repo}")
+    rendered = f'"{repo}"' if re.search(r"[\s:#\[\]{}]", repo) else repo
+    return f"  {scope}:\n    repo: {rendered}\n    mother: {mother}\n"
+
+
+def cmd_satellite_add(args) -> int:
+    scope = args.scope
+    if not NAME_RE.fullmatch(scope):
+        raise NetError(E_USAGE, f"scope non valido: `{scope}` (serve uno slug minuscolo).")
+    raw = Path(args.repo)
+    if not raw.is_absolute():
+        raise NetError(E_USAGE, f"--repo deve essere assoluto: {args.repo}")
+    if not raw.is_dir():
+        raise NetError(E_DEAD_PATH, f"non è una directory: {raw}")
+    repo = os.path.realpath(raw)
+
+    dest = registry_path(args.registry)
+    text, data = _load_registry_text(dest)
+    mother, _ = resolve_instance(data, args.mother)
+
+    for name, entry in data["instances"].items():
+        if _overlaps(repo, _real(entry["path"])):
+            raise NetError(
+                E_EXISTS,
+                f"il repo coincide con l'istanza `{name}` o la contiene: {repo}.",
+            )
+    for other, entry in data.get("satellites", {}).items():
+        if other.lower() == scope.lower():
+            raise NetError(E_EXISTS, f"scope già registrato: `{other}` → {entry.get('repo')}.")
+        if _overlaps(repo, _real(entry["repo"])):
+            raise NetError(
+                E_EXISTS,
+                f"il repo si sovrappone al satellite `{other}`: {entry.get('repo')}.",
+            )
+
+    new_text = insert_entry(text, render_satellite(scope, repo, mother), block="satellites")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(new_text, encoding="utf-8")
+    print(f"maestro-net: satellite `{scope}` registrato — {repo} (madre: {mother}).")
+    return OK
+
+
+def cmd_satellite_remove(args) -> int:
+    dest = registry_path(args.registry)
+    if not dest.is_file():
+        raise NetError(E_NO_REGISTRY, f"registry assente: {dest}")
+    text, data = _load_registry_text(dest)
+    matches = [s for s in data.get("satellites", {}) if s.lower() == args.scope.lower()]
+    if not matches:
+        raise NetError(E_UNKNOWN_INSTANCE, f"satellite sconosciuto: `{args.scope}`.")
+    scope = matches[0]
+    dest.write_text(remove_entry(text, scope, block="satellites"), encoding="utf-8")
+    print(f"maestro-net: satellite `{scope}` tolto dal registry.")
     return OK
 
 
@@ -849,7 +956,7 @@ def build_parser() -> argparse.ArgumentParser:
             "MCP o task di un'altra istanza.\n"
             "Exit code: 0 fatto, 2 uso, 3 registry assente, 4 registry malformato, "
             "5 istanza sconosciuta o ambigua, 6 verbo non ammesso, 7 path non valido, "
-            "8 comando remoto fallito, 9 nome o path già registrati."
+            "8 comando remoto fallito, 9 nome, path o repo già registrati o sovrapposti."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -897,6 +1004,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("name")
     sp.set_defaults(func=cmd_unregister)
 
+    sp = sub.add_parser("satellite", help="Registra o toglie un repo satellite")
+    ssub = sp.add_subparsers(dest="satellite_verb")
+    sa = ssub.add_parser("add", help="Registra un repo come satellite di un'istanza madre")
+    sa.add_argument("scope", help="slug minuscolo, lo scope delle righe del satellite")
+    sa.add_argument("--repo", required=True, help="path assoluto del repo")
+    sa.add_argument("--mother", required=True, help="nome dell'istanza madre nel registry")
+    sa.set_defaults(func=cmd_satellite_add)
+    sr = ssub.add_parser("remove", help="Toglie un satellite dal registry")
+    sr.add_argument("scope")
+    sr.set_defaults(func=cmd_satellite_remove)
+
     return p
 
 
@@ -905,7 +1023,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if not args.verb:
         parser.print_usage(sys.stderr)
-        print("maestro-net: serve un verbo (list, recap, ask, scan, register, unregister)", file=sys.stderr)
+        print("maestro-net: serve un verbo (list, recap, ask, scan, register, unregister, satellite)", file=sys.stderr)
+        return E_USAGE
+    if not hasattr(args, "func"):
+        parser.print_usage(sys.stderr)
+        print("maestro-net: `satellite` vuole `add` o `remove`", file=sys.stderr)
         return E_USAGE
     try:
         return args.func(args)
