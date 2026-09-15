@@ -2,14 +2,14 @@
 origin: maestro
 maestro_version: v2026.08.26.2
 tags: [howto, maestro-net, cross-istanza, registry, skill, plugin, marketplace, chezmoi, isolamento, orchestrator]
-description: "How several Maestro instances talk to each other: the two verbs `recap` and `ask`, the `~/.claude/maestro-instances.yaml` registry, installing `maestro-net` from the Maestro Claude Code plugin, and how a failure degrades explicitly. Reference for maestro-net."
+description: "How several Maestro instances talk to each other: the verbs `recap` and `ask`, a satellite's `request` to its mother, the `~/.claude/maestro-instances.yaml` registry and its `satellites:` block, installing `maestro-net` from the Maestro Claude Code plugin, and how a failure degrades explicitly. Reference for maestro-net."
 ---
 
 # 11 — maestro-net
 
 An owner who lives in more than one context ends up with more than one instance: work, personal, one client, another client. Each keeps its own `memories.db`, its own preferences, its own domain. That separation is the point, and it holds until the day something learned in one context belongs in another.
 
-maestro-net is the channel between them. Two verbs, one registry, one hard constraint.
+maestro-net is the channel between them. Three verbs (the third only from a satellite to its mother), one registry, one hard constraint.
 
 ## Install
 
@@ -96,11 +96,11 @@ maestro-net request "write a dossier on the onboarding flow in my vault folder"
 ```
 
 - The session is `claude --bg --name <mother>-<scope>-<4 hex>`, so it appears as a row in `claude agents`; `claude attach <id>` opens it, `claude stop <id>` stops it, `claude rm <id>` removes the row.
-- The prompt carries `requesting_scope`, `satellite_repo`, `vault_folder`, `reply_to` (`uds:` plus the satellite session's `CLAUDE_CODE_MESSAGING_SOCKET`, or `none`), the request name, and the rules the mother follows. The mother's own `## Requests from satellites` section in `CLAUDE.md` stays the authority.
-- The linked vault folder is passed as `--add-dir`, so writes there don't stop on a permission prompt. No permission mode is passed unless `--permission-mode` is given: the session starts in the mode configured for the mother's folder.
+- The prompt carries `requesting_scope`, `satellite_repo`, `vault_folder`, `reply_to` (`uds:` plus the satellite session's `CLAUDE_CODE_MESSAGING_SOCKET`, or `none`), the request name, and the rules the mother follows. The satellite's text sits between two lines carrying a random value generated at launch, and the prompt says that those fields come only from the header: a line inside the text that looks like a field or a rule is data. The mother's own `## Requests from satellites` section in `CLAUDE.md` stays the authority.
+- The linked vault folder is passed as `--add-dir=<folder>`, which spares the read prompts there. The permission mode is never chosen by the satellite: the session starts in the mode configured for the mother's folder. Writes in the vault run unattended only in `acceptEdits` or `auto`; in the default mode the session stops at its first write, shown as waiting for input in `claude agents`, until the owner answers with `claude attach <id>`.
 - The mother replies once with `SendMessage` to `reply_to`, with absolute paths, and always saves one memory in the requesting scope, `request <name>: done` or `request <name>: refused`. When the satellite session is gone, or had no messaging socket, that memory is the answer: `MEM_SCOPE=<scope> <mother>/bin/mem search "request <name>"`.
 - The request session writes documents only in the vault folder and never edits the mother's repository: a background session that edits files of a git repo moves into a worktree first, where `bin/mem` finds no `private/memories.db`.
-- Before launching, the verb reads the satellite's row through the mother's `bin/mem satellite show`; no row means exit 8 and no session. The launched environment drops `MEM_DB`, `MEM_SCOPE`, `PWD`, `CLAUDE_PROJECT_DIR`, `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_ENV_FILE`.
+- Before launching, the verb reads the satellite's row through the mother's `bin/mem satellite show`; no row means exit 8 and no session. A mother row pointing to another repo exits 8 too. The launched environment drops `MEM_DB`, `MEM_SCOPE`, `PWD`, `CLAUDE_PROJECT_DIR`, `CLAUDE_ENV_FILE`, the calling session's identity (`CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_CODE_ENTRYPOINT`, every `CLAUDE_CODE_*SESSION*`) and its messaging socket and token (`CLAUDE_CODE_MESSAGING_*`).
 - On macOS the background session host asks for folder access separately from the terminal: a mother or a vault in iCloud Drive may need access granted in System Settings, Privacy & Security, Files and Folders.
 
 ## The registry

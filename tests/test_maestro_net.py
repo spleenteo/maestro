@@ -925,7 +925,8 @@ class TestRequest(RegistryFixture):
         claude.write_text(CLAUDE_RECORDER.replace(
             'echo "CWD=$(pwd)"',
             'echo "CWD=$(pwd)"; echo "SOCKET=${CLAUDE_CODE_MESSAGING_SOCKET:-<unset>}"; '
-            'echo "ENV_FILE=${CLAUDE_ENV_FILE:-<unset>}"'))
+            'echo "ENV_FILE=${CLAUDE_ENV_FILE:-<unset>}"; '
+            'echo "TOKEN=${CLAUDE_CODE_MESSAGING_TOKEN:-<unset>}"; echo "SESSION=${CLAUDE_CODE_SESSION_ID:-<unset>}"'))
         claude.chmod(0o755)
         self.log = self.root / "claude.log"
 
@@ -935,6 +936,7 @@ class TestRequest(RegistryFixture):
                 "SAT_REPO": str(self.repo), "SAT_VAULT": str(self.vault),
                 "CLAUDE_REPLY": "backgrounded · ab12cd34 · home-acme-0000",
                 "CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/sock-1", "CLAUDE_ENV_FILE": "/tmp/env-1",
+                "CLAUDE_CODE_MESSAGING_TOKEN": "secret-1", "CLAUDE_CODE_SESSION_ID": "sess-1",
                 "MEM_SCOPE": "acme"}
         base.update(env)
         return run("request", *args, cwd=str(cwd or self.repo / "src"), env=base)
@@ -947,13 +949,14 @@ class TestRequest(RegistryFixture):
         self.assertEqual(r.returncode, OK, r.stderr)
         log = self.logged()
         self.assertIn(f"CWD={os.path.realpath(self.home)}", log)
-        for line in ("ARG=--bg", "ARG=--name", f"ARG={self.vault}", "ARG=--add-dir",
+        for line in ("ARG=--bg", "ARG=--name", f"ARG=--add-dir={self.vault}",
                      "requesting_scope: acme", "reply_to: uds:/tmp/sock-1",
-                     "write a dossier on onboarding", "MEM_SCOPE=acme "):
+                     "write a dossier on onboarding", "MEM_SCOPE=acme ", "=== satellite text "):
             self.assertIn(line, log)
-        for leak in ("MEM_SCOPE=acme\n", "SOCKET=/tmp/sock-1", "ENV_FILE=/tmp/env-1"):
+        # `--add-dir DIR PROMPT` would swallow the prompt: the vault travels as one `--add-dir=` argument.
+        self.assertNotIn("ARG=--add-dir\n", log)
+        for leak in ("MEM_SCOPE=acme\n", "SOCKET=/tmp/sock-1", "ENV_FILE=/tmp/env-1", "secret-1", "sess-1"):
             self.assertNotIn(leak, log)
-        self.assertNotIn("ARG=--permission-mode", log)
         self.assertIn("ab12cd34", r.stdout)
         self.assertIn("MEM_SCOPE=<unset>", (self.root / "mem.log").read_text())
 
@@ -971,6 +974,16 @@ class TestRequest(RegistryFixture):
     def test_missing_mother_row_is_refused_without_launch(self):
         self.registry.write_text(self.registry.read_text().replace("  acme:\n    repo:", "  other:\n    repo:"))
         r = self.request("x")
+        self.assertEqual(r.returncode, E_REMOTE_FAILED, r.stderr)
+        self.assertEqual(self.logged(), "")
+
+    def test_empty_request_is_a_usage_error(self):
+        r = self.request("  ")
+        self.assertEqual(r.returncode, E_USAGE, r.stderr)
+        self.assertEqual(self.logged(), "")
+
+    def test_mother_row_for_another_repo_is_refused_without_launch(self):
+        r = self.request("x", SAT_REPO="/elsewhere")
         self.assertEqual(r.returncode, E_REMOTE_FAILED, r.stderr)
         self.assertEqual(self.logged(), "")
 

@@ -113,7 +113,7 @@ After setup, the `howto/` folder has eleven guides:
 - [`howto/08-markdown-discipline.md`](howto/08-markdown-discipline.md): frontmatter, tags, descriptions, YAML safety, wikilinks
 - [`howto/09-memoria-semantica.md`](howto/09-memoria-semantica.md): the optional semantic layer over `memories.db` and the vault
 - [`howto/10-writing-register.md`](howto/10-writing-register.md): the seven prose prohibitions, the post-pass, and `bin/register-check`
-- [`howto/11-maestro-net.md`](howto/11-maestro-net.md): cross-talk between several Maestro instances (`recap`, `ask`, the instance registry)
+- [`howto/11-maestro-net.md`](howto/11-maestro-net.md): cross-talk between several Maestro instances (`recap`, `ask`, a satellite's `request`, the instance registry)
 
 ## Status
 

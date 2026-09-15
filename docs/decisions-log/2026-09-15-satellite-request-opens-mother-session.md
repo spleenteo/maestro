@@ -17,12 +17,13 @@ In v2026.08.26.2 `handoff` was dropped from maestro-net: a verb that opens a ses
 
 ## Decision
 
-`maestro-net request` launches a visible background session (`claude --bg`) in the mother, only from a registered satellite and only towards its own mother. The request grants no permission: the mother reads the satellite's row, judges the request against its mandate and its own rules, acts with its own tools, and replies with one message plus one memory in the satellite's scope. The owner grants the verb per instance in `accepts`; `register` and `scan` never add it by default. No permission mode is forced: the session starts in the mode configured for the mother's folder, with the vault folder added as a working directory.
+`maestro-net request` launches a visible background session (`claude --bg`) in the mother, only from a registered satellite and only towards its own mother. The request grants no permission: the mother reads the satellite's row, judges the request against its mandate and its own rules, acts with its own tools, and replies with one message plus one memory in the satellite's scope. The owner grants the verb per instance in `accepts`; `register` and `scan` never add it by default. The satellite can't choose the permission mode: the session starts in the mode configured for the mother's folder, with the vault folder added as a working directory. The satellite's text is fenced by lines carrying a random value, and the header fields are the only source of scope, vault and reply address.
 
 ## Alternatives discarded
 
 - **Headless `claude -p` in the mother**: invisible to the owner, no way to attach, stop or answer a question, and a write-capable headless run is harder to trust than a row in agent view.
 - **A result file instead of a memory for the fallback**: a new path convention the satellite would need to know; the memory already sits where the satellite reads.
+- **A `--permission-mode` flag on the verb**: it would let the requesting session pick how freely the mother acts, a permission crossing the channel.
 - **Requests between full instances**: out of scope. Full instances keep `recap` and `ask`; the constraint as written in v2026.08.26.2 still holds between them.
 
 ## Consequences

@@ -244,7 +244,7 @@ def start_satellite(scope: str, entry: dict, registry: dict, marker: Path | None
                      f"has no satellites row for it (`{mother / 'bin' / 'mem'} satellite add`). "
                      "Satellite mode is off.")
         return
-    if os.path.realpath(row.get("repo_path") or "") != os.path.realpath(entry["repo"]):
+    if os.path.realpath(row.get("repo_path") or "") != os.path.realpath(os.path.expanduser(entry["repo"])):
         emit_context(f"Maestro: satellite `{scope}` points to {entry['repo']} in the registry and to "
                      f"{row.get('repo_path')} in `{mother_name}`. Satellite mode is off until they agree.")
         return
