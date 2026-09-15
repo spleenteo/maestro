@@ -893,6 +893,103 @@ class TestSatellites(RegistryFixture):
         self.assertEqual(r.returncode, E_BAD_REGISTRY)
 
 
+MOTHER_MEM = """\
+#!/bin/sh
+echo "MEM_SCOPE=${MEM_SCOPE:-<unset>}" >> "$MEM_LOG"
+if [ "$1 $2 $3" = "satellite show acme" ]; then
+  printf '{"scope": "acme", "repo_path": "%s", "vault_folder": "%s"}' "$SAT_REPO" "$SAT_VAULT"
+  exit 0
+fi
+exit 1
+"""
+
+
+class TestRequest(RegistryFixture):
+    """`request` launches a background session in the mother, only from a satellite."""
+
+    def setUp(self):
+        super().setUp()
+        self.repo = self.root / "code" / "acme"
+        (self.repo / "src").mkdir(parents=True)
+        self.vault = self.root / "vault" / "acme"
+        self.vault.mkdir(parents=True)
+        mem = self.home / "bin" / "mem"
+        mem.write_text(MOTHER_MEM)
+        mem.chmod(0o755)
+        self.registry.write_text(
+            self.registry.read_text().replace("accepts: [recap, ask]", "accepts: [recap, ask, request]")
+            + f"satellites:\n  acme:\n    repo: {self.repo}\n    mother: home\n")
+        self.bindir = self.root / "fakebin"
+        self.bindir.mkdir()
+        claude = self.bindir / "claude"
+        claude.write_text(CLAUDE_RECORDER.replace(
+            'echo "CWD=$(pwd)"',
+            'echo "CWD=$(pwd)"; echo "SOCKET=${CLAUDE_CODE_MESSAGING_SOCKET:-<unset>}"; '
+            'echo "ENV_FILE=${CLAUDE_ENV_FILE:-<unset>}"'))
+        claude.chmod(0o755)
+        self.log = self.root / "claude.log"
+
+    def request(self, *args, cwd=None, **env):
+        base = {"CLAUDE_LOG": str(self.log), "MEM_LOG": str(self.root / "mem.log"),
+                "PATH": f"{self.bindir}:/usr/bin:/bin", "MAESTRO_INSTANCES": str(self.registry),
+                "SAT_REPO": str(self.repo), "SAT_VAULT": str(self.vault),
+                "CLAUDE_REPLY": "backgrounded · ab12cd34 · home-acme-0000",
+                "CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/sock-1", "CLAUDE_ENV_FILE": "/tmp/env-1",
+                "MEM_SCOPE": "acme"}
+        base.update(env)
+        return run("request", *args, cwd=str(cwd or self.repo / "src"), env=base)
+
+    def logged(self):
+        return self.log.read_text() if self.log.exists() else ""
+
+    def test_launches_a_background_session_in_the_mother(self):
+        r = self.request("write a dossier on onboarding")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        log = self.logged()
+        self.assertIn(f"CWD={os.path.realpath(self.home)}", log)
+        for line in ("ARG=--bg", "ARG=--name", f"ARG={self.vault}", "ARG=--add-dir",
+                     "requesting_scope: acme", "reply_to: uds:/tmp/sock-1",
+                     "write a dossier on onboarding", "MEM_SCOPE=acme "):
+            self.assertIn(line, log)
+        for leak in ("MEM_SCOPE=acme\n", "SOCKET=/tmp/sock-1", "ENV_FILE=/tmp/env-1"):
+            self.assertNotIn(leak, log)
+        self.assertNotIn("ARG=--permission-mode", log)
+        self.assertIn("ab12cd34", r.stdout)
+        self.assertIn("MEM_SCOPE=<unset>", (self.root / "mem.log").read_text())
+
+    def test_outside_a_satellite_is_refused_without_launch(self):
+        r = self.request("x", cwd=self.root)
+        self.assertEqual(r.returncode, E_UNKNOWN_INSTANCE, r.stderr)
+        self.assertEqual(self.logged(), "")
+
+    def test_mother_without_request_in_accepts_is_refused(self):
+        self.registry.write_text(self.registry.read_text().replace("accepts: [recap, ask, request]", "accepts: [recap, ask]"))
+        r = self.request("x")
+        self.assertEqual(r.returncode, E_VERB_REFUSED, r.stderr)
+        self.assertEqual(self.logged(), "")
+
+    def test_missing_mother_row_is_refused_without_launch(self):
+        self.registry.write_text(self.registry.read_text().replace("  acme:\n    repo:", "  other:\n    repo:"))
+        r = self.request("x")
+        self.assertEqual(r.returncode, E_REMOTE_FAILED, r.stderr)
+        self.assertEqual(self.logged(), "")
+
+    def test_claude_failure_is_reported(self):
+        r = self.request("x", CLAUDE_EXIT="3")
+        self.assertEqual(r.returncode, E_REMOTE_FAILED)
+
+    def test_without_socket_the_reply_goes_to_memory_only(self):
+        r = self.request("x", CLAUDE_CODE_MESSAGING_SOCKET="")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertIn("reply_to: none", self.logged())
+        self.assertIn("memoria", r.stderr)
+
+    def test_dry_run_launches_nothing(self):
+        r = self.request("x", "--dry-run")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual(self.logged(), "")
+
+
 class TestCli(unittest.TestCase):
     def test_no_verb_exits_2(self):
         r = run()

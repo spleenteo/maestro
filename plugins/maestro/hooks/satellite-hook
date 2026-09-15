@@ -56,43 +56,6 @@ def inside(path: str, root: str) -> bool:
     return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
 
 
-def main_checkout(folder: str) -> str | None:
-    """Main checkout root of a git worktree folder; None outside git."""
-    try:
-        out = subprocess.run(
-            ["git", "-C", folder, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            capture_output=True, text=True, timeout=3)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode != 0:
-        return None
-    common = os.path.realpath(out.stdout.strip())
-    return os.path.dirname(common) if os.path.basename(common) == ".git" else None
-
-
-def match_satellite(registry: dict, folder: str):
-    """(scope, entry) of the satellite whose repo holds folder, longest repo first.
-
-    A folder inside a registered instance is that instance's, never a satellite's."""
-    satellites = registry.get("satellites", {})
-    if not satellites:
-        return None, None
-    real = os.path.realpath(folder)
-    for entry in registry.get("instances", {}).values():
-        if inside(real, os.path.realpath(os.path.expanduser(entry["path"]))):
-            return None, None
-    ranked = sorted(satellites.items(), key=lambda kv: len(os.path.realpath(kv[1]["repo"])), reverse=True)
-    for scope, entry in ranked:
-        if inside(real, os.path.realpath(entry["repo"])):
-            return scope, entry
-    root = main_checkout(real)
-    if root:
-        for scope, entry in ranked:
-            if os.path.realpath(entry["repo"]) == root:
-                return scope, entry
-    return None, None
-
-
 def marker_path(project_dir: str) -> Path | None:
     """Marker for a project; the name escapes `%` and `/` like vault-guard does."""
     data = os.environ.get("CLAUDE_PLUGIN_DATA")
@@ -307,10 +270,11 @@ def session_start() -> int:
     if "satellites:" not in raw:
         return 0
     try:
-        registry = load_net().parse_registry(raw, str(reg_file))
+        net = load_net()
+        registry = net.parse_registry(raw, str(reg_file))
     except Exception:
         return 0
-    scope, entry = match_satellite(registry, folder)
+    scope, entry = net.match_satellite(registry, folder)
     if scope is None:
         return 0
     try:
