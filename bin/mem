@@ -850,8 +850,20 @@ def cmd_satellite_add(args) -> int:
         "vault_folder": vault_folder,
         "created": datetime.now().isoformat(timespec="seconds"),
     }
+    mother_root = _repo_root().resolve()
+    if _paths_overlap(repo_path, mother_root):
+        sys.stderr.write(
+            f"mem: --repo {repo_path} overlaps this mother instance ({mother_root})\n")
+        return EXIT_SATELLITE_EXISTS
     with connect() as con:
         mem_schema.ensure_satellites(con)
+        for other in con.execute("SELECT scope, repo_path FROM satellites").fetchall():
+            if (other["scope"] != slug and other["repo_path"] != str(repo_path)
+                    and _paths_overlap(repo_path, Path(other["repo_path"]))):
+                sys.stderr.write(
+                    f"mem: --repo {repo_path} overlaps satellite "
+                    f"{other['scope']!r} ({other['repo_path']})\n")
+                return EXIT_SATELLITE_EXISTS
         if con.execute(
                 "SELECT 1 FROM satellites WHERE scope=?", (slug,)).fetchone():
             sys.stderr.write(f"mem: satellite {slug!r} already exists\n")
@@ -878,6 +890,28 @@ def cmd_satellite_add(args) -> int:
         emit_json(row)
     else:
         announce(f"🛰️ satellite added: {slug} (repo {row['repo_path']})", json_mode=False)
+    return 0
+
+
+def _paths_overlap(a: Path, b: Path) -> bool:
+    """True when two resolved paths are equal or one contains the other."""
+    a_, b_ = str(a).rstrip("/") + "/", str(b).rstrip("/") + "/"
+    return a_.startswith(b_) or b_.startswith(a_)
+
+
+def cmd_satellite_remove(args) -> int:
+    rc = _refuse_satellite_scope("satellite remove")
+    if rc is not None:
+        return rc
+    with connect() as con:
+        deleted = 0
+        if _satellites_table_exists(con):
+            deleted = con.execute(
+                "DELETE FROM satellites WHERE scope=?", (args.slug,)).rowcount
+    if not deleted:
+        sys.stderr.write(f"mem: no satellite {args.slug!r}\n")
+        return 1
+    announce(f"🛰️ satellite removed: {args.slug}", json_mode=False)
     return 0
 
 
@@ -972,7 +1006,7 @@ def build_parser() -> argparse.ArgumentParser:
             "session's scope. embed refuses to run at all under MEM_SCOPE: only the\n"
             "mother instance vectorizes memories and prunes vault_vec.\n"
             "\n"
-            "satellite add|list|show manage the satellites table: one row per repo\n"
+            "satellite add|remove|list|show manage the satellites table: one row per repo\n"
             "the mother lends its memory to (scope, resolved repo path, project\n"
             "type, mandate, method, constraints, language, vault folder, created).\n"
             "Mother-only, like the scope flags above. list and show read the table\n"
@@ -997,7 +1031,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Exit code 6: invalid MEM_SCOPE, --scope slug, or satellite add SLUG.\n"
             "Exit code 7: satellite add's --repo is relative or not an existing\n"
             "directory, or its --vault is relative.\n"
-            "Exit code 8: satellite add's slug or repo path is already registered.\n"
+            "Exit code 8: satellite add's slug or repo path is already registered, or the\n"
+            "repo overlaps this mother instance or another satellite's repo.\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1183,6 +1218,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp_list = sat_sub.add_parser("list", help="List the registered satellites")
     sp_list.add_argument("--json", action="store_true")
     sp_list.set_defaults(func=cmd_satellite_list)
+
+    sp_rm = sat_sub.add_parser("remove", help="Remove one satellite from the table")
+    sp_rm.add_argument("slug", metavar="SLUG")
+    sp_rm.set_defaults(func=cmd_satellite_remove)
 
     sp_show = sat_sub.add_parser("show", help="Show one satellite")
     sp_show.add_argument("slug", metavar="SLUG")

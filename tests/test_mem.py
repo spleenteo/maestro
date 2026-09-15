@@ -1235,6 +1235,30 @@ class TestSatellite(TempDbCase):
         d.mkdir()
         return d
 
+    # --- overlaps and remove -----------------------------------------------
+
+    def test_add_refuses_overlapping_repos(self):
+        outer = self.repo("outer")
+        (outer / "inner").mkdir()
+        self.assertEqual(self.run_mem("satellite", "add", "outer", "--repo", str(outer),
+                                      "--type", "development").returncode, 0)
+        r = self.run_mem("satellite", "add", "inner", "--repo", str(outer / "inner"),
+                         "--type", "development")
+        self.assertEqual(r.returncode, 8, r.stderr)
+        self.assertIn("overlaps satellite", r.stderr)
+        r = self.run_mem("satellite", "add", "mother", "--repo", str(ROOT),
+                         "--type", "development")
+        self.assertEqual(r.returncode, 8, r.stderr)
+        self.assertIn("overlaps this mother instance", r.stderr)
+
+    def test_remove_deletes_one_row_and_refuses_unknown(self):
+        a = self.repo("a")
+        self.run_mem("satellite", "add", "a", "--repo", str(a), "--type", "ux")
+        r = self.run_mem("satellite", "remove", "a")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.satellite_rows(), [])
+        self.assertEqual(self.run_mem("satellite", "remove", "a").returncode, 1)
+
     # --- add: happy path ---------------------------------------------------
 
     def test_add_stores_the_resolved_repo_path_and_announces(self):
