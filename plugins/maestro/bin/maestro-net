@@ -33,7 +33,7 @@ vincolo un dato, modificabile per istanza.
 
 Registry: ~/.claude/maestro-instances.yaml (override: --registry, env
 MAESTRO_INSTANCES). Non vive in ~/.maestro/, che è il mirror read-only del
-template e verrebbe sovrascritto da maestro-sync.
+template e verrebbe sovrascritto da /maestro:maestro-sync.
 
 Exit code — la degradazione è sempre esplicita, mai silenziosa:
     0  fatto

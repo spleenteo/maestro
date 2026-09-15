@@ -85,7 +85,7 @@ The printed commit is `<sha>` for steps 4 and 5.
 
 ## 4. Template mirror
 
-The template comes from the plugin's repository (`repository` in the plugin's `plugin.json`), through the local mirror at `$HOME/.maestro`, the same read-only mirror `maestro-sync` uses. The block clones the mirror when it is missing and fetches it otherwise, then checks that the commit from step 3 is there.
+The template comes from the plugin's repository (`repository` in the plugin's `plugin.json`), through the local mirror at `$HOME/.maestro`, the same read-only mirror `/maestro:maestro-sync` uses. The block clones the mirror when it is missing and fetches it otherwise, then checks that the commit from step 3 is there.
 
 ```bash
 set -eo pipefail

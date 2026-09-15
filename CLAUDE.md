@@ -86,9 +86,8 @@ Each sub-app has its own skills in `apps/<name>/.claude/skills/*`. **They are no
 - **`logbook`** — writes the daily logbook note to `logbook_path`.
 - **`add-external-app`** — registers an external project as a sub-app (symlink, pointer skill, preferences update).
 - **`guide`** — answers the owner's questions about the orchestrator from `CLAUDE.md` and `howto/`. Triggered by `/guide`, "I'm lost", "how do I" (not `/help` — that's a Claude Code built-in).
-- **`maestro-sync`** — aligns this instance with the Maestro template upstream. Triggered by `/maestro-sync`, "sync maestro", "update from maestro".
 
-Instance creation is `/maestro:new-instance`, from the Maestro Claude Code plugin — not a hub skill in this repo.
+Instance creation is `/maestro:new-instance` and template updates are `/maestro:maestro-sync` ("sync maestro", "update from maestro"), both from the Maestro Claude Code plugin — not hub skills in this repo.
 
 Additional skills can be installed by the owner or hired as agents by HR over time.
 
@@ -256,7 +255,7 @@ bin/mem today --date <day> --to <day> | todo --due-until <day> | search --comple
 
 Raw `sqlite3` on `private/memories.db` stays for maintenance — integrity check, `VACUUM`, WAL checkpoint — and for instance-specific tables the CLI doesn't model (`howto/04-memory-and-integrations.md` → Option B).
 
-Everything else goes through `bin/mem`: skills and agents never open the memory table by hand. `bin/mem` has no schema command — a schema change to `log` is made upstream in `bin/mem_schema.py` and reaches this instance through `maestro-sync` (`howto/04-memory-and-integrations.md`).
+Everything else goes through `bin/mem`: skills and agents never open the memory table by hand. `bin/mem` has no schema command — a schema change to `log` is made upstream in `bin/mem_schema.py` and reaches this instance through `/maestro:maestro-sync` (`howto/04-memory-and-integrations.md`).
 
 ### Scope — satellites
 
@@ -313,9 +312,9 @@ If preferences declare Basecamp integration, use only the authorized account and
 
 ## Distribution and modifications
 
-Files distributed by Maestro carry `origin: maestro` in their frontmatter. **Never modify them in place** — changes are made in the Maestro origin repository and reabsorbed via `maestro-sync`. This covers `CLAUDE.md`, marked skills and agents, and any other distributed file. If a Maestro behavior doesn't fit this instance, propose a change to the pattern, not a local override.
+Files distributed by Maestro carry `origin: maestro` in their frontmatter. **Never modify them in place** — changes are made in the Maestro origin repository and reabsorbed via `/maestro:maestro-sync`. This covers `CLAUDE.md`, marked skills and agents, and any other distributed file. If a Maestro behavior doesn't fit this instance, propose a change to the pattern, not a local override.
 
-**Single exception — the `tools:` frontmatter field** of skills and agents may be extended in place to declare instance-specific tools (e.g. `mcp__acme__*`), since MCP installations are per-instance. Only `tools:` is exempt; the body and all other frontmatter keys follow the rule above. `maestro-sync` ignores `tools:` diffs by design.
+**Single exception — the `tools:` frontmatter field** of skills and agents may be extended in place to declare instance-specific tools (e.g. `mcp__acme__*`), since MCP installations are per-instance. Only `tools:` is exempt; the body and all other frontmatter keys follow the rule above. `/maestro:maestro-sync` ignores `tools:` diffs by design.
 
 Personal customizations live in `private/`, in `apps/<custom>/`, and in skills/agents without the `origin: maestro` marker — never touched by Maestro updates.
 

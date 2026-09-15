@@ -128,7 +128,7 @@ instances:
 
 ### Why not `~/.maestro/`
 
-`~/.maestro/` is the read-only mirror of the template, updated by `maestro-sync` with `git fetch && git reset --hard origin/main`. A registry living there would be wiped by the next sync. `~/.claude/` is the owner's own configuration directory, independent of wherever `maestro-net` itself happens to be installed from.
+`~/.maestro/` is the read-only mirror of the template, updated by `/maestro:maestro-sync` with `git fetch && git reset --hard origin/main`. A registry living there would be wiped by the next sync. `~/.claude/` is the owner's own configuration directory, independent of wherever `maestro-net` itself happens to be installed from.
 
 ### Populating it
 

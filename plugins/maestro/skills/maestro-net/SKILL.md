@@ -82,7 +82,7 @@ instances:
 
 - `domain` is what the instance is *for*. Use it to route when the owner doesn't name a recipient ("segna che ho pagato il commercialista" → the instance whose domain covers it). When two domains fit, ask; never pick silently.
 - `accepts` lists the verbs that instance allows. Absent or empty means no verb is allowed.
-- The file stays out of `~/.maestro/`: that is the read-only mirror of the Maestro template, reset by `maestro-sync`, and a registry there would be wiped.
+- The file stays out of `~/.maestro/`: that is the read-only mirror of the Maestro template, reset by `/maestro:maestro-sync`, and a registry there would be wiped.
 
 First population:
 

@@ -9,7 +9,7 @@ description: "Full reference for the markdown discipline: frontmatter (tags + de
 
 This is the **canonical reference** for how the orchestrator (and every skill or agent that writes into the owner's territories) formats markdown files. `CLAUDE.md` carries the condensed rules; this file carries the full rationale, edge cases, and examples.
 
-It is distributed by Maestro (`origin: maestro`): don't edit it in place — changes go through the template and come back via `maestro-sync`.
+It is distributed by Maestro (`origin: maestro`): don't edit it in place — changes go through the template and come back via `/maestro:maestro-sync`.
 
 ## Frontmatter — tags and description
 

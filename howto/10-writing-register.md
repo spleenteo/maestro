@@ -9,7 +9,7 @@ description: "Full reference for the writing register: the seven prose prohibiti
 
 This is the canonical reference for the shape of the prose an orchestrator produces. `CLAUDE.md` carries the condensed rules; this file carries the rationale and the bilingual examples, plus the mechanics of the post-pass.
 
-It is distributed by Maestro (`origin: maestro`): don't edit it in place. Changes go through the template and come back via `maestro-sync`.
+It is distributed by Maestro (`origin: maestro`): don't edit it in place. Changes go through the template and come back via `/maestro:maestro-sync`.
 
 The register exists because a model writes fluently by default, and fluent default prose has a recognisable shape: it comments on itself, it agrees before arguing, it reaches for the em dash, it closes with encouragement. Each of the seven prohibitions removes one of those habits.
 

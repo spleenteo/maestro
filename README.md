@@ -76,11 +76,11 @@ Every instance built from this template has:
 - **`memories.db.template`**: empty SQLite seed with the schema, copied into `private/` by `new-instance`.
 - **`.claude/roster.yaml`**: registry of active craft agents (ships with `librarian` and `scheduler` enrolled).
 - **`.claude/agents/`**: the shipped craft agents `hr` (recruiter and manager of the roster), `librarian` (vault research and frontmatter hygiene), `scheduler` (cold data layer for prospective/retrospective questions).
-- **`.claude/skills/`**: the hub skills `logbook` (daily note in your configured `logbook_path`), `listen` (live capture of a call; the transcript and a note land in the vault), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (post-pass that enforces the prose register), `maestro-sync` (pulls template updates from upstream).
+- **`.claude/skills/`**: the hub skills `logbook` (daily note in your configured `logbook_path`), `listen` (live capture of a call; the transcript and a note land in the vault), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (post-pass that enforces the prose register).
 - **`bin/mem`**: CLI wrapper for `memories.db` (escape-safe writes, relative dates, reports), backed by `bin/mem-vec` for the optional semantic layer.
 - **`bin/session-digest`**: pulls the owner's messages from the day's parallel sessions, for the `logbook` skill.
 - **`bin/register-check`**: mechanical check of the writing register prohibitions that carry a syntactic signature.
-- **`.claude-plugin/marketplace.json`** and **`plugins/`**: the `maestro` Claude Code plugin, installed separately (see Install above) rather than through `maestro-sync`, because it's meant to be visible from every session on the machine, not carried per instance. Currently `plugins/maestro/skills/new-instance` (creates a new instance), `plugins/maestro/skills/maestro-net` (the cross-talk channel between several Maestro instances, see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)), and `plugins/maestro/skills/satellite` with the plugin's hooks (a project repo borrows an instance's identity and memory without files of its own, see [`howto/12-satellites.md`](howto/12-satellites.md)).
+- **`.claude-plugin/marketplace.json`** and **`plugins/`**: the `maestro` Claude Code plugin, installed separately (see Install above) rather than through `/maestro:maestro-sync`, because it's meant to be visible from every session on the machine, not carried per instance. Currently `plugins/maestro/skills/new-instance` (creates a new instance), `plugins/maestro/skills/maestro-sync` (pulls template updates into an instance), `plugins/maestro/skills/maestro-net` (the cross-talk channel between several Maestro instances, see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)), and `plugins/maestro/skills/satellite` with the plugin's hooks (a project repo borrows an instance's identity and memory without files of its own, see [`howto/12-satellites.md`](howto/12-satellites.md)).
 - **`.gitignore`**: covers `private/`, workspace artifacts, and local settings.
 
 Everything else you add as you use the orchestrator:
@@ -117,7 +117,7 @@ After setup, the `howto/` folder has eleven guides:
 
 ## Status
 
-Actively evolving. Versions follow the date-based `vYYYY.MM.DD.N` scheme. See [`CHANGELOG.md`](CHANGELOG.md) for the full history and migration notes. Instances pull updates via the `maestro-sync` skill.
+Actively evolving. Versions follow the date-based `vYYYY.MM.DD.N` scheme. See [`CHANGELOG.md`](CHANGELOG.md) for the full history and migration notes. Instances pull updates with `/maestro:maestro-sync`, from the plugin.
 
 ## License
 

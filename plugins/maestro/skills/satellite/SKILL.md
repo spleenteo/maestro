@@ -58,7 +58,7 @@ set -o pipefail
 API=$(sed -n 's/^SCHEMA_API *= *\([0-9][0-9]*\).*/\1/p' "<mother-path>/bin/mem_schema.py" 2>/dev/null)
 if [ "${API:-0}" -lt 2 ]; then
   echo "<mother> has SCHEMA_API ${API:-none}: its bin/mem is too old for satellites." >&2
-  echo "Update its bin/ from the Maestro template first (/maestro-sync in <mother>)." >&2
+  echo "Update its bin/ from the Maestro template first (/maestro:maestro-sync in a session of <mother>)." >&2
   exit 1
 fi
 awk '/^## Warm task channel/{f=1;next} /^## /{f=0} f && /^channel:/{print "warm channel: " $2}' "<mother-path>/private/preferences.md"
