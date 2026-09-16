@@ -58,21 +58,29 @@ Report what is missing and the command that installs it.
 `maestro-listen --help`. State and the growing transcript live in
 `~/.local/state/listen/`, outside every worktree and outside the vault.
 
-**Every call is one simple command**: `maestro-listen <verb> [flags]`, with no
-`cd`, no `&&`, no pipe and no `set` in front. The `allowed-tools` rule of this
-skill covers only the turn that invokes it; a question asked later in the call
-runs in a later turn, where the owner's permission settings decide. A compound
-command never matches the owner's rule and prompts while they are talking. When
-a prompt does interrupt the call, answer first, then say once that adding
-`Bash(maestro-listen *)` to `permissions.allow` in `~/.claude/settings.json`
-stops them. Never edit settings yourself.
+**Every call is one simple command**: `maestro-listen <verb> [flags] --project "${CLAUDE_PROJECT_DIR}"`,
+with no `cd`, no `&&`, no pipe and no `set` in front. `--project` carries this
+session's project folder, filled in when the skill loads, so a `cd` into a
+subfolder or an app between two calls never makes the capture look like
+another folder's.
+
+The `allowed-tools` rule of this skill covers only the turn that invokes it; a
+question asked later in the call runs in a later turn, where the owner's
+permission settings decide. A compound command never matches the owner's rule
+and prompts while they are talking. When a prompt does interrupt the call,
+answer first, then say once that adding `Bash(maestro-listen *)` to
+`permissions.allow` in `~/.claude/settings.json` stops them. Never edit
+settings yourself.
 
 **The lock is machine-wide, and a capture belongs to its folder.** One capture
 runs on the machine at a time. It belongs to the folder that started it: the
 main checkout of the git repository the session runs in (a subfolder or a
 worktree counts as the repository), or the folder itself outside a repository.
 From another folder, `maestro-listen` reports who holds the lock and since
-when, and refuses `text`, `stop` and `updates` with exit 3.
+when, and refuses `text`, `stop` and `updates` with exit 3; every refusal
+carries the `project` it resolved for the caller. The boundary keeps sessions
+from stepping on each other's calls. It is no access control, so never read
+the files under `~/.local/state/listen/` directly.
 
 ## Context
 
@@ -84,7 +92,8 @@ once per capture.
    memory command (`MEM_SCOPE=<scope> "<mother>/bin/mem" …`), the role
    (mandate, constraints, language), the identity extract and, when there is
    one, the linked vault folder.
-2. **Instance**: otherwise, run `maestro-listen status` and read `project`, then
+2. **Instance**: otherwise, run `maestro-listen status --project "${CLAUDE_PROJECT_DIR}"`
+   and read `project`, then
    `ls "<project>/private/preferences.md" "<project>/bin/mem"`. Both present:
    this is a Maestro instance rooted at `<project>`, also when the session runs
    in a worktree or a subfolder of it. Read `<project>/private/preferences.md`
@@ -98,7 +107,7 @@ once per capture.
 | `--mic-label` | the owner's nick from preferences | the owner's nick from the identity extract; ask when it isn't there | ask |
 | Destination proposed at close | a vault folder chosen from people and topic | the vault folder, or a subfolder of it; without one, ask | ask |
 | Memory at close | `"<project>/bin/mem" save` | `MEM_SCOPE=<scope> "<mother>/bin/mem" save` | none |
-| Register pass on the note | the `writing-register` skill | the rules in `<mother>/CLAUDE.md`, section `## Writing register`, then `"<mother>/bin/register-check" <note>` | none |
+| Register pass on the note | the `writing-register` skill | the rules in `<mother>/CLAUDE.md`, section `## Writing register`, adjusted by the `Writing register` block of the identity extract when there is one, then `"<mother>/bin/register-check" <note>` | none |
 
 - In an instance, call the root's `bin/mem` by absolute path: a worktree has no
   `private/`, so its own copy finds no memory.
@@ -151,7 +160,7 @@ On `/listen`, in this order:
 4. **Start**, as one command:
 
    ```
-   maestro-listen start --locale it-IT --mic-label "Ada" --system-label "Sam" --title "Sam call" --context "framing document and role-play videos"
+   maestro-listen start --locale it-IT --mic-label "Ada" --system-label "Sam" --title "Sam call" --context "framing document and role-play videos" --project "${CLAUDE_PROJECT_DIR}"
    ```
 
    Add `--them-only` for `/listen them-only`.
@@ -172,8 +181,8 @@ Then go quiet. No confirmations, no progress notes.
 The owner is speaking to someone else. Every answer is **two or three lines**.
 No headers, no bullet lists, no preamble.
 
-- Read with `maestro-listen text --since <last second already read>` and keep
-  the watermark, so a long call is never re-read from the top.
+- Read with `maestro-listen text --since <last second already read> --project "${CLAUDE_PROJECT_DIR}"`
+  and keep the watermark, so a long call is never re-read from the top.
 - Answer **only** from the transcript. When something was not said, say it was
   not said. Never fill a gap with what was probably meant.
 - Writing lands on disk in blocks and `yap` only emits finalized segments, so
@@ -191,7 +200,7 @@ No headers, no bullet lists, no preamble.
 Off by default. The owner turns them on during the call ("update me every ten
 minutes") and off the same way.
 
-Start `maestro-listen updates <minutes>` as a background command (the Monitor
+Start `maestro-listen updates <minutes> --project "${CLAUDE_PROJECT_DIR}"` as a background command (the Monitor
 tool when the session has it, otherwise a background Bash call). It prints
 `UPDATE: …` whenever new cues have landed, which wakes the session; read only
 what is new and comment. It prints `CAPTURE CLOSED` and exits on its own when
@@ -215,7 +224,7 @@ tuned on a real call. It is instant and approximate.
 **At close**, do the attribution by reading. The mechanical filter compares
 strings; the two channels segment the same words differently, so one channel's
 cue is often a fragment or a merge of the other's, which no ratio can pair.
-Reading the raw two-channel transcript with `maestro-listen text --raw` settles
+Reading the raw two-channel transcript with `text --raw` settles
 those cases, and it costs nothing extra because the whole transcript has to be
 read anyway to write the note.
 
@@ -223,13 +232,15 @@ read anyway to write the note.
 
 On "we're done" or `/listen close`:
 
-1. `maestro-listen stop`, which returns the segments with their offsets and
-   input devices, the speakers heard, and a word count.
+1. `maestro-listen stop --project "${CLAUDE_PROJECT_DIR}"`, which returns the
+   segments with their offsets and input devices, the speakers heard, and a
+   word count.
 2. **When the capture is empty** (the result says so, or there is no exchange to
-   speak of), stop here. Say what was captured, leave the working file in place,
-   and write nothing. A call that never happened is not a note.
-3. Read the whole transcript with `maestro-listen text --raw` and settle the
-   attribution by reading.
+   speak of), stop here. Say what was captured, leave the working files in
+   place, and write nothing. A call that never happened is not a note.
+3. Read the whole transcript with `maestro-listen text --raw --project "${CLAUDE_PROJECT_DIR}"`
+   and settle the attribution by reading. After `stop`, `text` reads the
+   capture this folder just closed, segments merged at their offsets.
 4. **Propose a destination folder** as the context says (see **Context**). There
    is no default path: the owner confirms or corrects, and usually names the
    place themselves. Never write before the confirmation.

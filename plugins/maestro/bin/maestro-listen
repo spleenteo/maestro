@@ -16,7 +16,16 @@ Holds one capture at a time on the machine (machine-wide lock in
 ~/.local/state/listen/), outside every worktree and outside the vault. Every
 session on the machine can reach that lock, so a capture belongs to the folder
 that started it: another folder learns who holds the lock and since when,
-never the title, the context or the transcript.
+never the title, the context or the transcript. That boundary keeps sessions
+of the same user from stepping on each other's calls; it is no access control,
+since any process of that user can read the files under the state folder.
+
+A folder is the main checkout of the git repository holding `--project` (or
+the working directory when `--project` is empty or absent), else that folder
+itself. Known edges: the worktrees of a bare repository count as separate
+folders, every folder inside a repository counts as that repository (a vault
+or a home kept under git included), and outside a repository a subfolder is
+another folder.
 
 Subcommands: start, status, text, stop, updates.
 Output: JSON when piped, readable text on a terminal.
@@ -40,6 +49,7 @@ from typing import Any
 
 STATE_DIR = Path.home() / ".local" / "state" / "listen"
 STATE_FILE = STATE_DIR / "current.json"
+LAST_FILE = STATE_DIR / "last.json"
 TRANSCRIPT_DIR = STATE_DIR / "transcripts"
 BIN_DIR = STATE_DIR / "bin"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -77,20 +87,20 @@ def fail(message: str, code: int, **extra: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def load_state() -> dict[str, Any] | None:
-    if not STATE_FILE.exists():
+def load_state(path: Path = STATE_FILE) -> dict[str, Any] | None:
+    if not path.exists():
         return None
     try:
-        return json.loads(STATE_FILE.read_text())
+        return json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
         return None
 
 
-def save_state(state: dict[str, Any]) -> None:
+def save_state(state: dict[str, Any], path: Path = STATE_FILE) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = STATE_FILE.with_suffix(".json.tmp")
+    tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2))
-    tmp.replace(STATE_FILE)
+    tmp.replace(path)
 
 
 def clear_state() -> None:
@@ -98,6 +108,10 @@ def clear_state() -> None:
 
 
 def pid_alive(pid: int) -> bool:
+    # 0 and negative pids name process groups: a signal sent there would reach
+    # the caller's own group, never the supervisor.
+    if pid <= 0:
+        return False
     try:
         os.kill(pid, 0)
     except (ProcessLookupError, PermissionError, OSError):
@@ -121,33 +135,32 @@ def active_state() -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
-def project_root() -> Path:
+def project_root(given: str | None) -> Path:
     """The folder a capture belongs to.
 
-    Inside a git repository, its main checkout: a subfolder or a worktree
-    (`<repo>/.claude/worktrees/<name>`) is the repository itself. Anywhere
-    else, the working directory.
+    `given` is the session's project folder (the skill passes it, so a `cd`
+    between calls never moves the capture); empty or missing, the working
+    directory. Inside a git repository, its main checkout: a subfolder or a
+    worktree (`<repo>/.claude/worktrees/<name>`) is the repository itself.
+    Anywhere else, the folder itself.
     """
-    cwd = Path.cwd().resolve()
+    base = Path(given).expanduser().resolve() if given else Path.cwd().resolve()
+    if not base.is_dir():
+        base = Path.cwd().resolve()
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--show-toplevel", "--git-common-dir"],
-            cwd=cwd, capture_output=True, text=True, timeout=10,
+            cwd=base, capture_output=True, text=True, timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
-        return cwd
+        return base
     lines = out.stdout.splitlines()
     if out.returncode != 0 or len(lines) != 2:
-        return cwd
-    common = (cwd / lines[1]).resolve()
+        return base
+    common = (base / lines[1]).resolve()
     if common.name == ".git":
         return common.parent
     return Path(lines[0]).resolve()
-
-
-def instance_name() -> str:
-    """Name of the folder holding the lock, for the "already running" message."""
-    return project_root().name
 
 
 def same_folder(state: dict[str, Any], project: Path) -> bool:
@@ -165,6 +178,7 @@ def require_same_folder(state: dict[str, Any], project: Path) -> None:
             EXIT_BUSY,
             running=True,
             same_folder=False,
+            project=str(project),
         )
 
 
@@ -393,6 +407,9 @@ def cmd_supervise(args: argparse.Namespace) -> None:
     state = load_state()
     if state is None:
         return
+    # `start` writes the pid only after the spawn: record it here too, or the
+    # first rotation would save the placeholder back over it.
+    state["supervisor_pid"] = os.getpid()
     call_start = time.time()
     watcher_bin = ensure_audiowatch()
     current: dict[str, Any] = {}
@@ -467,7 +484,7 @@ def cmd_supervise(args: argparse.Namespace) -> None:
 
 
 def cmd_start(args: argparse.Namespace) -> None:
-    project = project_root()
+    project = project_root(args.project)
     # The lock comes before the preflight: a running capture proves `yap` was
     # there, and the owner needs to hear about the capture first.
     running = active_state()
@@ -491,6 +508,7 @@ def cmd_start(args: argparse.Namespace) -> None:
             ),
             EXIT_BUSY,
             already_running=held,
+            project=str(project),
         )
     preflight()
 
@@ -561,7 +579,7 @@ def _snapshot(state: dict[str, Any]) -> tuple[list, list]:
 
 
 def cmd_status(args: argparse.Namespace) -> None:
-    project = project_root()
+    project = project_root(args.project)
     state = active_state()
     if state is None:
         emit({"ok": True, "running": False, "project": str(project)}, "no capture running")
@@ -617,12 +635,15 @@ def cmd_stop(args: argparse.Namespace) -> None:
     state = active_state()
     if state is None:
         fail("no capture to stop", EXIT_NOT_RUNNING, running=False)
-    require_same_folder(state, project_root())
+    require_same_folder(state, project_root(args.project))
     stop_pid(int(state["supervisor_pid"]), grace=4.0)
     state = load_state() or state
     cues, clean = _snapshot(state)
     started = datetime.fromisoformat(state["started_at"])
     elapsed = int((datetime.now() - started).total_seconds())
+    # The closed capture stays readable from its folder (`text` reads it), for
+    # the attribution pass and the transcript file written at close.
+    save_state(state, LAST_FILE)
     clear_state()
     speakers = sorted({c["speaker"] for c in clean if c["speaker"]})
     words = sum(len(c["text"].split()) for c in clean)
@@ -660,10 +681,18 @@ def cmd_text(args: argparse.Namespace) -> None:
         cues.sort(key=lambda c: c["start"])
         mic_label = args.mic_label
     else:
-        state = active_state() or load_state()
-        if state is None:
-            fail("no capture running and no --file given", EXIT_NOT_RUNNING)
-        require_same_folder(state, project_root())
+        project = project_root(args.project)
+        running = active_state()
+        closed = load_state(LAST_FILE)
+        if running is not None and same_folder(running, project):
+            state = running
+        elif closed is not None and same_folder(closed, project):
+            state = closed
+        elif running is not None:
+            require_same_folder(running, project)
+        else:
+            fail("no capture from this folder and no --file given", EXIT_NOT_RUNNING,
+                 project=str(project))
         cues = read_cues(state)
         mic_label = state.get("mic_label", "")
     if not args.raw:
@@ -694,7 +723,7 @@ def cmd_updates(args: argparse.Namespace) -> None:
     state = active_state()
     if state is None:
         fail("no capture running", EXIT_NOT_RUNNING, running=False)
-    require_same_folder(state, project_root())
+    require_same_folder(state, project_root(args.project))
     stem = state["stem"]
     interval = max(1.0, args.minutes) * 60
     seen = 0
@@ -730,8 +759,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(
         dest="command", required=True, metavar="{start,status,text,stop,updates}"
     )
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--project",
+        default="",
+        help="the session's project folder (default: the working directory)",
+    )
 
-    start = sub.add_parser("start", help="open the capture")
+    start = sub.add_parser("start", parents=[common], help="open the capture")
     start.add_argument("--locale", default="en-US", help="language of the call (default: en-US)")
     start.add_argument("--mic-label", default="Me", help="label for the microphone voice")
     start.add_argument("--system-label", default="Them", help="label for the system-audio voice")
@@ -745,13 +780,13 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--context", default="", help="what this call is for, kept in the state")
     start.set_defaults(func=cmd_start)
 
-    status = sub.add_parser("status", help="state of the current capture")
+    status = sub.add_parser("status", parents=[common], help="state of the current capture")
     status.set_defaults(func=cmd_status)
 
-    stop = sub.add_parser("stop", help="stop the capture and report the segments")
+    stop = sub.add_parser("stop", parents=[common], help="stop the capture and report the segments")
     stop.set_defaults(func=cmd_stop)
 
-    text = sub.add_parser("text", help="readable transcript, segments merged, echo removed")
+    text = sub.add_parser("text", parents=[common], help="readable transcript, segments merged, echo removed")
     text.add_argument("--since", type=float, help="only cues from this second onward")
     text.add_argument("--last", type=int, help="only the last N cues")
     text.add_argument("--raw", action="store_true", help="keep the microphone echo")
@@ -759,7 +794,7 @@ def build_parser() -> argparse.ArgumentParser:
     text.add_argument("--mic-label", default="Me", help="microphone label, when using --file")
     text.set_defaults(func=cmd_text)
 
-    updates = sub.add_parser("updates", help="print a line whenever new speech lands")
+    updates = sub.add_parser("updates", parents=[common], help="print a line whenever new speech lands")
     updates.add_argument(
         "minutes", nargs="?", type=float, default=10.0, help="interval, at least 1 (default: 10)"
     )

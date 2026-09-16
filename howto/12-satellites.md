@@ -50,7 +50,7 @@ The plugin's `SessionStart` hook runs at every session start, whatever its sourc
 
 The `PreToolUse` hook opens the vault folder to `Read`, `Write`, `Edit`, `Grep` and `Glob`. It runs on every file tool call on the machine, so a shell guard exits at once unless the session start wrote a marker for the project under the plugin's data folder.
 
-The Maestro plugin's skills run in a satellite session as in any other. `/maestro:listen` captures a call, proposes the vault folder for the note and the transcript, and saves the memory of the call in the satellite's scope. The mother's own skills and agents stay in the mother: `maestro-net request` below.
+The Maestro plugin's skills run in a satellite session as in any other. `/maestro:listen` captures a call, proposes the vault folder for the note and the transcript when the satellite has one (and asks otherwise), writes only where you confirm, and saves the memory of the call in the satellite's scope. The mother's own skills and agents stay in the mother: `maestro-net request` below.
 
 When the registry names a mother that is missing or too old, has no row for the scope, or has a row pointing to another repo, the session gets one line of context saying so, no scope and no vault access.
 

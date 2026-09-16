@@ -201,12 +201,30 @@ class TestListenPlacement(unittest.TestCase):
         for stale in ("bin/listen", "listen-updates", "${CLAUDE_SKILL_DIR}"):
             self.assertNotIn(stale, self.skill)
 
+    def calls(self):
+        """Every command the skill hands the model: inline code spans and lines
+        of fenced blocks that mention `maestro-listen` with a verb."""
+        spans = re.findall(r"`([^`\n]*maestro-listen [^`\n]*)`", self.skill)
+        fenced = re.findall(r"```[^\n]*\n(.*?)```", self.skill, re.S)
+        lines = [ln.strip() for block in fenced for ln in block.splitlines()
+                 if "maestro-listen " in ln]
+        return [c for c in spans + lines if not c.startswith("Bash(")]
+
     def test_every_call_is_a_simple_command(self):
-        calls = re.findall(r"maestro-listen[^`\n]*", self.skill)
+        calls = self.calls()
         self.assertTrue(calls)
         for call in calls:
-            for token in ("&&", "||", ";", " | "):
-                self.assertNotIn(token, call, call)
+            self.assertTrue(call.startswith("maestro-listen "), call)
+            bare = re.sub(r"<[^<>]*>", "", call)
+            for token in ("&&", "||", ";", "|", "$(", ">", "<", "`"):
+                self.assertNotIn(token, bare, call)
+
+    def test_every_call_names_the_session_project(self):
+        for call in self.calls():
+            # References to the command, not calls the model runs.
+            if call.startswith(("maestro-listen <verb>", "maestro-listen --help")) or call == "maestro-listen start":
+                continue
+            self.assertIn('--project "${CLAUDE_PROJECT_DIR}"', call, call)
 
     def test_template_copies_are_gone(self):
         for rel in ("bin/listen", "bin/listen-updates", "bin/audiowatch.swift",
