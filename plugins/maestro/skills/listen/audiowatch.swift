@@ -1,12 +1,9 @@
-// origin: maestro
-// maestro_version: v2026.09.10.1
-//
 // audiowatch — prints one line every time the default input device changes.
 // No polling: it registers a CoreAudio listener and waits, costing nothing while idle.
 // Usage: audiowatch   (first line is the current device, then one line per change)
 //
 // Output is tab separated: "start|change<TAB>device id<TAB>device name".
-// `bin/listen` reads this to rotate a capture segment when the input device changes.
+// `maestro-listen` reads this to rotate a capture segment when the input device changes.
 
 import CoreAudio
 import Foundation

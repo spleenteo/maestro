@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-# origin: maestro
-# maestro_version: v2026.09.10.1
-"""listen — live capture of a call through `yap`, for the orchestrator.
+"""maestro-listen — live capture of a call through `yap`, for the `listen` skill
+of the Maestro plugin.
 
 A capture is a sequence of **segments**. Each segment is one `yap` run with its
 own VTT file and a known offset from the start of the call, so that changing the
@@ -14,9 +13,12 @@ Without `swiftc` the supervisor still runs, with a single segment and no
 rotation.
 
 Holds one capture at a time on the machine (machine-wide lock in
-~/.local/state/listen/), outside every worktree and outside the vault.
+~/.local/state/listen/), outside every worktree and outside the vault. Every
+session on the machine can reach that lock, so a capture belongs to the folder
+that started it: another folder learns who holds the lock and since when,
+never the title, the context or the transcript.
 
-Subcommands: start, status, stop, text.
+Subcommands: start, status, text, stop, updates.
 Output: JSON when piped, readable text on a terminal.
 """
 
@@ -40,6 +42,8 @@ STATE_DIR = Path.home() / ".local" / "state" / "listen"
 STATE_FILE = STATE_DIR / "current.json"
 TRANSCRIPT_DIR = STATE_DIR / "transcripts"
 BIN_DIR = STATE_DIR / "bin"
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+AUDIOWATCH_SRC = PLUGIN_ROOT / "skills" / "listen" / "audiowatch.swift"
 
 EXIT_BUSY = 3
 EXIT_MISSING_DEP = 4
@@ -117,19 +121,51 @@ def active_state() -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
-def instance_name() -> str:
-    """Name of the instance holding the lock.
+def project_root() -> Path:
+    """The folder a capture belongs to.
 
-    Inside an ephemeral worktree (`<instance>/.claude/worktrees/<name>`) the
-    current directory is named after the worktree: walk up to the real instance
-    so the "already running" message stays readable.
+    Inside a git repository, its main checkout: a subfolder or a worktree
+    (`<repo>/.claude/worktrees/<name>`) is the repository itself. Anywhere
+    else, the working directory.
     """
     cwd = Path.cwd().resolve()
-    parts = cwd.parts
-    for i in range(len(parts) - 2):
-        if parts[i] == ".claude" and parts[i + 1] == "worktrees":
-            return parts[i - 1] if i > 0 else cwd.name
-    return cwd.name
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel", "--git-common-dir"],
+            cwd=cwd, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return cwd
+    lines = out.stdout.splitlines()
+    if out.returncode != 0 or len(lines) != 2:
+        return cwd
+    common = (cwd / lines[1]).resolve()
+    if common.name == ".git":
+        return common.parent
+    return Path(lines[0]).resolve()
+
+
+def instance_name() -> str:
+    """Name of the folder holding the lock, for the "already running" message."""
+    return project_root().name
+
+
+def same_folder(state: dict[str, Any], project: Path) -> bool:
+    """A state written before the folder key existed belongs to another folder."""
+    return state.get("project") == str(project)
+
+
+def require_same_folder(state: dict[str, Any], project: Path) -> None:
+    if not same_folder(state, project):
+        started = datetime.fromisoformat(state["started_at"])
+        fail(
+            "the running capture was started by {} at {}, from another folder".format(
+                state.get("instance", "?"), started.strftime("%H:%M")
+            ),
+            EXIT_BUSY,
+            running=True,
+            same_folder=False,
+        )
 
 
 def macos_major() -> int:
@@ -166,7 +202,7 @@ def ensure_audiowatch() -> Path | None:
     Its absence costs rotation, never the capture: the supervisor falls back to
     a single segment.
     """
-    src = Path(__file__).resolve().parent / "audiowatch.swift"
+    src = AUDIOWATCH_SRC
     if not src.exists():
         return None
     binary = BIN_DIR / "audiowatch"
@@ -431,10 +467,22 @@ def cmd_supervise(args: argparse.Namespace) -> None:
 
 
 def cmd_start(args: argparse.Namespace) -> None:
-    preflight()
+    project = project_root()
+    # The lock comes before the preflight: a running capture proves `yap` was
+    # there, and the owner needs to hear about the capture first.
     running = active_state()
     if running is not None:
         started = datetime.fromisoformat(running["started_at"])
+        mine = same_folder(running, project)
+        if mine:
+            held = dict(running)
+        else:
+            held = {
+                "instance": running.get("instance", "?"),
+                "started_at": running["started_at"],
+                "segments": len(running.get("segments", [])),
+            }
+        held["same_folder"] = mine
         fail(
             "a capture has been running since {} (started by {}), {} segment(s) so far".format(
                 started.strftime("%H:%M"),
@@ -442,8 +490,9 @@ def cmd_start(args: argparse.Namespace) -> None:
                 len(running.get("segments", [])),
             ),
             EXIT_BUSY,
-            already_running=running,
+            already_running=held,
         )
+    preflight()
 
     TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now()
@@ -463,7 +512,8 @@ def cmd_start(args: argparse.Namespace) -> None:
         "max_length": args.max_length,
         "title": args.title or "",
         "context": args.context or "",
-        "instance": instance_name(),
+        "instance": project.name,
+        "project": str(project),
         "rotation": "pending",
         "segments": [],
     }
@@ -511,18 +561,37 @@ def _snapshot(state: dict[str, Any]) -> tuple[list, list]:
 
 
 def cmd_status(args: argparse.Namespace) -> None:
+    project = project_root()
     state = active_state()
     if state is None:
-        emit({"ok": True, "running": False}, "no capture running")
+        emit({"ok": True, "running": False, "project": str(project)}, "no capture running")
         return
-    cues, clean = _snapshot(state)
     started = datetime.fromisoformat(state["started_at"])
     elapsed = int((datetime.now() - started).total_seconds())
+    if not same_folder(state, project):
+        emit(
+            {
+                "ok": True,
+                "running": True,
+                "same_folder": False,
+                "project": str(project),
+                "instance": state.get("instance", "?"),
+                "started_at": state["started_at"],
+                "elapsed_seconds": elapsed,
+            },
+            "a capture started by {} has been running for {}, from another folder".format(
+                state.get("instance", "?"), clock(elapsed)
+            ),
+        )
+        return
+    cues, clean = _snapshot(state)
     last = clean[-1]["text"] if clean else ""
     segments = state.get("segments", [])
     payload = {
         "ok": True,
         "running": True,
+        "same_folder": True,
+        "project": str(project),
         "supervisor_pid": state["supervisor_pid"],
         "started_at": state["started_at"],
         "elapsed_seconds": elapsed,
@@ -548,6 +617,7 @@ def cmd_stop(args: argparse.Namespace) -> None:
     state = active_state()
     if state is None:
         fail("no capture to stop", EXIT_NOT_RUNNING, running=False)
+    require_same_folder(state, project_root())
     stop_pid(int(state["supervisor_pid"]), grace=4.0)
     state = load_state() or state
     cues, clean = _snapshot(state)
@@ -593,6 +663,7 @@ def cmd_text(args: argparse.Namespace) -> None:
         state = active_state() or load_state()
         if state is None:
             fail("no capture running and no --file given", EXIT_NOT_RUNNING)
+        require_same_folder(state, project_root())
         cues = read_cues(state)
         mic_label = state.get("mic_label", "")
     if not args.raw:
@@ -614,6 +685,31 @@ def cmd_text(args: argparse.Namespace) -> None:
         print(json.dumps({"ok": True, "count": len(cues), "text": body}, ensure_ascii=False))
 
 
+def cmd_updates(args: argparse.Namespace) -> None:
+    """Background monitor: one line whenever new speech has landed.
+
+    Plain lines on stdout, piped or not, because each one wakes the session
+    that runs it. Exits when the capture it started with stops.
+    """
+    state = active_state()
+    if state is None:
+        fail("no capture running", EXIT_NOT_RUNNING, running=False)
+    require_same_folder(state, project_root())
+    stem = state["stem"]
+    interval = max(1.0, args.minutes) * 60
+    seen = 0
+    while True:
+        time.sleep(interval)
+        state = active_state()
+        if state is None or state.get("stem") != stem:
+            print("CAPTURE CLOSED", flush=True)
+            return
+        count = len(_snapshot(state)[1])
+        if count > seen:
+            print(f"UPDATE: {count - seen} new exchanges, {count} total", flush=True)
+            seen = count
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -621,9 +717,19 @@ def cmd_text(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="listen", description="Live capture of a call through yap."
+        prog="maestro-listen",
+        description="Live capture of a call through yap.",
+        epilog=(
+            "exit codes:\n"
+            f"  {EXIT_BUSY}  a capture is already running, or it belongs to another folder\n"
+            f"  {EXIT_MISSING_DEP}  a dependency is missing (yap, macOS 26) or the capture did not open\n"
+            f"  {EXIT_NOT_RUNNING}  no capture running"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sub = parser.add_subparsers(dest="command", required=True, metavar="{start,status,stop,text}")
+    sub = parser.add_subparsers(
+        dest="command", required=True, metavar="{start,status,text,stop,updates}"
+    )
 
     start = sub.add_parser("start", help="open the capture")
     start.add_argument("--locale", default="en-US", help="language of the call (default: en-US)")
@@ -652,6 +758,12 @@ def build_parser() -> argparse.ArgumentParser:
     text.add_argument("--file", help="read a single VTT file instead of the capture")
     text.add_argument("--mic-label", default="Me", help="microphone label, when using --file")
     text.set_defaults(func=cmd_text)
+
+    updates = sub.add_parser("updates", help="print a line whenever new speech lands")
+    updates.add_argument(
+        "minutes", nargs="?", type=float, default=10.0, help="interval, at least 1 (default: 10)"
+    )
+    updates.set_defaults(func=cmd_updates)
 
     return parser
 
