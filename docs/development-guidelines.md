@@ -29,7 +29,7 @@ Rules the plans and the code must follow. Devflow passes this file to every plan
 ## Code placement
 
 - `bin/` executables distributed to instances. `.claude/skills/`, `.claude/agents/`, `CLAUDE.md`, `howto/` behaviour distributed to instances, marked `origin: maestro`.
-- `plugins/maestro/` replaces `user-skills/`: skills and executables distributed by the Claude Code plugin, versioned by commit SHA, outside `maestro-sync`.
+- `plugins/maestro/` replaces `user-skills/`: skills and executables distributed by the Claude Code plugin, versioned by commit SHA, outside `maestro-sync`. A command a plugin skill runs goes in `plugins/maestro/bin/` under a prefixed name (`maestro-listen`), so one user-level allow rule covers it; the skill's other resources (sources, templates) live in its own folder under `plugins/maestro/skills/<name>/`.
 - `tests/` tests. `docs/` shaping and devflow material for the template itself, kept out of distribution.
 - Every read or write on `memories.db` from a skill or an agent goes through `bin/mem`.
 

@@ -1,6 +1,6 @@
 {
   "name": "maestro",
-  "description": "Skills and hooks for the Maestro orchestrator template: new-instance, maestro-sync, maestro-net between instances, and satellites (project repos that borrow an instance's identity and memory).",
+  "description": "Skills and hooks for the Maestro orchestrator template: new-instance, maestro-sync, maestro-net between instances, satellites (project repos that borrow an instance's identity and memory), and listen (live capture of a call from any session).",
   "author": {
     "name": "Matteo Papadopoulos",
     "url": "https://github.com/spleenteo"

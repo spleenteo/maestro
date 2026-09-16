@@ -427,9 +427,9 @@ sw_vers -productVersion
 
 | Skill | Needs | Install | Without it |
 |---|---|---|---|
-| `listen` | `yap` | `brew install yap` | no live call transcription at all |
-| `listen` | macOS 26 or later | — | `yap` will not run |
-| `listen` | `swiftc` (Xcode Command Line Tools) | `xcode-select --install` | captures still work, but stop surviving a change of audio input device |
+| `/maestro:listen` | `yap` | `brew install yap` | no live call transcription at all |
+| `/maestro:listen` | macOS 26 or later | — | `yap` will not run |
+| `/maestro:listen` | `swiftc` (Xcode Command Line Tools) | `xcode-select --install` | captures still work, but stop surviving a change of audio input device |
 
 Report the outcome in one line per missing item, in the owner's language, with
 the command that installs it. Then move on: a missing optional dependency never

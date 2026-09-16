@@ -46,9 +46,11 @@ The plugin's `SessionStart` hook runs at every session start, whatever its sourc
 - appends `export MEM_SCOPE=<scope>` to the session's environment file, when Claude Code provides one, so Bash calls carry the scope;
 - asks the mother's `bin/mem satellite show` for the role;
 - reads the mother's `private/preferences.md` and keeps only the level-2 sections named `Identity`, `Owner — basics`, `Communication preferences` or `Writing register`, optionally followed by a parenthetical such as `(the orchestrator)`. Code fences never open a section, and any other heading or `---` rule closes one: people, integrations and the rest stay in the mother;
-- injects role, identity and the operating rules as context: every memory command written as `MEM_SCOPE=<scope> "<mother>/bin/mem" …`, so the scope holds even without the environment file (the context says when the export didn't happen), the pointer to the mother's `## Memory` and `## Writing register` sections, the vault folder, and two prohibitions (no `bin/mem embed`, no warm task channel garbage collector: both belong to the mother).
+- injects role, identity and the operating rules as context: every memory command written as `MEM_SCOPE=<scope> "<mother>/bin/mem" …`, so the scope holds even without the environment file (the context says when the export didn't happen), the pointer to the mother's `## Memory` and `## Writing register` sections, the vault folder, two prohibitions (no `bin/mem embed`, no warm task channel garbage collector: both belong to the mother), and the reminder that the plugin's skills run in the session.
 
 The `PreToolUse` hook opens the vault folder to `Read`, `Write`, `Edit`, `Grep` and `Glob`. It runs on every file tool call on the machine, so a shell guard exits at once unless the session start wrote a marker for the project under the plugin's data folder.
+
+The Maestro plugin's skills run in a satellite session as in any other. `/maestro:listen` captures a call, proposes the vault folder for the note and the transcript, and saves the memory of the call in the satellite's scope. The mother's own skills and agents stay in the mother: `maestro-net request` below.
 
 When the registry names a mother that is missing or too old, has no row for the scope, or has a row pointing to another repo, the session gets one line of context saying so, no scope and no vault access.
 
