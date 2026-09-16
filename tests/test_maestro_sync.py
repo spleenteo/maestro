@@ -579,7 +579,7 @@ class TestRetiredPaths(unittest.TestCase):
         self.assertTrue((self.inst / ".claude" / "skills" / "maestro-sync").is_dir())
 
     def test_removal_refuses_anything_outside_the_allowlist(self):
-        for bad in ("", ".", "private", "user-skills", "../x"):
+        for bad in ("", ".", "private", "user-skills", "../x", "bin/listen", ".claude/skills/listen"):
             with self.subTest(path=bad):
                 r = self.remove(bad)
                 self.assertEqual(r.returncode, 2, r.stderr)
@@ -600,8 +600,11 @@ LISTEN_MEMBERS = (".claude/skills/listen", "bin/listen", "bin/listen-updates", "
 class TestRetiredListen(unittest.TestCase):
     """`listen` moved into the plugin: Phase 6b retires the old copy as one
     unit, removes only the members that carry the marker (a script's own
-    header, not a mention in its body), backs them up first, and waits while a
-    capture runs, since an old `listen-updates` would print errors forever."""
+    header, not a mention in its body), backs them up first, keeps the scripts
+    when the skill that calls them isn't Maestro's, and waits while a capture
+    or an old `listen-updates` monitor runs, since that monitor would print
+    errors forever. The monitor check looks at the machine's processes: a real
+    old monitor running while the tests do postpones the listing tests."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -614,15 +617,15 @@ class TestRetiredListen(unittest.TestCase):
         (self.inst / "private" / "preferences.md").write_text("")
         self.home = self.tmp / "home"
         self.home.mkdir()
-        self.pid = None
+        self.pids = []
         text = SKILL.read_text()
         self.listing = _nth_bash_block_after(text, PHASE_6B_HEADING, 1)
         self.removal = _nth_bash_block_after(text, PHASE_6B_HEADING, 2)
 
     def tearDown(self):
-        if self.pid:
+        for pid in self.pids:
             try:
-                os.kill(self.pid, signal.SIGKILL)
+                os.kill(pid, signal.SIGKILL)
             except OSError:
                 pass
 
@@ -640,13 +643,24 @@ class TestRetiredListen(unittest.TestCase):
             "// mine\n" if "bin/audiowatch.swift" in unmarked
             else "// origin: maestro\n// maestro_version: v2026.09.10.1\n//\n")
 
-    def capture_running(self):
-        out = subprocess.run(["sh", "-c", "tail -f /dev/null >/dev/null 2>&1 </dev/null & echo $!"],
+    def detached(self, name: str) -> int:
+        """A `tail -f /dev/null` whose command line reads `<tmp>/procs/<name>`."""
+        link = self.tmp / "procs" / name
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to("/usr/bin/tail")
+        out = subprocess.run(["sh", "-c", '"$1" -f /dev/null >/dev/null 2>&1 </dev/null & echo $!', "sh", str(link)],
                              capture_output=True, text=True, check=True)
-        self.pid = int(out.stdout.strip())
+        pid = int(out.stdout.strip())
+        self.pids.append(pid)
+        return pid
+
+    def write_listen_state(self, pid: int):
         state = self.home / ".local" / "state" / "listen"
         state.mkdir(parents=True)
-        (state / "current.json").write_text(json.dumps({"supervisor_pid": self.pid}))
+        (state / "current.json").write_text(json.dumps({"supervisor_pid": pid}))
+
+    def capture_running(self):
+        self.write_listen_state(self.detached("_supervise"))
 
     def run_block(self, block: str) -> subprocess.CompletedProcess:
         cmd = block.replace("<instance-path>", str(self.inst)).replace("<retired-path>", "listen")
@@ -660,8 +674,9 @@ class TestRetiredListen(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         lines = _output_lines(r)
         start = lines.index("retired listen")
-        self.assertEqual(lines[start + 1:start + 5], [
+        self.assertEqual(lines[start + 1:start + 6], [
             "    .claude/skills/listen (marked)",
+            "      .claude/skills/listen/SKILL.md",
             "    bin/listen (not marked, kept)",
             "    bin/listen-updates (marked)",
             "    bin/audiowatch.swift (marked)",
@@ -681,11 +696,34 @@ class TestRetiredListen(unittest.TestCase):
         self.seed()
         self.capture_running()
         r = self.run_block(self.listing)
-        self.assertIn("postponed listen: a capture is running", r.stdout)
+        self.assertRegex(r.stdout, r"postponed listen: capture supervisor pid \d+")
         self.assertNotIn("retired listen", r.stdout)
+
+    def test_an_old_updates_monitor_postpones_the_unit(self):
+        self.seed()
+        self.detached("bin/listen-updates")
+        r = self.run_block(self.listing)
+        self.assertRegex(r.stdout, r"postponed listen: old listen-updates monitor pid \d+")
+
+    def test_a_reused_pid_is_not_a_capture(self):
+        self.seed()
+        self.write_listen_state(self.detached("unrelated"))
+        self.assertIn("retired listen", self.run_block(self.listing).stdout)
+
+    def test_an_unmarked_skill_keeps_the_scripts_it_calls(self):
+        self.seed(unmarked=(".claude/skills/listen",))
+        r = self.run_block(self.listing)
+        self.assertIn("kept listen: .claude/skills/listen carries no marker", r.stdout)
+        self.assertNotIn("retired listen", r.stdout)
+        r = self.run_block(self.removal)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        for rel in LISTEN_MEMBERS:
+            self.assertTrue((self.inst / rel).exists(), rel)
 
     def test_removal_backs_up_and_removes_marked_members_only(self):
         self.seed(unmarked=("bin/listen",))
+        (self.inst / "listen").mkdir()
+        (self.inst / "listen" / "keep.md").write_text("mine\n")
         r = self.run_block(self.removal)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         for rel in (".claude/skills/listen", "bin/listen-updates", "bin/audiowatch.swift"):
@@ -700,6 +738,9 @@ class TestRetiredListen(unittest.TestCase):
         self.assertTrue((backups[0] / "bin" / "listen-updates").is_file())
         self.assertTrue((backups[0] / "bin" / "audiowatch.swift").is_file())
         self.assertFalse((backups[0] / "bin" / "listen").exists())
+        self.assertIn(f"backup {backups[0]}", _output_lines(r)[0])
+        self.assertTrue((self.inst / "listen" / "keep.md").is_file())
+        self.assertNotIn("removed listen", _output_lines(r))
 
     def test_removal_waits_for_a_running_capture(self):
         self.seed()
@@ -717,6 +758,13 @@ class TestRetiredListen(unittest.TestCase):
                    for block in (self.listing, self.removal)]
         self.assertEqual(members[0], list(LISTEN_MEMBERS))
         self.assertEqual(members[1], list(LISTEN_MEMBERS))
+        for name in ("marked", "listen_running"):
+            bodies = []
+            for block in (self.listing, self.removal):
+                m = re.search(rf"^[ \t]*{name}\(\) \{{\n(.*?)^[ \t]*\}}[ \t]*$", block, re.M | re.S)
+                self.assertIsNotNone(m, name)
+                bodies.append([ln.strip() for ln in m.group(1).splitlines()])
+            self.assertEqual(bodies[0], bodies[1], name)
 
 
 if __name__ == "__main__":

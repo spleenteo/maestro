@@ -410,9 +410,22 @@ marked() {
 }
 listen_running() {
   s="$HOME/.local/state/listen/current.json"
-  [ -f "$s" ] || return 1
-  pid=$(python3 -c 'import json, sys; print(int(json.load(open(sys.argv[1])).get("supervisor_pid") or 0))' "$s" 2>/dev/null) || return 1
-  [ "${pid:-0}" -gt 0 ] && kill -0 "$pid" 2>/dev/null
+  if [ -f "$s" ]; then
+    pid=$(python3 -c 'import json, sys; print(int(json.load(open(sys.argv[1])).get("supervisor_pid") or 0))' "$s" 2>/dev/null) || pid=0
+    cmd=""
+    if [ "${pid:-0}" -gt 0 ]; then
+      cmd=$(ps -p "$pid" -o command= 2>/dev/null) || cmd=""
+    fi
+    case "$cmd" in
+      *_supervise*) echo "capture supervisor pid $pid, state $s"; return 0 ;;
+    esac
+  fi
+  pid=$(pgrep -o -u "$(id -u)" -f '/bin/listen-update[s]( |$)' 2>/dev/null) || pid=""
+  if [ -n "$pid" ]; then
+    echo "old listen-updates monitor pid $pid"
+    return 0
+  fi
+  return 1
 }
 for p in .claude/skills/maestro-sync .claude/skills/setup .claude/skills/.disabled/setup user-skills/maestro-net; do
   f="$INSTANCE/$p/SKILL.md"
@@ -422,6 +435,7 @@ for p in .claude/skills/maestro-sync .claude/skills/setup .claude/skills/.disabl
   fi
 done
 any=""
+foreign_skill=""
 members=""
 for m in .claude/skills/listen bin/listen bin/listen-updates bin/audiowatch.swift; do
   f="$INSTANCE/$m"
@@ -431,14 +445,21 @@ for m in .claude/skills/listen bin/listen bin/listen-updates bin/audiowatch.swif
     any=1
     members="$members    $m (marked)
 "
+    if [ -d "$INSTANCE/$m" ]; then
+      members="$members$(find "$INSTANCE/$m" -type f | sed "s|^$INSTANCE/|      |")
+"
+    fi
   else
+    [ "$m" = ".claude/skills/listen" ] && foreign_skill=1
     members="$members    $m (not marked, kept)
 "
   fi
 done
 if [ -n "$any" ]; then
-  if listen_running; then
-    echo "postponed listen: a capture is running"
+  if [ -n "$foreign_skill" ]; then
+    echo "kept listen: .claude/skills/listen carries no marker, so the scripts it calls stay"
+  elif why=$(listen_running); then
+    echo "postponed listen: $why"
   else
     echo "retired listen"
     printf '%s' "$members"
@@ -450,7 +471,7 @@ true
 - `.claude/skills/maestro-sync/`: the old local copy of this skill, or the redirect that replaced it.
 - `.claude/skills/setup/` and `.claude/skills/.disabled/setup/`: instance creation moved to `/maestro:new-instance`.
 - `user-skills/maestro-net/`: `maestro-net` moved into the plugin.
-- `listen`, a unit of four members (`.claude/skills/listen/`, `bin/listen`, `bin/listen-updates`, `bin/audiowatch.swift`): the skill moved into the plugin as `/maestro:listen`, the scripts as `maestro-listen`. The unit goes with one answer: removing the scripts alone would leave the local skill, which still answers a bare `/listen`, calling scripts that are gone. Only the marked members go, copied to `private/retired.bak.<stamp>-listen/` first. While a capture is running the unit prints `postponed listen` and stays: an old `listen-updates` would lose its script and print errors until stopped by hand. Say so, and propose it again at the next sync.
+- `listen`, a unit of four members (`.claude/skills/listen/`, `bin/listen`, `bin/listen-updates`, `bin/audiowatch.swift`): the skill moved into the plugin as `/maestro:listen`, the scripts as `maestro-listen`. The unit goes with one answer: removing the scripts alone would leave the local skill, which still answers a bare `/listen`, calling scripts that are gone. For the same reason, a `.claude/skills/listen/SKILL.md` without the marker (the owner's own skill) keeps the whole unit: the listing prints `kept listen` and there is nothing to ask. Only the marked members go, copied to `private/retired.bak.<stamp>-listen/` first; the listing shows every file inside the skill folder. While a capture supervisor or an old `listen-updates` monitor runs (a monitor outlives its capture by up to one interval), the unit prints `postponed listen` with the pid and stays: that monitor would lose its script and print errors until stopped by hand. Say so, and propose it again at the next sync.
 
 For each printed path, show its files and ask *"Remove `<path>`? It was retired upstream."* For `listen`, ask *"Remove the old listen copy (<marked members>)? It moved into the plugin."* A yes covers that path or that unit only. On yes, run this block once for it, with `listen` as the retired path for the unit:
 
@@ -475,15 +496,33 @@ if [ "$RETIRED" = "listen" ]; then
   }
   listen_running() {
     s="$HOME/.local/state/listen/current.json"
-    [ -f "$s" ] || return 1
-    pid=$(python3 -c 'import json, sys; print(int(json.load(open(sys.argv[1])).get("supervisor_pid") or 0))' "$s" 2>/dev/null) || return 1
-    [ "${pid:-0}" -gt 0 ] && kill -0 "$pid" 2>/dev/null
+    if [ -f "$s" ]; then
+      pid=$(python3 -c 'import json, sys; print(int(json.load(open(sys.argv[1])).get("supervisor_pid") or 0))' "$s" 2>/dev/null) || pid=0
+      cmd=""
+      if [ "${pid:-0}" -gt 0 ]; then
+        cmd=$(ps -p "$pid" -o command= 2>/dev/null) || cmd=""
+      fi
+      case "$cmd" in
+        *_supervise*) echo "capture supervisor pid $pid, state $s"; return 0 ;;
+      esac
+    fi
+    pid=$(pgrep -o -u "$(id -u)" -f '/bin/listen-update[s]( |$)' 2>/dev/null) || pid=""
+    if [ -n "$pid" ]; then
+      echo "old listen-updates monitor pid $pid"
+      return 0
+    fi
+    return 1
   }
-  if listen_running; then
-    echo "A capture is running: remove the old listen copy after it stops." >&2
+  if [ -f "$INSTANCE/.claude/skills/listen/SKILL.md" ] && ! marked "$INSTANCE/.claude/skills/listen/SKILL.md"; then
+    echo "kept listen: .claude/skills/listen carries no marker, so the scripts it calls stay"
+    exit 0
+  fi
+  if why=$(listen_running); then
+    echo "Postponed ($why): remove the old listen copy after it stops." >&2
     exit 3
   fi
   BAK="$INSTANCE/private/retired.bak.$(date +%Y%m%d-%H%M%S)-listen"
+  echo "backup $BAK"
   for m in .claude/skills/listen bin/listen bin/listen-updates bin/audiowatch.swift; do
     f="$INSTANCE/$m"
     [ -d "$f" ] && f="$f/SKILL.md"
@@ -497,9 +536,6 @@ if [ "$RETIRED" = "listen" ]; then
       echo "kept $m"
     fi
   done
-  if [ -d "$BAK" ]; then
-    echo "backup $BAK"
-  fi
   exit 0
 fi
 command rm -rf -- "$INSTANCE/$RETIRED"
@@ -509,7 +545,9 @@ fi
 echo "removed $RETIRED"
 ```
 
-Log it in `private/maestro-sync.log` with the marker `(retired, removed)` or `(retired, kept by owner)`. Files under these paths are never shown as orphans in Phase 7.
+Exit 3 from this block, for `listen` only, means a capture or an old monitor started between the listing and the answer: a postponement, the one exit that doesn't stop the sync. Say so and go on.
+
+Log it in `private/maestro-sync.log` with the marker `(retired, removed)`, `(retired, removed, kept <members>)`, `(retired, postponed)`, `(retired, kept: unmarked skill)` or `(retired, kept by owner)`. Files under these paths are never shown as orphans in Phase 7.
 
 ### Phase 7 — Final summary
 
@@ -585,6 +623,7 @@ Announce:
 - **Loaded plugin differs from the installed one**: Phase 3 stops; the owner restarts Claude Code and runs the sync again.
 - **Plugin behind upstream `main`**: Phase 3 stops with the update commands; the owner updates, restarts Claude Code and runs the sync again.
 - **`bin/` copy fails after copying**: Phase 5b's restore block puts back the old scripts and the db backup, on the owner's yes.
+- **The `listen` removal fails partway**: the first line it printed, `backup <dir>`, names the folder holding every member already removed. Show the output; copy back from that folder on the owner's yes, or run the removal again once the cause is fixed.
 - **Working tree has uncommitted changes and owner picks `push` but staging is needed**: refuse silently to `git add -A` (would risk staging files the owner didn't intend); ask the owner to stage manually and re-run.
 - **CHANGELOG.md missing or unparseable in the mirror**: warn but continue — files are still diffable, just no high-level context.
 - **A file marked `origin: maestro` exists in the instance but not in the mirror** (e.g. an old skill that has since been retired upstream and isn't in Phase 6b's list): show this in the summary as "orphan: file is no longer in upstream — keep, archive, or delete by hand?". Do not auto-delete.
