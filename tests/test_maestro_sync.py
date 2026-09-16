@@ -19,7 +19,10 @@ Run: python3 -m unittest tests.test_maestro_sync -v
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -589,6 +592,131 @@ class TestRetiredPaths(unittest.TestCase):
         self.assertTrue((self.inst / "user-skills" / "mine").is_dir())
         self.assertEqual(self.remove(".claude/skills/maestro-sync").returncode, 0)
         self.assertFalse((self.inst / ".claude" / "skills" / "maestro-sync").exists())
+
+
+LISTEN_MEMBERS = (".claude/skills/listen", "bin/listen", "bin/listen-updates", "bin/audiowatch.swift")
+
+
+class TestRetiredListen(unittest.TestCase):
+    """`listen` moved into the plugin: Phase 6b retires the old copy as one
+    unit, removes only the members that carry the marker (a script's own
+    header, not a mention in its body), backs them up first, and waits while a
+    capture runs, since an old `listen-updates` would print errors forever."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self.inst = self.tmp / "my inst"
+        (self.inst / "bin").mkdir(parents=True)
+        (self.inst / "bin" / "mem").write_text("mem\n")
+        (self.inst / "private").mkdir()
+        (self.inst / "private" / "preferences.md").write_text("")
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        self.pid = None
+        text = SKILL.read_text()
+        self.listing = _nth_bash_block_after(text, PHASE_6B_HEADING, 1)
+        self.removal = _nth_bash_block_after(text, PHASE_6B_HEADING, 2)
+
+    def tearDown(self):
+        if self.pid:
+            try:
+                os.kill(self.pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+    def seed(self, unmarked=()):
+        skill = self.inst / ".claude" / "skills" / "listen"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(
+            _unmarked_md() if ".claude/skills/listen" in unmarked else _marked_md())
+        for name in ("listen", "listen-updates"):
+            rel = f"bin/{name}"
+            (self.inst / rel).write_text(
+                "#!/bin/sh\necho mine\n" if rel in unmarked
+                else "#!/usr/bin/env python3\n# origin: maestro\n# maestro_version: v2026.09.10.1\n")
+        (self.inst / "bin" / "audiowatch.swift").write_text(
+            "// mine\n" if "bin/audiowatch.swift" in unmarked
+            else "// origin: maestro\n// maestro_version: v2026.09.10.1\n//\n")
+
+    def capture_running(self):
+        out = subprocess.run(["sh", "-c", "tail -f /dev/null >/dev/null 2>&1 </dev/null & echo $!"],
+                             capture_output=True, text=True, check=True)
+        self.pid = int(out.stdout.strip())
+        state = self.home / ".local" / "state" / "listen"
+        state.mkdir(parents=True)
+        (state / "current.json").write_text(json.dumps({"supervisor_pid": self.pid}))
+
+    def run_block(self, block: str) -> subprocess.CompletedProcess:
+        cmd = block.replace("<instance-path>", str(self.inst)).replace("<retired-path>", "listen")
+        env = dict(os.environ, HOME=str(self.home))
+        return subprocess.run(["bash", "-c", cmd], cwd=self.tmp, env=env,
+                              capture_output=True, text=True)
+
+    def test_lists_marked_members_and_names_the_kept_ones(self):
+        self.seed(unmarked=("bin/listen",))
+        r = self.run_block(self.listing)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = _output_lines(r)
+        start = lines.index("retired listen")
+        self.assertEqual(lines[start + 1:start + 5], [
+            "    .claude/skills/listen (marked)",
+            "    bin/listen (not marked, kept)",
+            "    bin/listen-updates (marked)",
+            "    bin/audiowatch.swift (marked)",
+        ])
+
+    def test_a_marker_in_the_body_is_not_a_mark(self):
+        (self.inst / "bin" / "listen").write_text("#!/bin/sh\necho a\necho b\n# origin: maestro\n")
+        r = self.run_block(self.listing)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("listen", r.stdout)
+
+    def test_no_marked_member_lists_nothing(self):
+        self.seed(unmarked=LISTEN_MEMBERS)
+        self.assertNotIn("listen", self.run_block(self.listing).stdout)
+
+    def test_a_running_capture_postpones_the_unit(self):
+        self.seed()
+        self.capture_running()
+        r = self.run_block(self.listing)
+        self.assertIn("postponed listen: a capture is running", r.stdout)
+        self.assertNotIn("retired listen", r.stdout)
+
+    def test_removal_backs_up_and_removes_marked_members_only(self):
+        self.seed(unmarked=("bin/listen",))
+        r = self.run_block(self.removal)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        for rel in (".claude/skills/listen", "bin/listen-updates", "bin/audiowatch.swift"):
+            self.assertFalse((self.inst / rel).exists(), rel)
+            self.assertIn(f"removed {rel}", r.stdout)
+        self.assertEqual((self.inst / "bin" / "listen").read_text(), "#!/bin/sh\necho mine\n")
+        self.assertIn("kept bin/listen", r.stdout)
+        self.assertEqual((self.inst / "bin" / "mem").read_text(), "mem\n")
+        backups = list((self.inst / "private").glob("retired.bak.*-listen"))
+        self.assertEqual(len(backups), 1)
+        self.assertTrue((backups[0] / ".claude" / "skills" / "listen" / "SKILL.md").is_file())
+        self.assertTrue((backups[0] / "bin" / "listen-updates").is_file())
+        self.assertTrue((backups[0] / "bin" / "audiowatch.swift").is_file())
+        self.assertFalse((backups[0] / "bin" / "listen").exists())
+
+    def test_removal_waits_for_a_running_capture(self):
+        self.seed()
+        self.capture_running()
+        r = self.run_block(self.removal)
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        for rel in LISTEN_MEMBERS:
+            self.assertTrue((self.inst / rel).exists(), rel)
+
+    def test_listing_and_removal_name_the_same_paths(self):
+        loop = re.search(r"for p in (.*?); do", self.listing).group(1).split()
+        case = re.search(r"^\s*([^\s()]+)\) ;;", self.removal, re.M).group(1).split("|")
+        self.assertEqual(set(loop) | {"listen"}, set(case))
+        members = [re.search(r"for m in (.*?); do", block).group(1).split()
+                   for block in (self.listing, self.removal)]
+        self.assertEqual(members[0], list(LISTEN_MEMBERS))
+        self.assertEqual(members[1], list(LISTEN_MEMBERS))
 
 
 if __name__ == "__main__":

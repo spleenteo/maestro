@@ -184,7 +184,7 @@ Walk the instance's repository (`<instance-path>`) and collect files with `origi
 - `.claude/skills/*/SKILL.md`
 - `.claude/agents/*.md`
 
-Leave out every file under a retired path of Phase 6b (`.claude/skills/maestro-sync/`, `.claude/skills/setup/`, `.claude/skills/.disabled/setup/`): they are never diffed and never lower the version floor.
+Leave out every file under a retired path of Phase 6b (`.claude/skills/maestro-sync/`, `.claude/skills/setup/`, `.claude/skills/.disabled/setup/`, `.claude/skills/listen/`): they are never diffed and never lower the version floor.
 
 For each match, read the file's `maestro_version` value. Build a list:
 
@@ -315,7 +315,7 @@ done
 env -u MEM_DB -u MEM_SCOPE "$INSTANCE/bin/mem" stats
 ```
 
-`bin/mem stats` opens the db right after the copy, so a schema migration that the new `bin/mem` carries runs while the backup is minutes old. On no, go on to Phase 6 with the warning standing. Scripts upstream deleted stay in the instance's `bin/`; the drift check never lists them.
+`bin/mem stats` opens the db right after the copy, so a schema migration that the new `bin/mem` carries runs while the backup is minutes old. On no, go on to Phase 6 with the warning standing. Scripts upstream deleted stay in the instance's `bin/`; the drift check never lists them. The exception is the scripts of a retired unit, which Phase 6b proposes for removal.
 
 **When the block exits non-zero after copying** (the output shows `copied` lines): stop the sync and show the output. Offer the way back, and run it only on the owner's yes, with the paths the block printed:
 
@@ -398,37 +398,109 @@ On `a` or `A`: copy the mirror file to the instance at the same relative path (c
 
 ### Phase 6b — Retired paths
 
-Some paths Maestro once distributed are gone upstream, and a sync can't see them through markers. List the ones still in the instance whose `SKILL.md` carries `origin: maestro`, so a skill of the owner's that happens to share a name is never proposed:
+Some paths Maestro once distributed are gone upstream, and a sync can't see them through markers. List the ones still in the instance that carry `origin: maestro` (in a `SKILL.md` frontmatter, or in the first three lines of a script as `# origin: maestro` or `// origin: maestro`), so a skill or a script of the owner's that happens to share a name is never proposed:
 
 ```bash
 INSTANCE="<instance-path>"
+marked() {
+  case "$1" in
+    */SKILL.md) awk 'NR==1 && !/^---$/{exit} /^---$/{n++; if(n==2) exit; next} {print}' "$1" | grep -q '^origin: maestro$' ;;
+    *) head -n 3 "$1" | grep -Eq '^(#|//) origin: maestro$' ;;
+  esac
+}
+listen_running() {
+  s="$HOME/.local/state/listen/current.json"
+  [ -f "$s" ] || return 1
+  pid=$(python3 -c 'import json, sys; print(int(json.load(open(sys.argv[1])).get("supervisor_pid") or 0))' "$s" 2>/dev/null) || return 1
+  [ "${pid:-0}" -gt 0 ] && kill -0 "$pid" 2>/dev/null
+}
 for p in .claude/skills/maestro-sync .claude/skills/setup .claude/skills/.disabled/setup user-skills/maestro-net; do
   f="$INSTANCE/$p/SKILL.md"
-  if [ -f "$f" ] && awk 'NR==1 && !/^---$/{exit} /^---$/{n++; if(n==2) exit; next} {print}' "$f" | grep -q '^origin: maestro$'; then
+  if [ -f "$f" ] && marked "$f"; then
     echo "retired $p"
     find "$INSTANCE/$p" -type f | sed "s|^$INSTANCE/|    |"
   fi
 done
+any=""
+members=""
+for m in .claude/skills/listen bin/listen bin/listen-updates bin/audiowatch.swift; do
+  f="$INSTANCE/$m"
+  [ -d "$f" ] && f="$f/SKILL.md"
+  [ -f "$f" ] || continue
+  if marked "$f"; then
+    any=1
+    members="$members    $m (marked)
+"
+  else
+    members="$members    $m (not marked, kept)
+"
+  fi
+done
+if [ -n "$any" ]; then
+  if listen_running; then
+    echo "postponed listen: a capture is running"
+  else
+    echo "retired listen"
+    printf '%s' "$members"
+  fi
+fi
 true
 ```
 
 - `.claude/skills/maestro-sync/`: the old local copy of this skill, or the redirect that replaced it.
 - `.claude/skills/setup/` and `.claude/skills/.disabled/setup/`: instance creation moved to `/maestro:new-instance`.
 - `user-skills/maestro-net/`: `maestro-net` moved into the plugin.
+- `listen`, a unit of four members (`.claude/skills/listen/`, `bin/listen`, `bin/listen-updates`, `bin/audiowatch.swift`): the skill moved into the plugin as `/maestro:listen`, the scripts as `maestro-listen`. The unit goes with one answer: removing the scripts alone would leave the local skill, which still answers a bare `/listen`, calling scripts that are gone. Only the marked members go, copied to `private/retired.bak.<stamp>-listen/` first. While a capture is running the unit prints `postponed listen` and stays: an old `listen-updates` would lose its script and print errors until stopped by hand. Say so, and propose it again at the next sync.
 
-For each printed path, show its files and ask *"Remove `<path>`? It was retired upstream."* A yes covers that path only. On yes, run this block once for that path:
+For each printed path, show its files and ask *"Remove `<path>`? It was retired upstream."* For `listen`, ask *"Remove the old listen copy (<marked members>)? It moved into the plugin."* A yes covers that path or that unit only. On yes, run this block once for it, with `listen` as the retired path for the unit:
 
 ```bash
 set -eo pipefail
 INSTANCE="<instance-path>"
 RETIRED="<retired-path>"
 case "$RETIRED" in
-  .claude/skills/maestro-sync|.claude/skills/setup|.claude/skills/.disabled/setup|user-skills/maestro-net) ;;
+  .claude/skills/maestro-sync|.claude/skills/setup|.claude/skills/.disabled/setup|user-skills/maestro-net|listen) ;;
   *) echo "Refusing to remove '$RETIRED': not a retired path." >&2; exit 2 ;;
 esac
 if [ ! -f "$INSTANCE/private/preferences.md" ] || [ ! -f "$INSTANCE/bin/mem" ]; then
   echo "Not an instance root: $INSTANCE" >&2
   exit 2
+fi
+if [ "$RETIRED" = "listen" ]; then
+  marked() {
+    case "$1" in
+      */SKILL.md) awk 'NR==1 && !/^---$/{exit} /^---$/{n++; if(n==2) exit; next} {print}' "$1" | grep -q '^origin: maestro$' ;;
+      *) head -n 3 "$1" | grep -Eq '^(#|//) origin: maestro$' ;;
+    esac
+  }
+  listen_running() {
+    s="$HOME/.local/state/listen/current.json"
+    [ -f "$s" ] || return 1
+    pid=$(python3 -c 'import json, sys; print(int(json.load(open(sys.argv[1])).get("supervisor_pid") or 0))' "$s" 2>/dev/null) || return 1
+    [ "${pid:-0}" -gt 0 ] && kill -0 "$pid" 2>/dev/null
+  }
+  if listen_running; then
+    echo "A capture is running: remove the old listen copy after it stops." >&2
+    exit 3
+  fi
+  BAK="$INSTANCE/private/retired.bak.$(date +%Y%m%d-%H%M%S)-listen"
+  for m in .claude/skills/listen bin/listen bin/listen-updates bin/audiowatch.swift; do
+    f="$INSTANCE/$m"
+    [ -d "$f" ] && f="$f/SKILL.md"
+    [ -f "$f" ] || continue
+    if marked "$f"; then
+      mkdir -p "$(dirname "$BAK/$m")"
+      command cp -Rp "$INSTANCE/$m" "$BAK/$m" </dev/null
+      command rm -rf -- "$INSTANCE/$m"
+      echo "removed $m"
+    else
+      echo "kept $m"
+    fi
+  done
+  if [ -d "$BAK" ]; then
+    echo "backup $BAK"
+  fi
+  exit 0
 fi
 command rm -rf -- "$INSTANCE/$RETIRED"
 if [ "$RETIRED" = "user-skills/maestro-net" ]; then
