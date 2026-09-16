@@ -101,8 +101,8 @@ class HookCase(unittest.TestCase):
             capture_output=True, text=True, env=self.env())
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    def write_registry(self, satellites=True):
-        text = f"version: 1\ninstances:\n  home:\n    path: {self.mother}\n    accepts: [recap, ask]\n"
+    def write_registry(self, satellites=True, accepts="recap, ask"):
+        text = f"version: 1\ninstances:\n  home:\n    path: {self.mother}\n    accepts: [{accepts}]\n"
         if satellites:
             text += f"satellites:\n  acme:\n    repo: {self.repo}\n    mother: home\n"
         self.registry.write_text(text)
@@ -163,6 +163,14 @@ class TestSessionStart(HookCase):
         self.assertIn(f'MEM_SCOPE=acme "{self.mother / "bin" / "mem"}"', ctx)
         self.assertEqual(json.loads(self.marker().read_text())["vault"], str(self.vault))
         self.assertNotIn("maestro-net request", ctx)
+        self.assertIn("/maestro:listen", ctx)
+
+    def test_plugin_skills_line_stays_when_request_is_granted(self):
+        self.write_registry(accepts="recap, ask, request")
+        self.add_satellite_row()
+        ctx = self.context(self.session_start(self.repo))
+        self.assertIn("maestro-net request", ctx)
+        self.assertIn("/maestro:listen", ctx)
 
     def test_without_env_file_the_context_says_scope_is_not_exported(self):
         self.write_registry()

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import unittest
 from pathlib import Path
 
@@ -25,6 +26,8 @@ SCRIPT = PLUGIN_DIR / "bin" / "maestro-net"
 SKILL = PLUGIN_DIR / "skills" / "maestro-net" / "SKILL.md"
 NEW_INSTANCE_SKILL = PLUGIN_DIR / "skills" / "new-instance" / "SKILL.md"
 NEW_INSTANCE_FINALIZE = PLUGIN_DIR / "skills" / "new-instance" / "finalize.sh"
+LISTEN_COMMAND = PLUGIN_DIR / "bin" / "maestro-listen"
+LISTEN_DIR = PLUGIN_DIR / "skills" / "listen"
 
 
 class TestMarketplaceJson(unittest.TestCase):
@@ -172,6 +175,43 @@ class TestNewInstanceSkillPlacement(unittest.TestCase):
 class TestOldSetupSkillGone(unittest.TestCase):
     def test_setup_skill_directory_no_longer_exists_under_dot_claude(self):
         self.assertFalse((ROOT / ".claude" / "skills" / "setup").exists())
+
+
+class TestListenPlacement(unittest.TestCase):
+    """`listen` moved from the instance template into the plugin: one command
+    on the PATH, `maestro-listen`, because a skill's `allowed-tools` grant lasts
+    one turn and a path under the plugin cache changes with every update."""
+
+    def setUp(self):
+        self.skill = (LISTEN_DIR / "SKILL.md").read_text(encoding="utf-8")
+
+    def test_command_exists_and_is_executable(self):
+        self.assertTrue(LISTEN_COMMAND.is_file())
+        self.assertTrue(os.access(LISTEN_COMMAND, os.X_OK))
+
+    def test_watcher_source_lives_in_the_skill_folder(self):
+        self.assertTrue((LISTEN_DIR / "audiowatch.swift").is_file())
+
+    def test_allowed_tools_names_the_command(self):
+        frontmatter = self.skill.split("\n---", 1)[0]
+        self.assertIn("allowed-tools: Bash(maestro-listen *)", frontmatter)
+
+    def test_skill_calls_the_command_bare(self):
+        self.assertIn("maestro-listen start", self.skill)
+        for stale in ("bin/listen", "listen-updates", "${CLAUDE_SKILL_DIR}"):
+            self.assertNotIn(stale, self.skill)
+
+    def test_every_call_is_a_simple_command(self):
+        calls = re.findall(r"maestro-listen[^`\n]*", self.skill)
+        self.assertTrue(calls)
+        for call in calls:
+            for token in ("&&", "||", ";", " | "):
+                self.assertNotIn(token, call, call)
+
+    def test_template_copies_are_gone(self):
+        for rel in ("bin/listen", "bin/listen-updates", "bin/audiowatch.swift",
+                    ".claude/skills/listen"):
+            self.assertFalse((ROOT / rel).exists(), rel)
 
 
 if __name__ == "__main__":
