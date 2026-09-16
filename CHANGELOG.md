@@ -8,6 +8,47 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.09.16.1 — 2026-09-16
+
+**Theme**: `/listen` in every session. Live capture of a call moves from the instance template into the Maestro plugin, so it works in an instance, in a satellite repo and in any other folder, and files the note where that context keeps documents.
+
+### Added
+
+- **`/maestro:listen`** (`plugins/maestro/skills/listen/`): the skill, now in the plugin. It works out whether the session is an instance, a satellite or a plain folder, and from that picks the language, the labels, the folder it proposes for the note and the transcript, where the memory of the call goes and which register pass the note gets. The owner still confirms the destination before anything is written. A bare `/listen` reaches it wherever no local skill holds the name.
+- **`maestro-listen`** (`plugins/maestro/bin/`): the capture command, formerly `bin/listen`, with `updates <minutes>` in place of `bin/listen-updates`. One stable name on the `PATH`, so one allow rule, `Bash(maestro-listen *)`, covers every call the skill makes during a call. Every call passes the session's project folder, so a `cd` between questions never loses the capture.
+
+### Changed
+
+- **A capture belongs to its folder**: the lock stays machine-wide, but from another folder `maestro-listen` reports only who holds it and since when. Title, context and transcript stay with the folder that started it, and so do `text`, `stop` and `updates`. The boundary keeps sessions of one user from stepping on each other's calls; it is no access control.
+- **The satellite hook** tells a satellite session that the plugin's skills run there, next to the `maestro-net request` line for the mother's own skills.
+- **`/maestro:maestro-sync` Phase 6b** retires the old copy as one `listen` unit (`.claude/skills/listen/`, `bin/listen`, `bin/listen-updates`, `bin/audiowatch.swift`) with a single answer. It removes only the members that carry `origin: maestro`, copies them to `private/retired.bak.<stamp>-listen/` first, keeps the whole unit when the local skill has no marker, and postpones while a capture or an old updates monitor is running.
+- **Docs**: `README.md`, `howto/12-satellites.md`, the optional dependencies table of `/maestro:new-instance` and the plugin descriptions name the skill in its new home.
+
+### Fixed
+
+- **Closing a capture**: `stop` deleted the state before the close read the whole transcript, so `text --raw` failed at every close since v2026.09.10.1. The closed capture now stays readable from its folder, with every segment at its offset.
+- **Stopping after a change of audio input**: a segment rotation could write the placeholder pid 0 back into the state, and `stop` would then signal the caller's own process group. A pid at or below 0 reads as dead, and the supervisor records its own pid.
+
+### Removed
+
+- **The template copy of listen**: `.claude/skills/listen/`, `bin/listen`, `bin/listen-updates` and `bin/audiowatch.swift` now live in the plugin.
+
+### Why
+
+A satellite session told the owner that `/listen` runs only from the mother. A satellite has no `.claude/`, receives skills only from the plugin, and its hook sent the mother's skills through `maestro-net request`. The capture never depended on the instance, and a call happens wherever the owner is working. The command's shape came from permissions: a skill's `allowed-tools` grant lasts the turn that invokes it, every question asked during a call is a later turn, and a path inside the plugin cache changes with every update. A prefixed command on the `PATH` is the one form an owner can allow once; a bare `listen` is shadowed on machines where a Ruby gem installs its own.
+
+- **Work**: `listen-plugin`
+- **Decision**: [listen ships as the maestro-listen command](docs/decisions-log/2026-09-16-maestro-listen-command.md), [maestro-sync in the plugin](docs/decisions-log/2026-09-15-maestro-sync-in-plugin.md) (amended for the `listen` unit)
+
+### Migration
+
+1. **Update the plugin** and restart Claude Code: `claude plugin marketplace update maestro`, then `claude plugin update maestro@maestro`. `/maestro:maestro-sync` refuses to run with a plugin behind `main`.
+2. **Allow the command once**: add `Bash(maestro-listen *)` to `permissions.allow` in `~/.claude/settings.json`. Allow rules saved for `bin/listen` no longer match anything.
+3. **Run `/maestro:maestro-sync`** in each instance and say yes to the `listen` unit. Until then a bare `/listen` there runs the local copy, while `/maestro:listen` reaches the new one; both share `~/.local/state/listen/`, so a capture opened by either is seen by the other.
+4. **Satellites** need only step 1.
+
+---
+
 ## v2026.09.15.1 — 2026-09-15
 
 **Theme**: **satellites and the Maestro plugin**. A project repository can now work as a context of an instance you already have, its mother: same identity, same memory (under its own scope), a linked vault folder, and no files added to the repo. Everything that has to be the same for every instance on the machine moves into one Claude Code plugin: creating an instance, the channel between instances, satellites, and the template sync itself.

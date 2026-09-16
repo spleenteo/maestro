@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.15.1
+maestro_version: v2026.09.16.1
 tags: [howto, satellites, scope, plugin, hooks, maestro-net, bin-mem, vault, orchestrator]
 description: "How a project repository becomes a satellite of a Maestro instance: the satellite skill, what the plugin's hooks inject at session start, where the registration lives, the vault folder, how the mother reads a satellite's memories, removal and limits. Reference for satellites."
 ---
