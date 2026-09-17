@@ -48,7 +48,9 @@ MASK_PATTERNS = [
     # Citazioni tra virgolette doppie bilanciate sulla stessa riga: un
     # esempio citato non è prosa dell'autore. Gli apici singoli restano
     # fuori: sono apostrofi ("it's not X, it's Y" deve continuare a fermarsi).
-    re.compile(r'"[^"\n]*"'),          # virgolette dritte
+    # Virgolette dritte; una virgoletta dopo una cifra è un pollice (27") e
+    # non apre né chiude, quindi può stare dentro la citazione.
+    re.compile(r'(?<!\d)"(?:[^"\n]|(?<=\d)")*?(?<!\d)"'),
     re.compile(r"\u201c[^\u201d\n]*\u201d"),  # virgolette curve “…”
     re.compile(r"\u00ab[^\u00bb\n]*\u00bb"),  # caporali «…»
 ]
@@ -59,8 +61,9 @@ def mask_line(line: str) -> str:
     tra virgolette doppie con NUL.
 
     La lunghezza resta invariata, così le colonne riportate restano vere.
-    Una virgoletta spaiata (un pollice, una citazione aperta su un'altra
-    riga) non maschera nulla.
+    Una virgoletta spaiata (una citazione aperta su un'altra riga) non
+    maschera nulla; una virgoletta dritta preceduta da una cifra è un
+    pollice e non apre né chiude una citazione.
     """
     for pattern in MASK_PATTERNS:
         line = pattern.sub(lambda m: MASK * len(m.group(0)), line)
@@ -178,9 +181,11 @@ def is_reportable_triad(run: str) -> bool:
     parts = [p.strip() for p in run.split(",")]
     if len(parts) >= 3:
         return True
+    if len(parts) < 2:
+        return False
     first, last = parts
-    if RE_LEADING_CONJ.match(last):
-        return True
+    # Con due segmenti count_items vale 3 solo se la congiunzione sta dentro
+    # l'ultimo: la forma "a, and b" non arriva qui.
     split = RE_INNER_CONJ.split(last, maxsplit=1)
     if len(split) != 2:
         return False

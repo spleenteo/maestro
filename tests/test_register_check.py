@@ -201,7 +201,7 @@ class TestRule6Triads(unittest.TestCase):
                 "https://calendly.com/example\n")
         self.assertNotIn(6, rules(text))
 
-    def test_pair_after_a_clause_is_clean_with_negation(self):
+    def test_pair_opening_with_a_function_word_is_clean(self):
         self.assertNotIn(6, rules("past-tense verb first in English, no opening or closing\n"))
 
     def test_heading_triad_is_clean(self):
@@ -269,11 +269,17 @@ class TestMasking(unittest.TestCase):
     def test_guillemets_are_masked(self):
         self.assertNotIn(4, rules("Il testo diceva «aspetta — dopo» e basta.\n"))
 
-    def test_apostrophes_stay_unmasked(self):
-        self.assertIn(3, rules("It's not a bug, it's a feature.\n"))
+    def test_apostrophes_stay_unmasked_next_to_a_quoted_span(self):
+        self.assertIn(3, rules('She said "fine": it\'s not a bug, it\'s a feature.\n'))
 
-    def test_lone_quote_masks_nothing(self):
+    def test_single_lone_quote_masks_nothing(self):
         self.assertIn(4, rules('A 27" screen — too small for that.\n'))
+
+    def test_inch_marks_do_not_pair_into_a_quote(self):
+        self.assertIn(4, rules('A 27" screen — cracked, and a 15" laptop broke.\n'))
+
+    def test_inch_mark_inside_a_quote_does_not_close_it(self):
+        self.assertNotIn(4, rules('He wrote "a 13" screen — tiny" and left.\n'))
 
     def test_columns_survive_a_quoted_span(self):
         text = 'She said "fine" — then left.\n'
