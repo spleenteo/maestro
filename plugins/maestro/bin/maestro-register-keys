@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""maestro-register-keys — the `## Writing register` block of an instance's preferences.
+
+Shared by `/maestro:new-instance` (finalize.sh renders the block for a new
+instance) and `/maestro:maestro-sync` (asks an existing instance for the keys
+it lacks and writes them). One place knows the keys, their defaults and the
+fenced shape every reader expects.
+
+Subcommands:
+  render                 print the fenced yaml block built from MAESTRO_* env
+                         vars; unset keys take their default with a `# default`
+                         comment
+  report PREFS           JSON: block shape (absent | bare | fenced), keys present,
+                         keys missing, and hints from `## Communication preferences`
+  write PREFS            back up PREFS next to it, then rewrite the block: values
+                         already present stay, missing keys come from MAESTRO_*
+                         env vars or their default; a bare block becomes fenced;
+                         an absent block is inserted before `## Notes`
+
+Env vars (all optional): MAESTRO_SUSPENDED ("4,6"), MAESTRO_POST_PASS (on|off),
+MAESTRO_TONE_COMMUNICATION, MAESTRO_TONE_DOCUMENTATION (friendly | professional |
+formal | neutral), MAESTRO_VOICE, MAESTRO_SIGN_OFF, MAESTRO_TRANSLATION (on|off),
+MAESTRO_TRANSLATION_PAIR, MAESTRO_TRANSLATION_MARKER, MAESTRO_TRANSLATION_WORDS_MAX,
+MAESTRO_TRANSLATION_LABELS ("Translation, More polished version"),
+MAESTRO_AVOID_WORDS ("genuinely, leverage").
+
+Exit codes: 0 ok, 2 usage error or invalid value, 7 PREFS missing or unreadable.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+EXIT_USAGE = 2
+EXIT_NO_PREFS = 7
+
+HEADING = "## Writing register"
+TONES = ("friendly", "professional", "formal", "neutral")
+
+# Dotted key, env var, default, kind. Order is the order in the block.
+KEYS = (
+    ("suspended", "MAESTRO_SUSPENDED", [], "intlist"),
+    ("post_pass", "MAESTRO_POST_PASS", "on", "onoff"),
+    ("tone_default.communication", "MAESTRO_TONE_COMMUNICATION", "professional", "tone"),
+    ("tone_default.documentation", "MAESTRO_TONE_DOCUMENTATION", "neutral", "tone"),
+    ("tone_default.synthesis", None, "neutral", "tone"),
+    ("voice", "MAESTRO_VOICE", "", "str"),
+    ("communication.sign_off", "MAESTRO_SIGN_OFF", "", "str"),
+    ("translation.enabled", "MAESTRO_TRANSLATION", False, "bool"),
+    ("translation.pair", "MAESTRO_TRANSLATION_PAIR", "", "str"),
+    ("translation.new_context_marker", "MAESTRO_TRANSLATION_MARKER", "", "str"),
+    ("translation.source_words_max", "MAESTRO_TRANSLATION_WORDS_MAX", 1, "int"),
+    ("translation.labels", "MAESTRO_TRANSLATION_LABELS", ["Translation", "More polished version"], "strlist"),
+    ("avoid_words", "MAESTRO_AVOID_WORDS", [], "strlist"),
+)
+
+COMMENTS = {
+    "suspended": "prohibitions to suspend, e.g. [4, 6]",
+    "post_pass": "on | off",
+    "tone_default.communication": "friendly | professional | formal | neutral",
+    "tone_default.synthesis": "always neutral",
+    "voice": "how the owner sounds, in one line",
+    "communication.sign_off": "closes every email when set",
+    "translation.enabled": "true turns on the translate skill",
+    "translation.pair": "e.g. \"it -> en\"",
+    "translation.new_context_marker": "a draft opening with it starts a fresh translation",
+    "translation.source_words_max": "source-language words allowed per text",
+    "avoid_words": "words the owner never wants to see",
+}
+
+
+class Invalid(Exception):
+    pass
+
+
+# --- values ------------------------------------------------------------------
+
+def parse_env(kind: str, raw: str):
+    raw = raw.strip()
+    if kind == "intlist":
+        items = [x.strip() for x in raw.strip("[]").split(",") if x.strip()]
+        out = []
+        for x in items:
+            if not x.isdigit() or not 1 <= int(x) <= 7:
+                raise Invalid("suspended takes prohibition numbers 1 to 7, got %r" % x)
+            out.append(int(x))
+        return out
+    if kind == "onoff":
+        if raw.lower() in ("on", "off"):
+            return raw.lower()
+        raise Invalid("post_pass is on or off, got %r" % raw)
+    if kind == "tone":
+        if raw.lower() in TONES:
+            return raw.lower()
+        raise Invalid("tone is one of %s, got %r" % ("/".join(TONES), raw))
+    if kind == "bool":
+        if raw.lower() in ("on", "true", "yes", "1"):
+            return True
+        if raw.lower() in ("off", "false", "no", "0"):
+            return False
+        raise Invalid("translation is on or off, got %r" % raw)
+    if kind == "int":
+        if raw.isdigit():
+            return int(raw)
+        raise Invalid("source_words_max is a whole number, got %r" % raw)
+    if kind == "strlist":
+        return [x.strip() for x in raw.strip("[]").split(",") if x.strip()]
+    return raw
+
+
+def yaml_scalar(value, plain_words=("on", "off")) -> str:
+    """A YAML scalar: bare for simple words (on/off and tone names stay bare,
+    as the readers expect), double-quoted JSON style for anything else."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(yaml_scalar(v) for v in value) + "]"
+    if value == "":
+        return '""'
+    if value in plain_words or _plain(value):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _plain(s: str) -> bool:
+    """Bare words and simple multi-word labels with no YAML-sensitive character."""
+    if s.lower() in ("yes", "no", "true", "false", "null", "~"):
+        return False
+    return re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*(?: [A-Za-z0-9_-]+)*", s) is not None
+
+
+# --- reading an existing block -------------------------------------------------
+
+def find_section(text: str):
+    """(start, end) line indexes of the `## Writing register` section, or None."""
+    lines = text.split("\n")
+    start = None
+    for i, line in enumerate(lines):
+        if re.match(r"^ {0,3}##\s+Writing register\b", line):
+            start = i
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    fence = None
+    for j in range(start + 1, len(lines)):
+        line = lines[j]
+        m = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if fence:
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+                fence = None
+            continue
+        if m:
+            fence = m.group(1)
+            continue
+        if re.match(r"^ {0,3}#{1,2}\s", line) or re.match(r"^ {0,3}---+\s*$", line):
+            end = j
+            break
+    return start, end
+
+
+def parse_block(section_lines):
+    """Values in the section, keyed by dotted name; shape is bare or fenced."""
+    values = {}
+    fenced = any(re.match(r"^ {0,3}```", ln) for ln in section_lines)
+    body = []
+    fence = None
+    for ln in section_lines[1:]:
+        m = re.match(r"^ {0,3}(`{3,}|~{3,})", ln)
+        if m:
+            fence = None if fence else m.group(1)
+            continue
+        if fenced and fence is None:
+            continue
+        body.append(ln)
+    parent = None
+    for ln in body:
+        if not ln.strip() or ln.strip().startswith("#"):
+            continue
+        m = re.match(r"^(\s*)([A-Za-z_][\w]*):\s*(.*)$", ln.rstrip())
+        if not m:
+            continue
+        indent, key, raw = m.group(1), m.group(2), m.group(3).strip()
+        raw = _strip_comment(raw)
+        if indent == "":
+            if raw == "":
+                parent = key
+                continue
+            parent = None
+            values[key] = yaml_value(raw)
+        elif parent:
+            values[parent + "." + key] = yaml_value(raw)
+    return values, ("fenced" if fenced else "bare")
+
+
+def _strip_comment(raw: str) -> str:
+    """Drop a trailing ` # comment`, leaving a quoted value's own `#` alone."""
+    if raw.startswith('"'):
+        try:
+            _, end = json.JSONDecoder().raw_decode(raw)
+            return raw[:end]
+        except ValueError:
+            pass
+    return raw.split(" #", 1)[0].rstrip()
+
+
+def yaml_value(raw: str):
+    if raw.startswith("["):
+        inner = raw.strip("[]").strip()
+        if not inner:
+            return []
+        items = [x.strip() for x in inner.split(",")]
+        out = []
+        for x in items:
+            if x.isdigit():
+                out.append(int(x))
+            else:
+                out.append(json.loads(x) if x.startswith('"') else x.strip("'"))
+        return out
+    if raw.startswith('"'):
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return raw.strip('"')
+    if raw.startswith("'"):
+        return raw.strip("'")
+    if raw.lower() in ("true", "yes"):
+        return True
+    if raw.lower() in ("false", "no"):
+        return False
+    if raw.isdigit():
+        return int(raw)
+    return raw
+
+
+def hints(text: str) -> dict:
+    out = {}
+    for label, key in (("Tone with others", "tone_default.communication"), ("Things to avoid", "avoid_words")):
+        m = re.search(r"^\s*-\s*\*\*" + re.escape(label) + r"[^*]*\*\*:\s*(.+?)\s*$", text, re.M)
+        if not m:
+            m = re.search(r"^\s*-\s*" + re.escape(label) + r"[^:]*:\s*(.+?)\s*$", text, re.M)
+        if m and not m.group(1).startswith("<"):
+            out[key] = m.group(1)
+    return out
+
+
+# --- rendering ---------------------------------------------------------------
+
+def collect(existing: dict, env: dict):
+    """Final values and the set of keys that took their default."""
+    values, defaulted, added = {}, set(), []
+    for key, var, default, kind in KEYS:
+        if key in existing:
+            values[key] = existing[key]
+            continue
+        added.append(key)
+        raw = env.get(var, "") if var else ""
+        if raw.strip():
+            values[key] = parse_env(kind, raw)
+        else:
+            values[key] = default
+            defaulted.add(key)
+    return values, defaulted, added
+
+
+def render(values: dict, defaulted: set) -> str:
+    lines = ["```yaml"]
+    top_order = []
+    for key, *_ in KEYS:
+        top = key.split(".")[0]
+        if top not in top_order:
+            top_order.append(top)
+    for top in top_order:
+        children = [k for k, *_ in KEYS if k.startswith(top + ".")]
+        if not children:
+            lines.append(_line(top, values[top], top in defaulted, COMMENTS.get(top), 0))
+            continue
+        lines.append(top + ":")
+        for k in children:
+            lines.append(_line(k.split(".", 1)[1], values[k], k in defaulted, COMMENTS.get(k), 2))
+    lines.append("```")
+    return "\n".join(lines)
+
+
+def _line(name: str, value, is_default: bool, comment, indent: int) -> str:
+    text = " " * indent + name + ": " + yaml_scalar(value)
+    notes = []
+    if is_default:
+        notes.append("default")
+    if comment:
+        notes.append(comment)
+    if notes:
+        text = text.ljust(30) + " # " + "; ".join(notes)
+    return text
+
+
+INTRO = ("The writing register's per-instance values: domains, tones, voice, sign-off, translation. "
+         "Every key is optional; a `# default` comment marks a value the owner never set. "
+         "Reference: `howto/10-writing-register.md`.")
+
+
+# --- commands -----------------------------------------------------------------
+
+def cmd_render(env) -> int:
+    values, defaulted, _ = collect({}, env)
+    print(render(values, defaulted))
+    return 0
+
+
+def read_prefs(path: str) -> str:
+    p = Path(path)
+    if not p.is_file():
+        print("no preferences file at %s" % path, file=sys.stderr)
+        sys.exit(EXIT_NO_PREFS)
+    return p.read_text(encoding="utf-8")
+
+
+def cmd_report(path: str) -> int:
+    text = read_prefs(path)
+    section = find_section(text)
+    if section is None:
+        existing, shape = {}, "absent"
+    else:
+        existing, shape = parse_block(text.split("\n")[section[0]:section[1]])
+    known = [k for k, *_ in KEYS]
+    print(json.dumps({
+        "block": shape,
+        "present": [k for k in known if k in existing],
+        "missing": [k for k in known if k not in existing],
+        "hints": hints(text),
+    }, ensure_ascii=False))
+    return 0
+
+
+def cmd_write(path: str, env) -> int:
+    text = read_prefs(path)
+    lines = text.split("\n")
+    section = find_section(text)
+    existing, shape = ({}, "absent") if section is None else parse_block(lines[section[0]:section[1]])
+    values, defaulted, added = collect(existing, env)
+    if not added and shape == "fenced":
+        print("unchanged: every key present")
+        return 0
+    block = [HEADING, "", INTRO, "", render(values, defaulted), ""]
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup = Path(path + ".bak." + stamp + "-register")
+    backup.write_text(text, encoding="utf-8")
+    print("backup %s" % backup)
+    if section is None:
+        idx = next((i for i, ln in enumerate(lines) if re.match(r"^ {0,3}##\s+Notes\b", ln)), None)
+        if idx is not None:
+            # keep the `---` rule that precedes `## Notes`, when there is one
+            while idx > 0 and lines[idx - 1].strip() in ("", "---"):
+                idx -= 1
+            new_lines = lines[:idx] + block + ["---", ""] + lines[idx:]
+        else:
+            new_lines = lines + ([""] if lines and lines[-1].strip() else []) + block
+    else:
+        start, end = section
+        tail = lines[end:]
+        new_lines = lines[:start] + block + tail
+    Path(path).write_text("\n".join(new_lines), encoding="utf-8")
+    print("written %d key(s) added, block %s" % (len(added), "converted" if shape == "bare" else shape))
+    for k in added:
+        print("  %s%s" % (k, " (default)" if k in defaulted else ""))
+    return 0
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv or argv[0] not in ("render", "report", "write"):
+        print(__doc__, file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        if argv[0] == "render":
+            return cmd_render(os.environ)
+        if len(argv) != 2:
+            print("usage: maestro-register-keys %s PREFS" % argv[0], file=sys.stderr)
+            return EXIT_USAGE
+        if argv[0] == "report":
+            return cmd_report(argv[1])
+        return cmd_write(argv[1], os.environ)
+    except Invalid as e:
+        print(str(e), file=sys.stderr)
+        return EXIT_USAGE
+
+
+if __name__ == "__main__":
+    sys.exit(main())

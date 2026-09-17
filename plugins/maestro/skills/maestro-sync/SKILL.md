@@ -25,10 +25,11 @@ The skill operates on files marked with both `origin: maestro` and `maestro_vers
 - `CLAUDE.md` (top-level)
 - `.claude/skills/<name>/SKILL.md` for hub skills distributed by Maestro (e.g. `logbook`, `add-external-app`, `guide`)
 - `.claude/agents/<name>.md` for craft agents distributed by Maestro (e.g. `librarian`, `scheduler`, `hr`)
+- `howto/*.md` guides distributed by Maestro
 
 Files **never** in scope:
 
-- `private/*` (preferences, memories.db, logs, anything sensitive)
+- `private/*` (preferences, memories.db, logs, anything sensitive). One exception, Phase 6c: the `## Writing register` block of `private/preferences.md` gains the keys it lacks, after a backup, on the owner's yes
 - `apps/*` (sub-apps and their internals)
 - Custom skills/agents added by the instance (no `origin: maestro` marker)
 - `.claude/roster.yaml` (instance-specific list of active agents — Maestro doesn't choose which agents an instance enrolls)
@@ -183,6 +184,7 @@ Walk the instance's repository (`<instance-path>`) and collect files with `origi
 - `CLAUDE.md` (root)
 - `.claude/skills/*/SKILL.md`
 - `.claude/agents/*.md`
+- `howto/*.md`
 
 Leave out every file under a retired path of Phase 6b (`.claude/skills/maestro-sync/`, `.claude/skills/setup/`, `.claude/skills/.disabled/setup/`, `.claude/skills/listen/`): they are never diffed and never lower the version floor.
 
@@ -549,6 +551,28 @@ Exit 3 from this block, for `listen` only, means a capture or an old monitor sta
 
 Log it in `private/maestro-sync.log` with the marker `(retired, removed)`, `(retired, removed, kept <members>)`, `(retired, postponed)`, `(retired, kept: unmarked skill)` or `(retired, kept by owner)`. Files under these paths are never shown as orphans in Phase 7.
 
+### Phase 6c — Writing register keys
+
+The writing register reads per-instance values from the `## Writing register` block of `private/preferences.md` (`howto/10-writing-register.md` → "Per-instance values"): tone per domain, voice, sign-off, translation, words to avoid. An instance created before those keys existed has none of them, or a bare two-line block. This phase asks once for the keys the instance lacks and writes them; a key already present is never changed. The command is the plugin's `maestro-register-keys`, on the `PATH` inside a Claude Code session.
+
+```bash
+set -eo pipefail
+INSTANCE="<instance-path>"
+maestro-register-keys report "$INSTANCE/private/preferences.md"
+```
+
+The JSON says `block` (`absent`, `bare` or `fenced`), `present`, `missing` and `hints` (the owner's own lines from `## Communication preferences`, when they filled them in). If `missing` is empty, say nothing and go to Phase 7.
+
+Otherwise tell the owner in one line how many keys are missing, then ask the questions of `howto/10-writing-register.md` → "The questions setup and sync ask" for the missing keys only, one per turn, each with its default and example; when `hints` carries a line for the key, propose it as the answer. Skip the translation questions when `<instance-path>/.claude/skills/translate/SKILL.md` doesn't exist. `skip` on any question, or on the whole block, leaves the default. Then ask: *"Write these into `private/preferences.md`? I back it up first."* On yes, run the block with one `NAME="value"` per answered question in place of `<answers>` (same escaping as any value on a command line: a backslash before `\`, `"`, `$` and a backtick; an omitted variable writes the default with a `# default` comment):
+
+```bash
+set -eo pipefail
+INSTANCE="<instance-path>"
+env <answers> maestro-register-keys write "$INSTANCE/private/preferences.md"
+```
+
+It prints `backup <path>` (the copy of `preferences.md` next to the original), then `written N key(s) added, block <shape>` and one line per key. A bare block is converted to the fenced shape with its values kept. The command refuses a tone outside `friendly`, `professional`, `formal`, `neutral` with exit 2 before writing anything. Log it in `private/maestro-sync.log` with the marker `(register, N keys added, backup <path>)`, or `(register, kept by owner)` on a no. A satellite of this instance picks up the block at its next session.
+
 ### Phase 7 — Final summary
 
 After all files are processed (or the owner picked `A`), summarize:
@@ -560,6 +584,7 @@ Updated:  3 files  (CLAUDE.md, .claude/skills/add-external-app/SKILL.md, .claude
 Added:    1 file   (howto/08-markdown-discipline.md — new from upstream)
 bin:      2 files copied (bin/mem, bin/mem_schema.py), db backup private/memories.db.bak.20260915-143000-pre-sync
 Removed:  1 retired path (.claude/skills/maestro-sync)
+Register: 9 keys added to private/preferences.md, backup private/preferences.md.bak.20260917-101500-register
 Skipped:  1 file   (.claude/skills/logbook/SKILL.md — owner declined)
 Identical: 4 files (no change in upstream)
 
@@ -568,7 +593,7 @@ Instance now at: v2026.04.30.2
 Log: private/maestro-sync.log
 ```
 
-Omit the `Added:`, `bin:` and `Removed:` lines when they have nothing to report.
+Omit the `Added:`, `bin:`, `Removed:` and `Register:` lines when they have nothing to report.
 
 If everything was identical:
 
@@ -599,7 +624,7 @@ The skill itself does not auto-mark files — that would risk misclassifying ins
 ## What this skill does NOT do
 
 - Push to upstream. Promotions happen in the primary working tree (`maestro_worktree_path`), not from this skill.
-- Edit files in `private/` (except the backups and the log it writes), `apps/`, or any file without `origin: maestro` marker, except `bin/*` and retired paths, each on the owner's explicit yes.
+- Edit files in `private/` (except the backups and the log it writes, and the `## Writing register` keys Phase 6c adds on the owner's yes), `apps/`, or any file without `origin: maestro` marker, except `bin/*` and retired paths, each on the owner's explicit yes.
 - Resolve conflicts when the owner has hand-edited a file marked `origin: maestro` and upstream also changed it. The diff is shown, the owner decides per file. Hand-editing `origin: maestro` files is discouraged in `CLAUDE.md` → "Distribution and modifications" precisely to avoid this.
 - Run silently. Every phase that touches state (mirror reset, backups, file copy, removal, log append) reports to the owner.
 

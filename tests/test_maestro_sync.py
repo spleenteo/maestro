@@ -38,6 +38,8 @@ PHASE_5B_HEADING = "### Phase 5b — Compare `bin/*` against the mirror"
 PHASE_0_HEADING = "### Phase 0 — Check this is an instance"
 PHASE_3_HEADING = "### Phase 3 — Refresh the read-only mirror, check the plugin"
 PHASE_6B_HEADING = "### Phase 6b — Retired paths"
+PHASE_6C_HEADING = "### Phase 6c — Writing register keys"
+PLUGIN_BIN = ROOT / "plugins" / "maestro" / "bin"
 
 _BASH_FENCE_RE = re.compile(r"```bash\n(.*?)```", re.DOTALL)
 
@@ -769,3 +771,60 @@ class TestRetiredListen(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Phase 6c — writing register keys
+# ---------------------------------------------------------------------------
+
+class TestRegisterKeys(unittest.TestCase):
+    """The report and write blocks run against a temp instance whose
+    preferences carry the old two-line block; the plugin's bin/ is on PATH
+    the way a Claude Code session has it."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.inst = Path(self._tmp.name) / "my inst"
+        (self.inst / "private").mkdir(parents=True)
+        self.prefs = self.inst / "private" / "preferences.md"
+        self.prefs.write_text("---\nsetup_completed: true\n---\n\n# Preferences\n\n"
+                              "## Writing register\nsuspended: [4]\npost_pass: off\n\n---\n\n## Notes\n\nkeep me\n")
+        text = SKILL.read_text()
+        self.report = _nth_bash_block_after(text, PHASE_6C_HEADING, 1)
+        self.write = _nth_bash_block_after(text, PHASE_6C_HEADING, 2)
+        self.env = dict(os.environ, PATH=f"{PLUGIN_BIN}:{os.environ.get('PATH', '')}")
+
+    def run_block(self, block, answers=""):
+        cmd = block.replace("<instance-path>", str(self.inst)).replace("<answers>", answers)
+        return subprocess.run(["bash", "-c", cmd], cwd=self._tmp.name, capture_output=True, text=True, env=self.env)
+
+    def test_report_names_the_bare_block_and_its_missing_keys(self):
+        r = self.run_block(self.report)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rep = json.loads(r.stdout)
+        self.assertEqual(rep["block"], "bare")
+        self.assertEqual(rep["present"], ["suspended", "post_pass"])
+        self.assertIn("communication.sign_off", rep["missing"])
+
+    def test_write_keeps_the_owner_values_adds_the_rest_and_a_second_run_asks_nothing(self):
+        r = self.run_block(self.write, 'MAESTRO_TONE_COMMUNICATION="friendly" MAESTRO_SIGN_OFF="Bye,\nJane"')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("backup ", r.stdout)
+        self.assertIn("block converted", r.stdout)
+        out = self.prefs.read_text()
+        self.assertIn("suspended: [4]", out)
+        self.assertIn("post_pass: off", out)
+        self.assertIn("communication: friendly", out)
+        self.assertIn('sign_off: "Bye,\\nJane"', out)
+        self.assertIn("keep me", out)
+        self.assertEqual(len(list((self.inst / "private").glob("preferences.md.bak.*-register"))), 1)
+        rep = json.loads(self.run_block(self.report).stdout)
+        self.assertEqual(rep["block"], "fenced")
+        self.assertEqual(rep["missing"], [])
+
+    def test_write_refuses_an_unknown_tone_and_changes_nothing(self):
+        before = self.prefs.read_text()
+        r = self.run_block(self.write, 'MAESTRO_TONE_COMMUNICATION="chatty"')
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(self.prefs.read_text(), before)

@@ -47,3 +47,6 @@ tests/test_satellite_hook.py export-ignore
 
 # This test runs the plugin's maestro-listen out of plugins/.
 tests/test_maestro_listen.py export-ignore
+
+# This test runs the plugin's maestro-register-keys out of plugins/.
+tests/test_maestro_register_keys.py export-ignore

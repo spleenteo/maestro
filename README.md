@@ -62,6 +62,8 @@ From any folder, run:
 9. **People you work with** (optional): team, collaborators, family, clients, whoever's relevant
 10. **File territories**: where markdown notes should live. `new-instance` writes four keys to preferences: `vault_path` (the root) plus `logbook_path`, `til_path`, `documents_path` as subfolders by default. Three options: internal (vault is `./<project-slug>/` inside the repo, with the slug derived from Q2, gitignored), external (you give an absolute path to a vault on disk, e.g. an Obsidian vault: subfolders default to `<vault_path>/{logbook,til,documents}`), or skip (no territories for now)
 
+An optional block follows, skippable with one word: six short questions on how the orchestrator writes for you (tone of emails, tone of documents, your voice, an email sign-off, whether you translate drafts, words to avoid), written to the `## Writing register` section of preferences with defaults for whatever you skip. Existing instances are asked the same questions once by `/maestro:maestro-sync`.
+
 After the questions and a quick summary, `finalize.sh` (shipped inside the plugin) handles the mechanical work in one atomic step: writes `private/preferences.md`, copies `memories.db.template` into `private/memories.db`, copies `routines.example.yaml` into `private/routines.yaml`, inserts the first memory log row, and removes the three root templates. The first logbook entry and the first TIL are written just before that: creative content the orchestrator composes in your language. `new-instance` then registers the instance in `~/.claude/maestro-instances.yaml`, so `maestro-net` can reach it.
 
 `cd` into the new folder and start working with your orchestrator:

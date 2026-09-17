@@ -37,6 +37,14 @@
 #   MAESTRO_DOCUMENTS_PATH        absolute path for documents (empty if skip)
 #   MAESTRO_NOTES                 free-form additional context (optional)
 #
+#   Writing register (all optional, defaults with a `# default` comment):
+#   MAESTRO_TONE_COMMUNICATION, MAESTRO_TONE_DOCUMENTATION, MAESTRO_VOICE,
+#   MAESTRO_SIGN_OFF, MAESTRO_TRANSLATION (on|off), MAESTRO_TRANSLATION_PAIR,
+#   MAESTRO_TRANSLATION_MARKER, MAESTRO_TRANSLATION_WORDS_MAX,
+#   MAESTRO_TRANSLATION_LABELS, MAESTRO_AVOID_WORDS, MAESTRO_SUSPENDED,
+#   MAESTRO_POST_PASS. The block is rendered by the plugin's
+#   maestro-register-keys, next to this script's folder in plugins/maestro/bin.
+#
 # Assumes CWD = instance root.
 # Refuses to run if `private/preferences.md` or `private/memories.db`
 # already exists — a new instance always starts in a new or empty folder;
@@ -108,6 +116,14 @@ for f in memories.db.template routines.example.yaml; do
 done
 
 # --- 1) Write private/preferences.md -----------------------------------
+
+REGISTER_KEYS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../bin" && pwd)/maestro-register-keys"
+if [[ ! -f "$REGISTER_KEYS" ]]; then
+  echo "ERROR: $REGISTER_KEYS not found next to the plugin's skills" >&2
+  exit 1
+fi
+# Fails on an invalid value (a tone outside the four) before anything is written.
+REGISTER_BLOCK="$(python3 "$REGISTER_KEYS" render)"
 
 mkdir -p private
 
@@ -195,6 +211,14 @@ How the orchestrator should talk *to you* and about *others*. Refine when you no
 - Tone with others:
 - Things to avoid:
 - Things to keep doing:
+
+---
+
+## Writing register
+
+The writing register's per-instance values: domains, tones, voice, sign-off, translation. Every key is optional; a \`# default\` comment marks a value you never set. Reference: \`howto/10-writing-register.md\`.
+
+${REGISTER_BLOCK}
 
 ---
 

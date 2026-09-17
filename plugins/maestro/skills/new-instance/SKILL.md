@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 This skill creates a Maestro instance in a new or empty folder. It takes the template at the commit the Maestro plugin was installed from, runs the first-launch interview in the current session, finalizes the new folder and registers it in the machine registry. Outside the destination it writes only the template mirror at `$HOME/.maestro` and the registry.
 
-The interview collects only the essentials. Richer context (team, objectives, work rhythms, integrations) is added later by editing `private/preferences.md` in the new instance.
+The interview collects only the essentials, plus an optional block on how the orchestrator writes for the owner. Richer context (team, objectives, work rhythms, integrations) is added later by editing `private/preferences.md` in the new instance.
 
 ## When this skill runs
 
@@ -210,11 +210,19 @@ Check whether the directory exists; if it doesn't, ask whether to create it. Onc
 
 **If `skip`**: record all four keys as empty in preferences. Remind the owner they can set at least `vault_path` anytime by editing `<destination>/private/preferences.md`.
 
-### After the 10 questions — offer to add more context
+### Writing register (optional, after Question 10)
+
+The orchestrator writes emails, documents and recaps under a writing register with per-instance values: a default tone per domain, a voice line, an email sign-off, translation settings, words to avoid. Read the question list in `<destination>/howto/10-writing-register.md` → "The questions setup and sync ask" (the destination holds the template at the plugin's commit) and offer the block in one turn:
+
+> The last part is optional: six short questions on how I should write for you (tone of emails, tone of documents, your voice, an email sign-off, whether you translate drafts, words to avoid). Answer them now, or say `skip` and I'll use the defaults (professional emails, neutral documents, no sign-off, translation off); you can change them later in `private/preferences.md`.
+
+On `skip`, record nothing: `finalize.sh` writes every default with a `# default` comment. Otherwise ask the questions one per turn, labelled `register 1/6` to `register 6/6`, each with its default and the example line from the guide; any single question may be skipped. Ask question 5 (translation) only when `<destination>/.claude/skills/translate/SKILL.md` exists. Record the answers for the `MAESTRO_TONE_*`, `MAESTRO_VOICE`, `MAESTRO_SIGN_OFF`, `MAESTRO_TRANSLATION*` and `MAESTRO_AVOID_WORDS` variables of Finalize; a tone answer is one of `friendly`, `professional`, `formal`, `neutral`.
+
+### After the interview — offer to add more context
 
 Before writing, tell the owner:
 
-> Those are the essentials. Other context — objectives, work rhythms, communication style, integrations like Basecamp or MCP servers — you can add later by editing `private/preferences.md` directly. Want to add anything else right now, or shall I save what we have?
+> Those are the essentials. Other context — objectives, work rhythms, integrations like Basecamp or MCP servers — you can add later by editing `private/preferences.md` directly. Want to add anything else right now, or shall I save what we have?
 
 If the owner wants to add something, accept it as free-form text and save it to the "Notes" section of preferences. Otherwise, proceed.
 
@@ -347,7 +355,7 @@ Skip silently if `til_path` is empty.
 
 After the logbook and TIL have been written (or skipped), run `finalize.sh` in the new instance, in a single Bash call: the `cd` and the script go on the same command, because the Bash tool doesn't keep a working directory outside the session's project. The script writes `private/preferences.md`, copies `memories.db.template` to `private/memories.db` and `routines.example.yaml` to `private/routines.yaml`, writes the first memory through the instance's own `bin/mem save`, and removes the three root templates.
 
-Pass the collected answers as environment variables. Required: `MAESTRO_LANGUAGE`, `MAESTRO_PROJECT_NAME`, `MAESTRO_PROJECT_SLUG`, `MAESTRO_ORCHESTRATOR_NAME`, `MAESTRO_OWNER_NICK`, `MAESTRO_OWNER_FULL_NAME`, `MAESTRO_OWNER_ROLE`, `MAESTRO_CONTEXT`. Optional: `MAESTRO_INSPIRED_BY`, `MAESTRO_ADJECTIVES`, `MAESTRO_PEOPLE`, `MAESTRO_VAULT_PATH`, `MAESTRO_LOGBOOK_PATH`, `MAESTRO_TIL_PATH`, `MAESTRO_DOCUMENTS_PATH`, `MAESTRO_NOTES`.
+Pass the collected answers as environment variables. Required: `MAESTRO_LANGUAGE`, `MAESTRO_PROJECT_NAME`, `MAESTRO_PROJECT_SLUG`, `MAESTRO_ORCHESTRATOR_NAME`, `MAESTRO_OWNER_NICK`, `MAESTRO_OWNER_FULL_NAME`, `MAESTRO_OWNER_ROLE`, `MAESTRO_CONTEXT`. Optional: `MAESTRO_INSPIRED_BY`, `MAESTRO_ADJECTIVES`, `MAESTRO_PEOPLE`, `MAESTRO_VAULT_PATH`, `MAESTRO_LOGBOOK_PATH`, `MAESTRO_TIL_PATH`, `MAESTRO_DOCUMENTS_PATH`, `MAESTRO_NOTES`, and the writing register answers: `MAESTRO_TONE_COMMUNICATION`, `MAESTRO_TONE_DOCUMENTATION`, `MAESTRO_VOICE`, `MAESTRO_SIGN_OFF`, `MAESTRO_TRANSLATION` (`on`/`off`), `MAESTRO_TRANSLATION_PAIR`, `MAESTRO_TRANSLATION_MARKER`, `MAESTRO_TRANSLATION_WORDS_MAX`, `MAESTRO_TRANSLATION_LABELS`, `MAESTRO_AVOID_WORDS` (comma-separated). Leave out every register variable the owner skipped: the script writes its default with a `# default` comment, through the plugin's `maestro-register-keys`, which refuses a tone outside the four before anything is written.
 
 - Every path value is absolute. For an internal vault they sit under `<destination>/<project_slug>`; for `skip` they are empty strings.
 - `MAESTRO_PEOPLE` holds pre-formatted markdown bullets, one person per line, with real line breaks inside the double quotes (e.g. `- Jane Doe: CTO, technical lead` and `- John Smith: Account exec` on two lines). Empty string if the owner skipped the people question.
@@ -373,6 +381,9 @@ MAESTRO_VAULT_PATH="<destination>/acme-partnership" \
 MAESTRO_LOGBOOK_PATH="<destination>/acme-partnership/logbook" \
 MAESTRO_TIL_PATH="<destination>/acme-partnership/til" \
 MAESTRO_DOCUMENTS_PATH="<destination>/acme-partnership/documents" \
+MAESTRO_TONE_COMMUNICATION="friendly" \
+MAESTRO_SIGN_OFF="Have a nice day,
+Jane" \
 bash "${CLAUDE_SKILL_DIR}/finalize.sh"
 ```
 
@@ -479,6 +490,6 @@ Then hand control back.
 - **The mirror is read-only**: this skill only clones and fetches `$HOME/.maestro`; it never commits, checks out or deletes anything there.
 - **Never speak as "orchestrator"**: that term stays in CLAUDE.md. In chat, you use the chosen name once it exists.
 - **Never invent data**: if a field isn't provided, leave it empty in preferences.
-- **Keep the interview light**: deeper context (objectives, rhythms, communication style, team details, integrations) is for the owner to fill in later by editing `preferences.md`. Don't try to extract everything now.
+- **Keep the interview light**: deeper context (objectives, rhythms, team details, integrations) is for the owner to fill in later by editing `preferences.md`. The writing register block is the one optional appendix, skippable with one word. Don't try to extract everything now.
 - **Write the day-zero logbook and TIL before finalize**: they are real, useful content, not dummy files, and they pass `register-check` before they are announced.
 - **Announce every write**: every db insert and every markdown file creation gets its one-line announcement. The owner should see what happened at each step.

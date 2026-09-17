@@ -206,6 +206,26 @@ class TestFinalize(unittest.TestCase):
             decoy_con.close()
         self.assertEqual(decoy_rows, 0)
 
+    def test_writes_the_register_block_from_answers_and_defaults(self):
+        instance = self._fresh_instance()
+        r = self._run(instance, self._env(MAESTRO_TONE_COMMUNICATION="friendly",
+                                          MAESTRO_SIGN_OFF='Have a nice day,\n"Jane"'))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        prefs = (instance / "private" / "preferences.md").read_text()
+        self.assertIn("## Writing register", prefs)
+        self.assertLess(prefs.index("## Writing register"), prefs.index("## Notes"))
+        self.assertIn("```yaml\n", prefs)
+        self.assertIn("communication: friendly", prefs)
+        self.assertIn('sign_off: "Have a nice day,\\n\\"Jane\\""', prefs)
+        self.assertRegex(prefs, r"documentation: neutral\s+# default")
+        self.assertIn("enabled: false", prefs)
+
+    def test_invalid_tone_exits_before_writing(self):
+        instance = self._fresh_instance()
+        r = self._run(instance, self._env(MAESTRO_TONE_COMMUNICATION="chatty"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse((instance / "private" / "preferences.md").exists())
+
     def test_second_run_refuses_and_changes_nothing(self):
         instance = self._fresh_instance()
         env = self._env(decoy_db=self._decoy_db())
