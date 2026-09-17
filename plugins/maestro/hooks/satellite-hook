@@ -187,8 +187,10 @@ def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity
     register_skill = mother / ".claude" / "skills" / "writing-register" / "SKILL.md"
     if register_skill.is_file():
         lines.append(f"- Before drafting a text for a person (email, message, post, comment) or a document, "
-                     f"read `{register_skill}`: the kinds of text, the tones, and how to read the values of "
+                     f"read `{register_skill}`: the domains, the tones, and how to read the values of "
                      "the `Writing register` block above.")
+    lines.append(f"- Mechanical check on any finished text: `\"{mother / 'bin' / 'register-check'}\" <file>` "
+                 "(or `-` with the text on stdin).")
     if can_request:
         lines.append(f"- For work that belongs to the mother (its skills, agents, vault documents): "
                      f"`maestro-net request \"<goal and where the result goes>\"`. The answer arrives as a "
@@ -198,7 +200,7 @@ def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity
             "",
             "## Documents",
             f"- The linked vault folder is `{row['vault_folder']}`: documents for this project go there.",
-            f"- Every document passes `{mother / 'bin' / 'register-check'} <file>` before delivery.",
+            f"- Every document passes `\"{mother / 'bin' / 'register-check'}\" <file>` before delivery.",
         ]
         if not vault_open:
             lines.append("- The plugin couldn't record this session for the vault guard: file tools on "

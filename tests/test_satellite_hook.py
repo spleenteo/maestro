@@ -67,7 +67,10 @@ setup_completed: true
 tone_default:
   communication: friendly
 communication:
-  sign_off: "Have a nice day,\\n--\\nAda"
+  sign_off: |
+    Have a nice day,
+    --
+    Ada
 ```
 
 Setext heading LEAK
@@ -164,6 +167,7 @@ class TestSessionStart(HookCase):
         self.assertIn("Name: Ada", ctx)
         self.assertIn("Short answers", ctx)
         self.assertIn(str(self.mother / "bin" / "mem"), ctx)
+        self.assertIn(f'`"{self.mother / "bin" / "register-check"}" <file>`', ctx)
         self.assertNotIn("private contact", ctx)
         self.assertNotIn("LEAK", ctx)
         self.assertIn("Kept: a parenthetical suffix is allowed", ctx)
@@ -176,7 +180,7 @@ class TestSessionStart(HookCase):
         self.write_registry()
         self.add_satellite_row()
         ctx = self.context(self.session_start(self.repo))
-        self.assertIn('sign_off: "Have a nice day,\\n--\\nAda"', ctx)
+        self.assertIn("    --\n    Ada", ctx)
         self.assertIn("communication: friendly", ctx)
         self.assertNotIn("LEAK", ctx)
 

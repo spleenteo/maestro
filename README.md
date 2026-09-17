@@ -101,7 +101,7 @@ Three principles guide the pattern:
 
 1. **Single interface**: the owner talks only to the orchestrator. No agent speaks directly to the owner. Output from agents is always filtered or synthesized by the orchestrator.
 2. **Delegate when it fits, not always**: the orchestrator answers directly to conversational requests. Delegation is reserved for clear matches with registered agents.
-3. **Proactive on recurring patterns**: if the same kind of request keeps coming up without a dedicated agent, the orchestrator suggests hiring one. The owner decides.
+3. **Proactive on recurring patterns**: if the same domain of request keeps coming up without a dedicated agent, the orchestrator suggests hiring one. The owner decides.
 
 These live in `CLAUDE.md` under "Role: orchestrator" and carry through every instance.
 
@@ -118,7 +118,7 @@ After setup, the `howto/` folder has eleven guides:
 - [`howto/07-warm-task-channel.md`](howto/07-warm-task-channel.md): wire an external task manager as the warm layer, with `memories.db` as the cold layer
 - [`howto/08-markdown-discipline.md`](howto/08-markdown-discipline.md): frontmatter, tags, descriptions, YAML safety, wikilinks
 - [`howto/09-memoria-semantica.md`](howto/09-memoria-semantica.md): the optional semantic layer over `memories.db` and the vault
-- [`howto/10-writing-register.md`](howto/10-writing-register.md): the seven prose prohibitions, the three kinds of text and their tones, the per-instance values, the post-pass, and `bin/register-check`
+- [`howto/10-writing-register.md`](howto/10-writing-register.md): the seven prose prohibitions, the three domains and their tones, the per-instance values, the post-pass, and `bin/register-check`
 - [`howto/11-maestro-net.md`](howto/11-maestro-net.md): cross-talk between several Maestro instances (`recap`, `ask`, a satellite's `request`, the instance registry)
 
 ## Status

@@ -2,7 +2,7 @@
 origin: maestro
 maestro_version: v2026.09.15.1
 tags: [howto, writing-register, prose, style, register, domains, tone, translation, preferences, humanizer, unslop, orchestrator, discipline]
-description: "Full reference for the writing register: rule zero, the seven prose prohibitions with bilingual examples, the perimeter that follows the reader, the three kinds of text (communication, documentation, synthesis) with their tones, the lexical tells, the per-instance values in preferences and the questions setup and sync ask, the post-pass through the `writing-register` skill, the `bin/register-check` tool and its heuristics. The condensed rules live in CLAUDE.md."
+description: "Full reference for the writing register: rule zero, the seven prose prohibitions with bilingual examples, the perimeter that follows the reader, the three domains (communication, documentation, synthesis) with their tones, the lexical tells, the per-instance values in preferences and the questions setup and sync ask, the post-pass through the `writing-register` skill, the `bin/register-check` tool and its heuristics. The condensed rules live in CLAUDE.md."
 ---
 
 # 10 — Writing register
@@ -11,7 +11,7 @@ This is the canonical reference for the shape of the prose an orchestrator produ
 
 It is distributed by Maestro (`origin: maestro`): don't edit it in place. Changes go through the template and come back via `/maestro:maestro-sync`.
 
-The register exists because a model writes fluently by default, and fluent default prose has a recognisable shape: it comments on itself, it agrees before arguing, it reaches for the em dash, it closes with encouragement. Each of the seven prohibitions removes one of those habits. One set of prohibitions was not enough, though: an email to a partner needs an opening line and a sign-off that a daily recap must not have, so the register also names the kind of text and the tone it is written in.
+The register exists because a model writes fluently by default, and fluent default prose has a recognisable shape: it comments on itself, it agrees before arguing, it reaches for the em dash, it closes with encouragement. Each of the seven prohibitions removes one of those habits. One set of prohibitions was not enough, though: an email to a partner needs an opening line and a sign-off that a daily recap must not have, so the register also names the domain and the tone it is written in.
 
 ## Perimeter
 
@@ -22,7 +22,7 @@ The perimeter follows the reader. The register applies to text a person reads, w
 - emails, messages and translations written for someone other than the owner
 - documents for people written to a repository: `README`, `CHANGELOG`, the howto guides, decision records, shaping and devflow documents
 - internal reports from a craft agent to the orchestrator, because the synthesis inherits the shape of its source
-- replies in chat to the owner, bound by the prohibitions and by `CLAUDE.md` → `## Tone`, with no kind and no post-pass; a text for someone else drafted in chat takes its kind
+- replies in chat to the owner, bound by the prohibitions and by `CLAUDE.md` → `## Tone`, with no domain and no post-pass; a text for someone else drafted in chat takes its domain
 
 The register does not apply to files a model reads as instructions: `CLAUDE.md`, `SKILL.md` files, agent files, `preferences.md`. They are written for the agent that executes them, and emphasis or a contrast there has an operational job. The howto guides are read by people (the owner, whoever installs Maestro) and by the `guide` skill: they are inside, and rule zero protects the contrasts that carry an instruction.
 
@@ -171,13 +171,13 @@ When the owner asks for an opinion, the verdict is the answer and it gets given.
 ✓ It doesn't work: the opening promises one thing and the body does another.
 ```
 
-Prohibition 7 bans judgment as decoration. It does not ban warmth in a message to a person: "thanks again for the call today" in an email is the communication kind doing its job, and rule zero protects it.
+Prohibition 7 bans judgment as decoration. It does not ban warmth in a message to a person: "thanks again for the call today" in an email is the communication domain doing its job, and rule zero protects it.
 
-## The three kinds of text
+## The three domains
 
-Every text for a reader belongs to one kind, and the kind gives it a shape. The orchestrator picks it from what the text is for; commits keep their own convention.
+Every text for a reader belongs to one domain, and the domain gives it a shape. The orchestrator picks it from what the text is for; commits keep their own convention.
 
-| Kind | For | Shape | Default tone |
+| Domain | For | Shape | Default tone |
 |---|---|---|---|
 | Communication | emails, letters, chat messages to people (customers, partners, colleagues), quick translations for chat | an opening line addressed to the person; one topic per paragraph; a close on a concrete next step with its object; the instance sign-off; contractions; at most one exclamation mark; no markdown in an email body | `tone_default.communication`, professional when unset |
 | Documentation | dossiers, vault documents, logbook entries, README and howto guides, decision records, technical notes | start with the subject, no recap coda; headings, tables and bold labels welcome; every evaluation anchored to a fact | `tone_default.documentation`, neutral when unset |
@@ -204,11 +204,11 @@ Synthesis, EN
 ✓ Sent the proposal to Acme. Closed 3 roadshow to-dos.
 ```
 
-A skill that writes one kind may override its tone for the genre and says so in its own instructions: the `logbook` skill keeps the owner's first-person narrative and an evocative title inside the documentation kind. Task titles and status lines in reports and external task managers follow synthesis; rows of `memories.db` stay outside the register.
+A skill that writes one domain may override its tone for the genre and says so in its own instructions: the `logbook` skill keeps the owner's first-person narrative and an evocative title inside the documentation domain. Task titles and status lines in reports and external task managers follow synthesis; rows of `memories.db` stay outside the register.
 
 ### Tone
 
-Tone is a parameter separate from the kind. It changes delivery, never facts. The default comes from `tone_default` in preferences; the request overrides it ("formale", "neutral", "più professionale").
+Tone is a parameter separate from the domain. It changes delivery and leaves the facts as they are. The default comes from `tone_default` in preferences; the request overrides it ("formale", "neutral", "più professionale").
 
 | Tone | Markers | Example |
 |---|---|---|
@@ -223,7 +223,7 @@ The `voice` line in preferences ("warm, direct, dry humour; emoji from the sourc
 
 Beyond the seven prohibitions, the `writing-register` skill carries a catalog of patterns that mark default model prose: throat-clearing openers ("Here's the thing:"), significance inflation ("stands as a testament to"), promotional words ("seamless", "robust"), business collocations ("leverage", "circle back"), superficial `-ing` tails (", highlighting…"), vague attributions ("studies show"), copula avoidance ("serves as"), AI vocabulary ("delve", "paramount", "moreover"), filler ("in order to"), hedge stacks ("could potentially"), generic positive endings, conclusion scaffolding, false ranges, elegant variation, chatbot artifacts ("I hope this email finds you well", "Let me know if you need anything else"). Each has a fix in the skill's table. Rule zero applies: a chatbot closing with a concrete object ("reply here or grab a slot") stays.
 
-Calques from the source language are the usual translation risk. From Italian into English: "in order to" (per), "due to the fact that" (dato che), "could potentially" (potrebbe eventualmente), "aforementioned" (suddetto), "pertaining to" (in merito a), "henceforth" (d'ora in poi). An instance with another pair adds its own list to the `## Writing register` notes.
+Calques from the source language are the usual translation risk. From Italian into English: "in order to" (per), "due to the fact that" (dato che), "could potentially" (potrebbe eventualmente), "aforementioned" (suddetto), "pertaining to" (in merito a), "henceforth" (d'ora in poi). An instance with another pair adds its own list to the `## Notes` section of `private/preferences.md`.
 
 Rhythm is checked by reading: four sentences in a row of similar length, three or more fragments of five words or fewer, consecutive sentences opening with the same word, paragraphs opening with "Also,", "Moreover,", "However,", sentences ending with ", ensuring…", more than one exclamation mark in a short text.
 
@@ -269,7 +269,7 @@ Keep the block fenced. A satellite session receives this section through the plu
 
 ## The post-pass
 
-Every document destined for the vault, every post or comment on an external channel, and every `README`, `CHANGELOG` entry, howto guide or decision record written to a repository goes through the `writing-register` skill before delivery, on the finished text, aware of its kind. There is no length threshold: a two-line Basecamp comment goes through it, because what leaves the house is the hardest to retract.
+Every document destined for the vault, every post or comment on an external channel, and every `README`, `CHANGELOG` entry, howto guide or decision record written to a repository goes through the `writing-register` skill before delivery, on the finished text, aware of its domain. There is no length threshold: a two-line Basecamp comment goes through it, because what leaves the house is the hardest to retract.
 
 Chat replies never go through the pass. Devflow work documents keep the mechanical check as their gate.
 
@@ -312,4 +312,4 @@ The tool never reads `preferences.md`. Exceptions reach it as `--skip`, passed b
 
 ## Reference
 
-The seven prohibitions were formulated by the owner. The extended net draws on [Wikipedia: Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing), maintained by WikiProject AI Cleanup, on the [`humanizer`](https://github.com/blader/humanizer) skill (MIT), which organises those observations into 29 patterns, and on the [`unslop`](https://github.com/sublayerapp/unslop) skill, whose contract on candidates and fidelity became rule zero. The kinds of text and the tones come from a trial in one instance on five real texts (a recap, a call note, a follow-up email and two translations), 2026-09-16.
+The seven prohibitions were formulated by the owner. The extended net draws on [Wikipedia: Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing), maintained by WikiProject AI Cleanup, on the [`humanizer`](https://github.com/blader/humanizer) skill (MIT), which organises those observations into 29 patterns, and on the [`unslop`](https://github.com/sublayerapp/unslop) skill, whose contract on candidates and fidelity became rule zero. The domains and the tones come from a trial in one instance on five real texts (a recap, a call note, a follow-up email and two translations), 2026-09-16.

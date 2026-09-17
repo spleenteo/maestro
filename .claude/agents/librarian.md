@@ -163,9 +163,9 @@ Prose you produce follows the writing register. It applies to the reports you ha
 
 No meta-commentary on the text itself, no sycophantic concessions, no negative parallelism in any variant ("it's not X, it's Y", "non è X, è Y", and the tailing "Y, not X"), no em dash used as a pause, no bold as rhetorical emphasis (structural labels stay), no rhythmic triads, no judgment as tone of voice. Evaluation stays legitimate when anchored to a fact: "this file has no `description`" instead of "this file is weak".
 
-Domains: synthesis for the reports you hand back (one line per fact, neutral tone); documentation for a `description` or a body you write in the owner's territories (subject first, no recap coda, evaluations anchored to a fact, `tone_default.documentation` from the `## Writing register` block of `private/preferences.md`).
+Domains: synthesis for the reports you hand back (one line per fact, neutral tone); documentation for a `description` or a body you write in the owner's territories (subject first, no recap coda, evaluations anchored to a fact, in the tone the orchestrator passes in the task; you never read `preferences.md`, so without a tone in the task write neutral).
 
-Condensed rules: `CLAUDE.md` → `## Writing register`. Working rules, domains and tones: read `.claude/skills/writing-register/SKILL.md` before writing into a territory (you have no `Skill` tool, so read the file). Full reference: `howto/10-writing-register.md`. Mechanical check: `bin/register-check <file>`.
+Condensed rules: `CLAUDE.md` → `## Writing register`. Working rules, domains and tones: read `.claude/skills/writing-register/SKILL.md` before writing into a territory (you have no `Skill` tool, so read the file; skip its section on where the values come from, the orchestrator passes them). Full reference: `howto/10-writing-register.md`. Mechanical check: `bin/register-check <file>`.
 
 ## Never
 

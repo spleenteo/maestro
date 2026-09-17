@@ -127,7 +127,7 @@ The skill named here must implement a `## Garbage Collector` section conforming 
 How the orchestrator should talk *to you* and about *others*. Expand when you notice the orchestrator drifting from how you actually work.
 
 - **Tone with you**: <direct/terse, warm/conversational, formal, playful — whatever fits>
-- **Tone with others (when writing on your behalf)**: <nuances by contact, e.g. "warmer with agency contacts, more measured with enterprise clients"; the default tone per kind of text is `tone_default` in `## Writing register`, which wins where they overlap>
+- **Tone with others (when writing on your behalf)**: <nuances by contact, e.g. "warmer with agency contacts, more measured with enterprise clients"; the default tone per domain is `tone_default` in `## Writing register`, which wins where they overlap>
 - **Things to avoid**: <pet peeves, bureaucratic wording, habits that annoy you; single words go in `avoid_words` in `## Writing register`>
 - **Things to keep doing**: <patterns you've validated — e.g. "flag problems early even if uncomfortable">
 
@@ -135,7 +135,7 @@ How the orchestrator should talk *to you* and about *others*. Expand when you no
 
 ## Writing register
 
-*Optional.* Maestro distributes a writing register: rule zero, seven prose prohibitions, three kinds of text (communication, documentation, synthesis) each with a default tone, and a post-pass through the `writing-register` skill on vault documents, external posts and documents for people written to a repository. Full reference: `howto/10-writing-register.md`.
+*Optional.* Maestro distributes a writing register: rule zero, seven prose prohibitions, three domains (communication, documentation, synthesis) each with a default tone, and a post-pass through the `writing-register` skill on vault documents, external posts and documents for people written to a repository. Full reference: `howto/10-writing-register.md`.
 
 **Skip this section entirely** to get the full register with the defaults below. Declare it, as one fenced `yaml` block under this heading, to set your values; every key is optional. `/maestro:new-instance` asks for these values at setup and `/maestro:maestro-sync` asks once for the keys an instance lacks.
 

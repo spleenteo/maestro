@@ -2,7 +2,7 @@
 origin: maestro
 maestro_version: v2026.08.14.1
 name: writing-register
-description: The writing register in full, for two moments. Load it before drafting any text for a person other than the owner (an email, a message, a post, a comment, a quick translation) or a document for the vault or a repository, so the text is written under the rules of its kind (communication, documentation, synthesis) in the owner's tone and voice; and run it as the post-pass on the finished text before a vault write, an external post, or a README, CHANGELOG, howto or decision record written to a repository. Chat replies to the owner load nothing.
+description: The writing register in full, for two moments. Load it before drafting any text for a person other than the owner (an email, a message, a post, a comment, a quick translation) or a document for the vault or a repository, so the text is written under the rules of its domain (communication, documentation, synthesis) in the owner's tone and voice; and run it as the post-pass on the finished text before a vault write, an external post, or a README, CHANGELOG, howto or decision record written to a repository. Chat replies to the owner load nothing.
 ---
 
 # Writing register
@@ -93,7 +93,7 @@ avoid_words: []               # words the owner never wants to see
 | Chatbot artifacts | "I hope this helps", "Great question!", "Certainly!", "Let me know if you need anything else", "I'd be happy to", "at your convenience", "I hope this email finds you well" | See the communication domain: a closing with a concrete object stays |
 | Knowledge-cutoff hedges | "based on available information", "as of my last" | Cut |
 
-Calques from the source language are the usual translation risk. From Italian into English: "in order to" (per), "due to the fact that" (dato che), "could potentially" (potrebbe eventualmente), "aforementioned" (suddetto), "pertaining to" (in merito a), "henceforth" (d'ora in poi). Another language pair gets its own list in `howto/10`.
+Calques from the source language are the usual translation risk. From Italian into English: "in order to" (per), "due to the fact that" (dato che), "could potentially" (potrebbe eventualmente), "aforementioned" (suddetto), "pertaining to" (in merito a), "henceforth" (d'ora in poi). Another language pair gets its own list in the `## Notes` section of `private/preferences.md`.
 
 ## Rhythm, by eye
 
@@ -140,7 +140,7 @@ Task titles and status lines in reports and external task managers follow synthe
 
 ## Tone
 
-Tone changes delivery, never facts. The default comes from `tone_default`; the request can override it.
+Tone changes delivery and leaves the facts as they are. The default comes from `tone_default`; the request can override it.
 
 | Tone | Markers | Example |
 |---|---|---|
@@ -167,7 +167,7 @@ bin/register-check <file> --json --skip 4,6      # when preferences suspend some
 printf '%s' "$text" | bin/register-check - --json
 ```
 
-Findings carry `rule`, `kind`, `line`, `col` and `match`. `violation` (rules 4 and 5): fix it. `candidate` (rules 3 and 6): judge it under rule zero. The tool needs no network; if it is missing, do the whole pass by reading and say so in the unresolved notes.
+Findings carry `rule`, `domain`, `line`, `col` and `match`. `violation` (rules 4 and 5): fix it. `candidate` (rules 3 and 6): judge it under rule zero. The tool needs no network; if it is missing, do the whole pass by reading and say so in the unresolved notes.
 
 ### Step 2: the seven prohibitions and the lexical tells
 

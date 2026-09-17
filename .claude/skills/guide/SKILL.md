@@ -22,7 +22,7 @@ Priority order when looking for an answer:
    - `howto/03-customization.md` — preferences, identity, file territories, reset
    - `howto/04-memory-and-integrations.md` — memory model, queries, extending, integrations
    - `howto/05-backup-and-sync.md` — privacy, sync, symlinks, pointer skills, Claude's own project memory
-   - `howto/10-writing-register.md` — the prose register: prohibitions, kinds of text, tones, per-instance values, `bin/register-check`
+   - `howto/10-writing-register.md` — the prose register: prohibitions, domains, tones, per-instance values, `bin/register-check`
    - `howto/11-maestro-net.md` — the channel between instances
    - `howto/12-satellites.md` — project repos attached to an instance
 3. **`private/preferences.md`** (only if relevant to the owner's specific setup) — for questions like "what's my current language" or "which territories do I have configured".
