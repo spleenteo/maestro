@@ -147,15 +147,20 @@ def identity_extract(mother: Path) -> str:
 def translation_enabled(identity: str) -> bool:
     """True when the identity extract's Writing register block sets translation.enabled: true.
 
-    Reads the indented lines under a `translation:` key inside a fenced block;
-    a bare-line block never carries the key, so it reads as off."""
-    in_block = False
+    Reads the indented lines under a top-level `translation:` key, fenced or
+    not, and accepts `enabled: true` as its direct child only."""
+    in_block, depth = False, None
     for line in identity.splitlines():
         stripped = line.strip()
         if not line.startswith((" ", "\t")) and stripped:
-            in_block = stripped == "translation:"
+            in_block, depth = stripped == "translation:", None
             continue
-        if in_block and re.fullmatch(r"enabled:\s*(true|yes|on)", stripped, re.I):
+        if not in_block or not stripped:
+            continue
+        indent = len(line) - len(line.lstrip(" \t"))
+        if depth is None:
+            depth = indent
+        if indent == depth and re.fullmatch(r"enabled:\s*(true|yes|on)", stripped, re.I):
             return True
     return False
 

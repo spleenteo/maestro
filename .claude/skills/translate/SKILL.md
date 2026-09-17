@@ -2,7 +2,7 @@
 origin: maestro
 maestro_version: v2026.09.16.1
 name: translate
-description: Translate a draft the owner wrote, in two labeled versions, under the writing register. Runs only in an instance whose `## Writing register` block sets `translation.enabled` to true; elsewhere it hands the request back to ordinary chat. Use when the owner pastes a draft in the source language of `translation.pair` (an email, a message, a reply) and asks to translate it, or when a draft opens with `translation.new_context_marker`. Also revises a draft already written in the target language ("Revised") and cleans transcribed speech.
+description: Translate a draft the owner wrote, in two labeled versions, under the writing register. Runs only in an instance whose `## Writing register` block sets `translation.enabled` to true; elsewhere it hands the request back to ordinary chat. Use when the owner pastes a draft in the source language of `translation.pair` (an email, a message, a reply) and asks to translate it, or when a draft opens with `translation.new_context_marker`. Also translates a text someone else wrote that the owner wants to read in the target language, revises a draft already written in the target language ("Revised") and cleans transcribed speech. Interface strings, code and files of a software project are never its business.
 ---
 
 # Translate
@@ -11,7 +11,7 @@ Two versions of the owner's draft in the target language, and nothing else. The 
 
 ## Step 0: is translation on?
 
-Read `translation` in the `## Writing register` block: `private/preferences.md` in an instance, the `# Satellite session` context (under `## Identity (from the mother instance)`) in a satellite. If `enabled` is missing or false, say in one line that translation is off in this instance (`translation.enabled` in the `## Writing register` block turns it on) and answer the request as ordinary chat. Nothing below applies.
+Read `translation` in the `## Writing register` block: `private/preferences.md` in an instance, the `# Satellite session` context (under `## Identity (from the mother instance)`) in a satellite. A request about interface strings, code or the files of a software project is not a draft: answer it as ordinary chat without loading anything else here. If `enabled` is missing or false, say in one line that translation is off in this instance (`translation.enabled` in the `## Writing register` block turns it on) and answer the request as ordinary chat. Nothing below applies.
 
 Keys and defaults:
 

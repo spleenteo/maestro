@@ -199,6 +199,17 @@ class TestSessionStart(HookCase):
         self.assertIn(f"read `{skill}`", ctx)
         self.assertIn("pair: it -> en", ctx)
 
+    def test_translate_flag_must_be_a_direct_child(self):
+        self.write_registry()
+        self.add_satellite_row()
+        skill = self.mother / ".claude" / "skills" / "translate" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("# Translate\n")
+        prefs = self.mother / "private" / "preferences.md"
+        prefs.write_text(prefs.read_text().replace(
+            "communication:\n  sign_off: |", "translation:\n  flags:\n    enabled: true\ncommunication:\n  sign_off: |"))
+        self.assertNotIn(str(skill), self.context(self.session_start(self.repo)))
+
     def test_register_skill_pointer_only_when_the_mother_has_the_skill(self):
         self.write_registry()
         self.add_satellite_row()
