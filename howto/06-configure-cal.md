@@ -1,4 +1,6 @@
 ---
+origin: maestro
+maestro_version: v2026.09.16.1
 tags: [howto, cal, scheduler, channels, routines, configuration, agents]
 description: How to configure the `scheduler` agent (alias Cal) — adding data channels (task trackers, calendars), writing routines, and understanding the seven `question_types`.
 ---
@@ -7,7 +9,7 @@ description: How to configure the `scheduler` agent (alias Cal) — adding data 
 
 Cal is the `scheduler` craft agent. Its job: aggregate tasks and events, plus completed work, from multiple data channels, and return structured, sourced lists to the orchestrator when you ask things like *"what do I have today?"* or *"what did I do this week?"*. Cal never talks to you directly: output always flows through the orchestrator.
 
-Out of the box Cal reads only one channel: `memories_db` (your orchestrator's memory log). Everything else (Basecamp, Google Calendar, other task trackers) is configuration you add. This doc is the map.
+Out of the box Cal reads only one channel: `memories_db` (your orchestrator's memory log). Everything else (Basecamp, Google Calendar, other task trackers) is configuration you add.
 
 ## Where everything lives
 
@@ -191,4 +193,4 @@ No question about this in the `new-instance` interview: it's an advanced prefere
 
 ---
 
-Cal's configuration is meant to grow with you. Start with `memories_db`, add channels as you integrate tools, and keep the routines file honest (retire routines you no longer need). The agent prompt doesn't need updating: the YAML is the source of truth.
+Start with `memories_db`, add channels as you integrate tools, and keep the routines file honest (retire routines you no longer need). The agent prompt doesn't need updating: the YAML is the source of truth.

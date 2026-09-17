@@ -1,4 +1,6 @@
 ---
+origin: maestro
+maestro_version: v2026.09.16.1
 tags: [howto, memory, integrations, mcp, sqlite, basecamp, calendar, tasks]
 description: How the memory db works, how to query and extend it, and how to integrate external tools (Basecamp, reminders, Google Calendar) without losing the orchestrator's single source of truth.
 ---
@@ -128,7 +130,7 @@ Same file, same db, new table. Document it in CLAUDE.md so the orchestrator know
 
 ## Integrating external tools
 
-The memory db is the orchestrator's own log. It's not a replacement for dedicated tools: it's the index that ties them together. The right pattern: keep each external tool authoritative for its domain, use memory as a reference.
+The memory db is the orchestrator's own log, the index that ties dedicated tools together. The right pattern: keep each external tool authoritative for its domain, use memory as a reference.
 
 ### Basecamp todos / messages
 

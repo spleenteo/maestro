@@ -20,7 +20,7 @@ claude plugin marketplace add spleenteo/maestro
 claude plugin install maestro@maestro
 ```
 
-`claude plugin install` defaults to user scope, which is what this plugin wants: installed once, reachable from every session on the machine regardless of which folder it opens in. Auto-update is off, and stays off without any setting on the marketplace entry: Claude Code enables auto-update by default only for `claude-plugins-official` and the other Anthropic-run marketplaces, and leaves it disabled by default for a third-party marketplace like this one. A new version published upstream sits there until asked for, in two steps — the marketplace listing and the installed plugin update separately, so refresh what the marketplace knows about before updating to it:
+`claude plugin install` defaults to user scope, which is what this plugin wants: installed once, reachable from every session on the machine regardless of which folder it opens in. Auto-update is off, and stays off without any setting on the marketplace entry: Claude Code enables auto-update by default only for `claude-plugins-official` and the other Anthropic-run marketplaces, and leaves it disabled by default for a third-party marketplace like this one. A new version published upstream sits there until asked for, in two steps: the marketplace listing and the installed plugin update separately, so refresh what the marketplace knows about before updating to it:
 
 ```bash
 claude plugin marketplace update maestro
@@ -33,7 +33,7 @@ From any session, the skill runs as `/maestro:maestro-net` (the `<plugin>:<skill
 maestro-net recap home "titolo" -d "contesto" -t tag1,tag2
 ```
 
-**That `PATH` entry exists only inside a Claude Code session's Bash tool.** It is not on the owner's own terminal `PATH`, and it is not on a hook process's `PATH` — hooks run outside the Bash tool's environment entirely. A hook that needs `maestro-net` calls it by full path instead, built from the variable Claude Code sets to the plugin's own root: `${CLAUDE_PLUGIN_ROOT}/bin/maestro-net`.
+**That `PATH` entry exists only inside a Claude Code session's Bash tool.** It is not on the owner's own terminal `PATH`, and it is not on a hook process's `PATH`: hooks run outside the Bash tool's environment entirely. A hook that needs `maestro-net` calls it by full path instead, built from the variable Claude Code sets to the plugin's own root: `${CLAUDE_PLUGIN_ROOT}/bin/maestro-net`.
 
 ### Migrating from the user-level copy
 
@@ -49,7 +49,7 @@ chezmoi forget ~/.claude/skills/maestro-net
 /bin/rm -rf ~/.claude/skills/maestro-net
 ```
 
-On a second machine chezmoi manages, `chezmoi forget` isn't the instruction to repeat: once the chezmoi source commit carrying this change has reached it, that machine's chezmoi source state no longer has the entry either, so `forget` has nothing left to drop there and fails. The instruction on the second machine is the plain removal above (`/bin/rm -rf ~/.claude/skills/maestro-net`) only — or skip per-machine `forget` entirely and list the path in `.chezmoiremove` in the chezmoi source directory, so `chezmoi apply` deletes the folder on every machine that applies that source state.
+On a second machine chezmoi manages, `chezmoi forget` isn't the instruction to repeat: once the chezmoi source commit carrying this change has reached it, that machine's chezmoi source state no longer has the entry either, so `forget` has nothing left to drop there and fails. The instruction on the second machine is the plain removal above (`/bin/rm -rf ~/.claude/skills/maestro-net`) only, or skip per-machine `forget` entirely and list the path in `.chezmoiremove` in the chezmoi source directory, so `chezmoi apply` deletes the folder on every machine that applies that source state.
 
 ## The constraint
 
@@ -124,7 +124,7 @@ instances:
 
 - **`path`**: the instance's root, the directory holding `bin/mem` and `private/preferences.md`.
 - **`domain`**: what the instance is for. It carries the routing when the owner doesn't name a recipient. The scanner leaves it empty on purpose: only the owner knows.
-- **`accepts`**: the verbs that instance allows. Absent or empty means none. A verb this copy of `maestro-net` doesn't recognize — the case a future template version adds one that an older plugin install hasn't seen — doesn't fail the whole registry: it's dropped from that instance's `accepts` with a warning on stderr. That dropped verb was never a valid subcommand for this older copy in the first place, so trying to *invoke* it directly (`maestro-net <that-verb> …`) never reaches the `accepts` check at all — argument parsing rejects it as an invalid choice first (exit 2, the same as any other typo'd verb). Exit 6 is for a verb this copy does recognize (`recap` or `ask`) that the recipient's own `accepts` simply doesn't list.
+- **`accepts`**: the verbs that instance allows. Absent or empty means none. A verb this copy of `maestro-net` doesn't recognize (the case a future template version adds one that an older plugin install hasn't seen) doesn't fail the whole registry: it's dropped from that instance's `accepts` with a warning on stderr. That dropped verb was never a valid subcommand for this older copy in the first place, so trying to *invoke* it directly (`maestro-net <that-verb> …`) never reaches the `accepts` check at all: argument parsing rejects it as an invalid choice first (exit 2, the same as any other typo'd verb). Exit 6 is for a verb this copy does recognize (`recap` or `ask`) that the recipient's own `accepts` simply doesn't list.
 
 ### Why not `~/.maestro/`
 
@@ -145,20 +145,20 @@ The registry itself stays out of chezmoi when instance paths differ between mach
 
 ### Adding or removing one instance
 
-`scan --write --force` rewrites the whole file, so it loses every `domain` and `accepts` the owner filled in by hand (the `satellites:` block is carried over; a malformed registry holding one is refused with exit 4), and it can't see an instance that has no transcript yet. `register` adds one instance without touching the others — the way `/maestro:new-instance` registers the instance it just created:
+`scan --write --force` rewrites the whole file, so it loses every `domain` and `accepts` the owner filled in by hand (the `satellites:` block is carried over; a malformed registry holding one is refused with exit 4), and it can't see an instance that has no transcript yet. `register` adds one instance without touching the others, the way `/maestro:new-instance` registers the instance it just created:
 
 ```bash
 maestro-net register home --path /Users/you/Sites/home-instance \
   --domain "vita personale" --accepts recap,ask
 ```
 
-- **`NAME`** must already be a lowercase slug, `^[a-z0-9][a-z0-9-]*$`. It is checked as given, never lowercased for you — an uppercase letter is a usage error (exit 2).
+- **`NAME`** must already be a lowercase slug, `^[a-z0-9][a-z0-9-]*$`. It is checked as given, never lowercased for you: an uppercase letter is a usage error (exit 2).
 - **`--path`** must be absolute. It is stored as its real path, symlinks resolved, and compared by real path against every entry already in the registry: a name already there (case-insensitively) or a path already there (by real path, so a symlink to an already-registered instance is caught too) exits 9.
 - **`--domain`** defaults to empty and is always written double-quoted, matching the quoting `scan` already uses. A value carrying `"` or a line break can't be represented and is refused (exit 2).
-- **`--accepts`** defaults to `recap,ask`. Every value must be a verb this copy of `maestro-net` recognizes, or it's a usage error — stricter than a registry it only *reads*, where an unknown verb in `accepts` is dropped with a warning instead.
+- **`--accepts`** defaults to `recap,ask`. Every value must be a verb this copy of `maestro-net` recognizes, or it's a usage error: stricter than a registry it only *reads*, where an unknown verb in `accepts` is dropped with a warning instead.
 - `register` refuses a `--path` that isn't a Maestro instance's own root: no `private/preferences.md` and `bin/mem` there is the same signature check the scanner applies, in its own function so a later satellite-entry command can register a project root without it.
 
-The entry lands with the same field order and indentation `render_registry` uses (`path`, then `domain`, then `accepts`), inserted at the end of the `instances:` block. Every other line in the file, including comments and the other instances' `domain` and `accepts`, is untouched — `register` edits the text surgically rather than reparsing and rewriting the whole registry the way `scan --write` does.
+The entry lands with the same field order and indentation `render_registry` uses (`path`, then `domain`, then `accepts`), inserted at the end of the `instances:` block. Every other line in the file, including comments and the other instances' `domain` and `accepts`, is untouched: `register` edits the text surgically rather than reparsing and rewriting the whole registry the way `scan --write` does.
 
 `unregister <name>` removes one instance the same surgical way. An unknown name resolves like everywhere else in this tool (exit 5, known names listed in the error).
 
@@ -204,13 +204,13 @@ Every failure has its own exit code and says what happened.
 | 4 | Registry malformed (with the offending line number) |
 | 5 | Unknown instance, or a name matching more than one; `request` run outside a satellite repo, or a satellite whose mother isn't registered |
 | 6 | Verb not in the recipient's `accepts`, or `ask` from a satellite to an instance other than its mother |
-| 7 | The recipient's path no longer exists, or has no `bin/mem` — also `register`'s `--path`, when it isn't a directory or isn't a Maestro instance's own root |
+| 7 | The recipient's path no longer exists, or has no `bin/mem`; also `register`'s `--path`, when it isn't a directory or isn't a Maestro instance's own root |
 | 8 | The remote command failed, timed out, or couldn't be started; `request` found no row for the satellite in its mother |
 | 9 | `register` found the name or the path already in the registry, or a path overlapping a satellite's repo; `satellite add` the scope, or a repo overlapping an instance or another satellite |
 
 The rule behind the table: a channel that can't deliver says so. A recap that can't reach its recipient is never written somewhere else, and a malformed registry never degrades into an empty one.
 
-The registry parser is deliberately strict for the same reason. It reads a small closed schema and rejects everything outside it, rather than skipping what it doesn't understand — with the one deliberate exception of an unknown verb in `accepts`, above. A silently ignored *line* would mean an instance quietly missing from the network; a silently ignored *verb* would mean an older `maestro-net` copy refusing to read a registry a newer one wrote.
+The registry parser is deliberately strict for the same reason. It reads a small closed schema and rejects everything outside it, rather than skipping what it doesn't understand, with the one deliberate exception of an unknown verb in `accepts`, above. A silently ignored *line* would mean an instance quietly missing from the network; a silently ignored *verb* would mean an older `maestro-net` copy refusing to read a registry a newer one wrote.
 
 ## What isn't built yet
 
@@ -222,4 +222,4 @@ The reading side. Each instance would pick up, at session start, the `from:*` ro
 python3 -m unittest tests.test_maestro_net
 ```
 
-90 tests, stdlib only, no real instances and no network: registry parsing and its malformations (including the unknown-verb warning), name resolution including the ambiguous case, the `accepts` gate, the scanner against fake transcripts, both verbs against recorder scripts that capture their arguments and environment (`MEM_DB`, `MEM_SCOPE` and `PWD` stripped), and `register`/`unregister` against temp registries — creation from nothing, surgical append and removal that leaves comments and every other entry's fields untouched (including a comment sitting between two instances, or trailing after the last one), the duplicate and slug checks, and the instance-signature check on `--path`.
+90 tests, stdlib only, no real instances and no network: registry parsing and its malformations (including the unknown-verb warning), name resolution including the ambiguous case, the `accepts` gate, the scanner against fake transcripts, both verbs against recorder scripts that capture their arguments and environment (`MEM_DB`, `MEM_SCOPE` and `PWD` stripped), and `register`/`unregister` against temp registries: creation from nothing, surgical append and removal that leaves comments and every other entry's fields untouched (including a comment sitting between two instances, or trailing after the last one), the duplicate and slug checks, and the instance-signature check on `--path`.

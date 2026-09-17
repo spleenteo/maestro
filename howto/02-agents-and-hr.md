@@ -1,11 +1,13 @@
 ---
+origin: maestro
+maestro_version: v2026.09.16.1
 tags: [howto, agents, hr, roster, claude-code, orchestrator, delegation]
 description: How to hire, use, and retire craft agents via the HR agent. Agents are subagents with their own identity and isolated context, registered in `.claude/roster.yaml`.
 ---
 
 # How to add agents and use HR
 
-An **agent** is a subagent of the orchestrator with its own identity, scope, and isolated context. Agents are invoked via the `Task` tool with `subagent_type: <name>`. They return their output to the orchestrator, which filters and presents it to the owner. Agents never speak directly to the owner.
+An agent is a subagent of the orchestrator with its own identity, scope, and isolated context. Agents are invoked via the `Task` tool with `subagent_type: <name>`. They return their output to the orchestrator, which filters and presents it to the owner. Agents never speak directly to the owner.
 
 Agents are the right abstraction when:
 
@@ -27,7 +29,7 @@ If any of those doesn't apply, a skill is probably enough (see `01-skills.md`).
 └── roster.yaml                ← the registry of active and retired agents
 ```
 
-The **roster** is the source of truth for the orchestrator: before invoking an agent, the orchestrator confirms it's listed in `active`.
+The roster is the source of truth for the orchestrator: before invoking an agent, the orchestrator confirms it's listed in `active`.
 
 `.claude/roster.yaml`:
 
@@ -43,7 +45,7 @@ retired: []
 
 ## The HR agent
 
-HR is **recruiter + onboarding + offboarding**. You don't install or retire craft agents by hand — you ask the orchestrator, which invokes HR.
+HR is recruiter + onboarding + offboarding. You don't install or retire craft agents by hand: you ask the orchestrator, which invokes HR.
 
 HR's responsibilities:
 
@@ -114,7 +116,7 @@ Body, typically:
 - **Data sources** (pointers to registries in `.claude/agents/data/`)
 - **Communication rules** (always returns to the orchestrator, never speaks to the owner)
 
-The `hr.md` file that ships with the template is a working example — read it when drafting a new one.
+The `hr.md` file that ships with the template is a working example: read it when drafting a new one.
 
 ## Retiring an agent
 
@@ -135,4 +137,4 @@ Tell the orchestrator you want to retire an agent. It invokes HR; HR:
 
 ## Tips on HR's cascade
 
-HR's default is to look locally first — a skill you already have might be promoted to an agent with minor edits. Only when nothing local fits does it go further afield. If you've built a skill and want to convert it to an agent, tell HR; it'll propose the promotion rather than creating something new.
+HR's default is to look locally first: a skill you already have might be promoted to an agent with minor edits. Only when nothing local fits does it go further afield. If you've built a skill and want to convert it to an agent, tell HR; it'll propose the promotion rather than creating something new.
