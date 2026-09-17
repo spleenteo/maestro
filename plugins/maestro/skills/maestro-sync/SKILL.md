@@ -558,20 +558,24 @@ The writing register reads per-instance values from the `## Writing register` bl
 ```bash
 set -eo pipefail
 INSTANCE="<instance-path>"
-maestro-register-keys report "$INSTANCE/private/preferences.md"
+REG=maestro-register-keys
+command -v maestro-register-keys >/dev/null 2>&1 || REG="${CLAUDE_PLUGIN_ROOT}/bin/maestro-register-keys"
+"$REG" report "$INSTANCE/private/preferences.md"
 ```
 
 The JSON says `block` (`absent`, `bare` or `fenced`), `present`, `missing` and `hints` (the owner's own lines from `## Communication preferences`, when they filled them in). If `missing` is empty, say nothing and go to Phase 7.
 
-Otherwise tell the owner in one line how many keys are missing, then ask the questions of `howto/10-writing-register.md` → "The questions setup and sync ask" for the missing keys only, one per turn, each with its default and example; when `hints` carries a line for the key, propose it as the answer. Skip the translation questions when `<instance-path>/.claude/skills/translate/SKILL.md` doesn't exist. `skip` on any question, or on the whole block, leaves the default. Then ask: *"Write these into `private/preferences.md`? I back it up first."* On yes, run the block with one `NAME="value"` per answered question in place of `<answers>` (same escaping as any value on a command line: a backslash before `\`, `"`, `$` and a backtick; an omitted variable writes the default with a `# default` comment):
+Otherwise tell the owner in one line how many keys are missing, then ask the questions of `howto/10-writing-register.md` → "The questions setup and sync ask" for the missing keys only, one per turn, each with its default and example; when `hints` carries a line for the key, use it to suggest the answer: for the tone, one of the four values that fits the owner's line ("warmer with agency contacts" suggests `friendly`), for `avoid_words` the single words in it; the owner confirms. Skip the translation questions when `<instance-path>/.claude/skills/translate/SKILL.md` doesn't exist. `skip` on any question, or on the whole block, leaves the default. Then ask: *"Write these into `private/preferences.md`? I back it up first."* On yes, run the block with one `NAME="value"` per answered question in place of `<answers>` (same escaping as any value on a command line: a backslash before `\`, `"`, `$` and a backtick; a line break in a sign-off is a real line break inside the quotes, never `\n`; an omitted variable writes the default with a `# default` comment):
 
 ```bash
 set -eo pipefail
 INSTANCE="<instance-path>"
-env <answers> maestro-register-keys write "$INSTANCE/private/preferences.md"
+REG=maestro-register-keys
+command -v maestro-register-keys >/dev/null 2>&1 || REG="${CLAUDE_PLUGIN_ROOT}/bin/maestro-register-keys"
+env <answers> "$REG" write "$INSTANCE/private/preferences.md"
 ```
 
-It prints `backup <path>` (the copy of `preferences.md` next to the original), then `written N key(s) added, block <shape>` and one line per key. A bare block is converted to the fenced shape with its values kept. The command refuses a tone outside `friendly`, `professional`, `formal`, `neutral` with exit 2 before writing anything. Log it in `private/maestro-sync.log` with the marker `(register, N keys added, backup <path>)`, or `(register, kept by owner)` on a no. A satellite of this instance picks up the block at its next session.
+It prints `backup <path>` (the copy of `preferences.md` next to the original), then `written N key(s) added, block <shape>` and one line per key. The missing keys are appended inside the existing block; every other line of the section (the owner's notes, keys the template doesn't know, a multi-line sign-off) stays as it was. A bare block is converted to the fenced shape with its lines kept. The command refuses a tone outside `friendly`, `professional`, `formal`, `neutral` with exit 2 before writing anything. Log it in `private/maestro-sync.log` with the marker `(register, N keys added, backup <path>)`, or `(register, kept by owner)` on a no. A satellite of this instance picks up the block at its next session.
 
 ### Phase 7 — Final summary
 
@@ -633,7 +637,7 @@ The skill itself does not auto-mark files — that would risk misclassifying ins
 Per the "Announce every write" rule, after the sync, insert one memory entry summarizing the run:
 
 ```bash
-env -u MEM_DB -u MEM_SCOPE "<instance-path>/bin/mem" save "Maestro sync: <FROM_VERSION> → <TO_VERSION> (<N> files updated, <M> added)" -t maestro,sync,upstream -d "<list of updated/added files, comma-separated>. Skipped: <list>. Log: private/maestro-sync.log."
+env -u MEM_DB -u MEM_SCOPE "<instance-path>/bin/mem" save "Maestro sync: <FROM_VERSION> → <TO_VERSION> (<N> files updated, <M> added)" -t maestro,sync,upstream -d "<list of updated/added files, comma-separated>. Skipped: <list>. Register: <N keys added, or none>. Log: private/maestro-sync.log."
 ```
 
 Announce:

@@ -178,7 +178,7 @@ class TestWrite(unittest.TestCase):
         r, out = self.write(PREFS_FENCED, env={"MAESTRO_TONE_COMMUNICATION": "formal", "MAESTRO_SIGN_OFF": "Bye,\nAlex"})
         self.assertIn("communication: friendly", out)
         self.assertNotIn("communication: formal", out)
-        self.assertIn("voice: dry humour", out)
+        self.assertIn('voice: "dry humour"', out)
         self.assertIn('sign_off: "Bye,\\nAlex"', out)
         self.assertRegex(out, r"documentation: neutral\s+# default")
         self.assertIn("communication.sign_off", r.stdout)
@@ -213,6 +213,48 @@ class TestWrite(unittest.TestCase):
         text = self.prefs.write_text(self.prefs.read_text().replace("avoid_words: []", "# avoid_words removed"))
         run("write", str(self.prefs))
         self.assertIn('voice: "dry, #1 fan of colons"', self.prefs.read_text())
+
+    def test_owner_prose_and_unknown_keys_in_the_section_survive(self):
+        text = PREFS_FENCED.replace("## Writing register\n", "## Writing register\n\nI keep documents cold.\n")
+        text = text.replace('voice: "dry humour"', 'voice: "dry humour"\ncommunication:\n  opening: "Ciao"\nmy_custom: 3')
+        text = text.replace("```\n\n---\n\n## Notes", "```\n\n### My notes on tone\n\nNever sign emails to Marco.\n\n---\n\n## Notes")
+        _, out = self.write(text, env={"MAESTRO_SIGN_OFF": "Bye"})
+        for kept in ("I keep documents cold.", "### My notes on tone", "Never sign emails to Marco.",
+                     '  opening: "Ciao"', "my_custom: 3", 'voice: "dry humour"'):
+            self.assertIn(kept, out)
+        self.assertRegex(out, r"communication:\n  opening: \"Ciao\"\n  sign_off: Bye")
+        self.assertEqual(out.count("```"), 2)
+        self.assertEqual(json.loads(run("report", str(self.prefs)).stdout)["missing"], [])
+
+    def test_block_scalar_sign_off_is_kept_verbatim(self):
+        text = PREFS_FENCED.replace('voice: "dry humour"', 'communication:\n  sign_off: |\n    Have a nice day,\n    --\n    Ada')
+        _, out = self.write(text)
+        self.assertIn("  sign_off: |\n    Have a nice day,\n    --\n    Ada\n", out)
+        self.assertNotIn('sign_off: "|"', out)
+
+    def test_inserted_section_keeps_one_rule_and_a_blank_line_before_its_heading(self):
+        _, out = self.write(PREFS_WITHOUT_BLOCK)
+        self.assertIn("agency contacts\n- **Things to avoid**: genuinely, leverage\n\n## Writing register\n", out)
+        self.assertEqual(out.count("\n---\n"), 2)
+        self.assertIn("```\n\n---\n\n## Notes", out)
+
+    def test_crlf_file_keeps_crlf(self):
+        self.write(PREFS_WITHOUT_BLOCK.replace("\n", "\r\n"))
+        raw = self.prefs.read_bytes().decode()
+        self.assertNotIn("\n", raw.replace("\r\n", ""))
+        self.assertIn("communication: professional", raw)
+
+    def test_capitalised_or_level_three_heading_is_the_section(self):
+        for heading in ("## Writing Register", "### Writing register"):
+            with self.subTest(heading=heading):
+                _, out = self.write(PREFS_FENCED.replace("## Writing register", heading))
+                self.assertEqual(out.lower().count("writing register\n"), 1)
+
+    def test_quoted_list_item_with_a_comma_is_read_back(self):
+        self.prefs.write_text(PREFS_FENCED.replace('voice: "dry humour"', 'avoid_words: ["a, b", c]'))
+        r = run("report", str(self.prefs))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("avoid_words", json.loads(r.stdout)["present"])
 
     def test_no_section_and_no_notes_appends_at_the_end(self):
         text = "---\nsetup_completed: true\n---\n\n# Preferences\n\n## Identity\n\n- Name: Ada\n"

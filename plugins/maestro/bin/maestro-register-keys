@@ -14,8 +14,10 @@ Subcommands:
                          keys missing, and hints from `## Communication preferences`
   write PREFS            back up PREFS next to it, then rewrite the block: values
                          already present stay, missing keys come from MAESTRO_*
-                         env vars or their default; a bare block becomes fenced;
-                         an absent block is inserted before `## Notes`
+                         env vars or their default, appended inside the existing
+                         block (every other line of the section stays); a bare
+                         block becomes fenced; an absent block is inserted before
+                         `## Notes`
 
 Env vars (all optional): MAESTRO_SUSPENDED ("4,6"), MAESTRO_POST_PASS (on|off),
 MAESTRO_TONE_COMMUNICATION, MAESTRO_TONE_DOCUMENTATION (friendly | professional |
@@ -131,7 +133,7 @@ def yaml_scalar(value, plain_words=("on", "off")) -> str:
 
 def _plain(s: str) -> bool:
     """Bare words and simple multi-word labels with no YAML-sensitive character."""
-    if s.lower() in ("yes", "no", "true", "false", "null", "~"):
+    if s.lower() in ("yes", "no", "true", "false", "null", "~", "on", "off", "y", "n"):
         return False
     return re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*(?: [A-Za-z0-9_-]+)*", s) is not None
 
@@ -143,7 +145,7 @@ def find_section(text: str):
     lines = text.split("\n")
     start = None
     for i, line in enumerate(lines):
-        if re.match(r"^ {0,3}##\s+Writing register\b", line):
+        if re.match(r"^ {0,3}#{2,3}\s+Writing register\b", line, re.I):
             start = i
             break
     if start is None:
@@ -166,20 +168,44 @@ def find_section(text: str):
     return start, end
 
 
+def fence_span(section_lines):
+    """(open, close) indexes of the first fenced block in the section, or None."""
+    open_at = None
+    for i, ln in enumerate(section_lines):
+        m = re.match(r"^ {0,3}(`{3,}|~{3,})", ln)
+        if m and open_at is None:
+            open_at, token = i, m.group(1)
+        elif m and open_at is not None and m.group(1)[0] == token[0] and len(m.group(1)) >= len(token):
+            return open_at, i
+    return None
+
+
+KEY_LINE = re.compile(r"^(\s*)([A-Za-z_][\w]*):(\s.*|)$")
+
+
+def bare_run(section_lines):
+    """(first, last+1) of the contiguous run of `key: value` lines in a bare section."""
+    first = last = None
+    for i, ln in enumerate(section_lines[1:], 1):
+        if KEY_LINE.match(ln.rstrip()) or (first is not None and ln.startswith((" ", "\t")) and ln.strip()):
+            if first is None:
+                first = i
+            last = i
+        elif first is not None and ln.strip():
+            break
+    return (first, last + 1) if first is not None else None
+
+
 def parse_block(section_lines):
     """Values in the section, keyed by dotted name; shape is bare or fenced."""
     values = {}
-    fenced = any(re.match(r"^ {0,3}```", ln) for ln in section_lines)
-    body = []
-    fence = None
-    for ln in section_lines[1:]:
-        m = re.match(r"^ {0,3}(`{3,}|~{3,})", ln)
-        if m:
-            fence = None if fence else m.group(1)
-            continue
-        if fenced and fence is None:
-            continue
-        body.append(ln)
+    span = fence_span(section_lines)
+    fenced = span is not None
+    if fenced:
+        body = section_lines[span[0] + 1:span[1]]
+    else:
+        run = bare_run(section_lines)
+        body = section_lines[run[0]:run[1]] if run else []
     parent = None
     for ln in body:
         if not ln.strip() or ln.strip().startswith("#"):
@@ -200,6 +226,22 @@ def parse_block(section_lines):
     return values, ("fenced" if fenced else "bare")
 
 
+def _split_flow(inner: str):
+    """Items of a flow sequence, commas inside double quotes respected."""
+    items, cur, quoted = [], "", False
+    for ch in inner:
+        if ch == '"' and not cur.endswith("\\"):
+            quoted = not quoted
+        if ch == "," and not quoted:
+            items.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        items.append(cur.strip())
+    return items
+
+
 def _strip_comment(raw: str) -> str:
     """Drop a trailing ` # comment`, leaving a quoted value's own `#` alone."""
     if raw.startswith('"'):
@@ -216,14 +258,11 @@ def yaml_value(raw: str):
         inner = raw.strip("[]").strip()
         if not inner:
             return []
-        items = [x.strip() for x in inner.split(",")]
-        out = []
-        for x in items:
-            if x.isdigit():
-                out.append(int(x))
-            else:
-                out.append(json.loads(x) if x.startswith('"') else x.strip("'"))
-        return out
+        try:
+            return json.loads("[" + ", ".join(
+                x if x.startswith('"') or x.isdigit() else json.dumps(x.strip("'")) for x in _split_flow(inner)) + "]")
+        except ValueError:
+            return inner
     if raw.startswith('"'):
         try:
             return json.loads(raw)
@@ -319,7 +358,8 @@ def read_prefs(path: str) -> str:
     if not p.is_file():
         print("no preferences file at %s" % path, file=sys.stderr)
         sys.exit(EXIT_NO_PREFS)
-    return p.read_text(encoding="utf-8")
+    with open(p, encoding="utf-8", newline="") as fh:  # keep CRLF as written
+        return fh.read()
 
 
 def cmd_report(path: str) -> int:
@@ -339,34 +379,83 @@ def cmd_report(path: str) -> int:
     return 0
 
 
+def _missing_lines(values: dict, defaulted: set, added: list, existing_lines: list):
+    """Lines to append inside an existing block for the keys in `added`: a
+    top-level key goes at the end; a nested key goes under its parent line
+    when the block has one, else a new parent line is opened at the end."""
+    out = list(existing_lines)
+    for key in added:
+        if "." not in key:
+            out.append(_line(key, values[key], key in defaulted, COMMENTS.get(key), 0))
+            continue
+        parent, child = key.split(".", 1)
+        line = _line(child, values[key], key in defaulted, COMMENTS.get(key), 2)
+        at = next((i for i, ln in enumerate(out) if re.match(r"^" + re.escape(parent) + r":\s*$", ln.rstrip())), None)
+        if at is None:
+            out += [parent + ":", line]
+            continue
+        j = at + 1
+        while j < len(out) and (out[j].startswith((" ", "\t")) or not out[j].strip()):
+            j += 1
+        while j > at + 1 and not out[j - 1].strip():
+            j -= 1
+        out.insert(j, line)
+    return out
+
+
+def _backup(path: str, text: str) -> Path:
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup = Path(path + ".bak." + stamp + "-register")
+    n = 1
+    while backup.exists():
+        n += 1
+        backup = Path(path + ".bak." + stamp + "-" + str(n) + "-register")
+    with open(backup, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    return backup
+
+
 def cmd_write(path: str, env) -> int:
     text = read_prefs(path)
-    lines = text.split("\n")
-    section = find_section(text)
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.replace("\r\n", "\n").split("\n")
+    section = find_section("\n".join(lines))
     existing, shape = ({}, "absent") if section is None else parse_block(lines[section[0]:section[1]])
     values, defaulted, added = collect(existing, env)
     if not added and shape == "fenced":
         print("unchanged: every key present")
         return 0
-    block = [HEADING, "", INTRO, "", render(values, defaulted), ""]
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    backup = Path(path + ".bak." + stamp + "-register")
-    backup.write_text(text, encoding="utf-8")
+    backup = _backup(path, text)
     print("backup %s" % backup)
     if section is None:
+        block = [HEADING, "", INTRO, ""] + render(values, defaulted).split("\n") + [""]
         idx = next((i for i, ln in enumerate(lines) if re.match(r"^ {0,3}##\s+Notes\b", ln)), None)
         if idx is not None:
-            # keep the `---` rule that precedes `## Notes`, when there is one
-            while idx > 0 and lines[idx - 1].strip() in ("", "---"):
-                idx -= 1
-            new_lines = lines[:idx] + block + ["---", ""] + lines[idx:]
+            # insert above the `---` rule (and blank lines) that precede `## Notes`,
+            # closing the new section with one rule of its own
+            cut = idx
+            while cut > 0 and lines[cut - 1].strip() in ("", "---"):
+                cut -= 1
+            new_lines = lines[:cut] + [""] + block + ["---", ""] + lines[idx:]
         else:
             new_lines = lines + ([""] if lines and lines[-1].strip() else []) + block
     else:
         start, end = section
-        tail = lines[end:]
-        new_lines = lines[:start] + block + tail
-    Path(path).write_text("\n".join(new_lines), encoding="utf-8")
+        sec = lines[start:end]
+        if shape == "fenced":
+            o, c = fence_span(sec)
+            body = _missing_lines(values, defaulted, added, sec[o + 1:c])
+            sec = sec[:o + 1] + body + sec[c:]
+        else:
+            run = bare_run(sec)
+            if run is None:
+                sec = sec + [""] + render(values, defaulted).split("\n")
+            else:
+                body = _missing_lines(values, defaulted, added, sec[run[0]:run[1]])
+                sec = sec[:run[0]] + ["```yaml"] + body + ["```"] + sec[run[1]:]
+        new_lines = lines[:start] + sec + lines[end:]
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(newline.join(new_lines))
     print("written %d key(s) added, block %s" % (len(added), "converted" if shape == "bare" else shape))
     for k in added:
         print("  %s%s" % (k, " (default)" if k in defaulted else ""))
@@ -389,6 +478,9 @@ def main(argv=None) -> int:
         return cmd_write(argv[1], os.environ)
     except Invalid as e:
         print(str(e), file=sys.stderr)
+        return EXIT_USAGE
+    except ValueError as e:
+        print("could not read the existing block: %s" % e, file=sys.stderr)
         return EXIT_USAGE
 
 

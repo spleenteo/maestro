@@ -216,7 +216,7 @@ The orchestrator writes emails, documents and recaps under a writing register wi
 
 > The last part is optional: six short questions on how I should write for you (tone of emails, tone of documents, your voice, an email sign-off, whether you translate drafts, words to avoid). Answer them now, or say `skip` and I'll use the defaults (professional emails, neutral documents, no sign-off, translation off); you can change them later in `private/preferences.md`.
 
-On `skip`, record nothing: `finalize.sh` writes every default with a `# default` comment. Otherwise ask the questions one per turn, labelled `register 1/6` to `register 6/6`, each with its default and the example line from the guide; any single question may be skipped. Ask question 5 (translation) only when `<destination>/.claude/skills/translate/SKILL.md` exists. Record the answers for the `MAESTRO_TONE_*`, `MAESTRO_VOICE`, `MAESTRO_SIGN_OFF`, `MAESTRO_TRANSLATION*` and `MAESTRO_AVOID_WORDS` variables of Finalize; a tone answer is one of `friendly`, `professional`, `formal`, `neutral`.
+On `skip`, record nothing: `finalize.sh` writes every default with a `# default` comment. Otherwise ask the questions one per turn, labelled `register 1/6` to `register 6/6`, each with its default and the example line from the guide; any single question may be skipped. Ask question 5 (translation) only when `<destination>/.claude/skills/translate/SKILL.md` exists. Record the answers for the `MAESTRO_TONE_*`, `MAESTRO_VOICE`, `MAESTRO_SIGN_OFF`, `MAESTRO_TRANSLATION*` and `MAESTRO_AVOID_WORDS` variables of Finalize; a tone answer is one of `friendly`, `professional`, `formal`, `neutral`; a line break in the sign-off is a real line break inside the quotes, never `\n`.
 
 ### After the interview — offer to add more context
 
@@ -481,7 +481,7 @@ Then hand control back.
 - **New or empty folder only**: an empty folder is fine, the session's own folder included; a folder with anything in it (a project repository, another instance) is refused.
 - **Mechanical steps first**: steps 1 to 5 run before the interview, and a failing block stops the flow instead of being worked around by hand.
 - **Language first in the interview**: Question 1 is always "what language should I use?". From the next turn on, everything is in the owner's chosen language.
-- **One question per turn, always**: never bundle. Always show the progress indicator (`N/10`) so the owner knows where they are.
+- **One question per turn, always**: never bundle. Always show the progress indicator (`N/10`, then `register N/6` in the optional appendix) so the owner knows where they are.
 - **Propose defaults**, especially for adjectives (from the inspiration).
 - **Accept brevity, skip optional fields**: the owner may leave territories or people empty. Don't insist.
 - **Absolute paths everywhere**: in the command blocks, in preferences and in the closing message, every path is absolute on the destination. Never write `~` inside quotes.
