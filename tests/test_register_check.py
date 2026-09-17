@@ -198,7 +198,7 @@ class TestRule6Triads(unittest.TestCase):
 
     def test_pair_after_a_clause_is_clean(self):
         text = ("For any follow-up question, just reply here or grab a slot: "
-                "https://calendly.com/example\n")
+                "https://cal.example.com/slot\n")
         self.assertNotIn(6, rules(text))
 
     def test_pair_opening_with_a_function_word_is_clean(self):

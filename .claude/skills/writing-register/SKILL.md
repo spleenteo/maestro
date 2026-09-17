@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.08.14.1
+maestro_version: v2026.09.17.1
 name: writing-register
 description: The writing register in full, for two moments. Load it before drafting any text for a person other than the owner (an email, a message, a post, a comment, a quick translation) or a document for the vault or a repository, so the text is written under the rules of its domain (communication, documentation, synthesis) in the owner's tone and voice; and run it as the post-pass on the finished text before a vault write, an external post, or a README, CHANGELOG, howto or decision record written to a repository. Chat replies to the owner load nothing.
 ---

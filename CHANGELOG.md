@@ -8,6 +8,49 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.09.17.1 — 2026-09-17
+
+**Theme**: the writing register learns what kind of text it is shaping. One set of prohibitions had been binding an email to a partner and a daily recap alike, so the email lost its greeting and its sign-off. The register now names three domains (communication, documentation, synthesis), each with a default tone the owner sets once, and the same rules translate a draft.
+
+### Added
+
+- **Rule zero and three domains** (`CLAUDE.md` → `## Writing register`, 26 lines): a list match is a candidate and only a confirmed defect in context gets corrected; a claim is never added and a figure, date, name, URL or placeholder never dropped; stripping the warmth from a message to a person is a defect. Communication (emails, messages, quick translations: an opening line to the person, one topic per paragraph, a close on a concrete next step, the instance sign-off, no markdown in an email body), documentation (vault documents, README, howto guides, decision records, technical notes: subject first, no recap coda, evaluations anchored to a fact) and synthesis (reports, recaps, status lines, task titles: one line per fact, past participle first in Italian, past-tense verb first in English, always neutral). Four tones: friendly, professional, formal, neutral; the request overrides the default. Prohibition 3 keeps a factual contrast between two real alternatives ("Use the CMA, not the CDA").
+- **`writing-register` skill for two moments** (`.claude/skills/writing-register/SKILL.md`): loaded before drafting an email, a message, a post or a document, it carries the full rules, a catalog of lexical tells, calques from the source language, rhythm checks by eye, the domains, the tones and the preference keys with their defaults; at delivery it runs as the post-pass, aware of the domain, with rule zero inside the fidelity guard. In a satellite it reads the values from the session block the hook injects.
+- **`## Writing register` block in preferences**, one fenced `yaml` block with every key optional: `suspended`, `post_pass`, `tone_default` per domain, `voice`, `communication.sign_off`, `translation.*`, `avoid_words`. Where it overlaps `## Communication preferences` ("Tone with others", "Things to avoid"), the block wins. `preferences.example.md` documents it commented.
+- **`translate` skill** (`.claude/skills/translate/SKILL.md`, optional): two labeled versions of a draft the owner wrote, the first keeping the source's form, the second what a native speaker would write with the same voice and facts; a fresh translation when the draft opens with the owner's marker; `Revised` for a draft already in the target language; one `Note:` line for a doubt about the source. It runs only where `translation.enabled` is true and hands any other request back to chat; interface strings and code are never its business. The sign-off closes the versions only when the owner set one.
+- **`maestro-register-keys`** (`plugins/maestro/bin/`): renders, reports and writes the preferences block. `write` appends the missing keys inside the existing block and leaves every other line of the section as it was, converts the old two-line block to the fenced shape, backs the file up next to itself first, and refuses a tone outside the four before writing anything. Both `/maestro:new-instance` and `/maestro:maestro-sync` use it, so the two cannot drift.
+- **Six optional questions at setup** (`/maestro:new-instance`, after Question 10): tone of emails, tone of documents, voice, sign-off, translation (only when the destination has the `translate` skill), words to avoid; `skip` writes every default with a `# default` comment.
+- **Phase 6c of `/maestro:maestro-sync`**: reads an existing instance's block, asks once for the keys it lacks (the owner's `## Communication preferences` lines suggest the answers) and writes them on the owner's yes, after a backup. A skipped question writes its default, so the next sync asks nothing.
+- **Tests**: `tests/test_maestro_register_keys.py` (22), Phase 6c blocks in `tests/test_maestro_sync.py`, the register block in `tests/test_finalize.py`, the hook pointers in `tests/test_satellite_hook.py`, 21 new cases in `tests/test_register_check.py`.
+
+### Changed
+
+- **The perimeter follows the reader.** The register covers every text a person reads, wherever it lands: vault documents, logbook, external posts, and in a repository `README`, `CHANGELOG`, the howto guides, decision records, shaping and devflow documents. `CLAUDE.md`, skill and agent files are written for the agent that reads them and stay outside. Chat replies to the owner follow the prohibitions and `## Tone` with no domain; a text for someone else drafted in chat takes its domain. The post-pass extends to `README`, `CHANGELOG` entries, howto guides and decision records written to a repository; devflow work documents keep `bin/register-check` as their gate.
+- **One pass over `README.md` and the howto guides** under the new rules: 88 em dashes used as pauses, 30 bold emphases and seven framing sentences went; instructions, commands, paths and tables stayed. `howto/01` to `07` and `howto/README.md` now carry `origin: maestro`, so the pass reaches instances through sync, and `howto/*.md` joins the sync's scan list. The index moves the guide numbers into their own column.
+- **Prose producers declare their domain**: `logbook` (documentation, with its first-person narrative as the genre's override of the neutral tone), `scheduler` (synthesis), `librarian` (synthesis for reports, documentation for descriptions and bodies, the tone passed by the orchestrator in the task), the plugin's `listen` note and the day-zero notes of `new-instance` (documentation).
+- **Satellites**: the session hook points at the mother's `writing-register` skill when it exists, at the mother's `translate` when the extract enables translation, and always writes the quoted `register-check` path. The identity extract keeps the fenced block intact; a bare sign-off line such as `--` would have closed the section, which is why the block is fenced.
+- **`howto/10-writing-register.md`** rewritten: rule zero, the domains and tones with bilingual examples, the catalog, the per-instance values and the questions setup and sync ask, coexistence with `humanizer` and `unslop`. `howto/12`, `README.md`, `howto/README.md`, the `guide` skill's index and the development guidelines follow.
+
+### Fixed
+
+- **`bin/register-check` reported two-item phrases as triads** (`For any question, reply here or grab a slot`). Without the Oxford comma a run of three is now reported only when its items are parallel: same length as the middle item, no function word (`the`, `with`, `its`, `no`; `il`, `con`, `senza`), the first item not closing a prepositional phrase. Headings skip rule 6 as they skip rule 4. Given up on purpose: a no-Oxford triad whose last item opens with a preposition, and one whose items carry an article; both stay a reader's call.
+- **Quoted examples raised findings**: balanced double quotes (straight, curly, guillemets) are masked like inline code. Single quotes stay, they are apostrophes; a straight quote after a digit is an inch mark and never opens or closes a quotation.
+
+### Why
+
+The owner writes three kinds of text that need different shapes, and kept a second rule set for translations that contradicted the register in places. A spike in one instance on five real texts (a recap, a call note, a follow-up email, two translations) settled the model; the second translated version converged with the email the owner had sent by hand. The perimeter was redrawn by who reads the text: the cleanup goes wherever a person reads, including the guides a newcomer meets on GitHub, and files for a model are written for the model. `translate` lives in the template because a plugin skill would be listed in every session on the machine, code repositories included; satellites reach it through the hook. The sync writes the owner's preferences for the first time, only the missing keys and after a backup, because an existing instance is never asked otherwise.
+
+- **Work**: `register-domains`
+- **Decision**: [the register's perimeter follows the reader](docs/decisions-log/2026-09-17-register-perimeter-follows-reader.md), [maestro-sync asks for missing register keys](docs/decisions-log/2026-09-17-maestro-sync-asks-register-keys.md), [translate is a template skill](docs/decisions-log/2026-09-17-translate-template-skill.md)
+
+### Migration
+
+1. **Update the plugin** and restart Claude Code: `claude plugin marketplace update maestro`, then `claude plugin update maestro@maestro`. Until an instance syncs, the updated hook points its satellites at the mother's old `writing-register`, which is post-pass only.
+2. **Run `/maestro:maestro-sync`** in each instance: `CLAUDE.md`, the skills, the agents and the howto guides arrive as diffs, `translate` and the newly marked guides through the reverse scan (a declined `translate` is offered again at every sync), `bin/register-check` through the `bin/` copy of Phase 5b. Phase 6c then asks the six register questions once and writes the block after a backup; a bare `suspended`/`post_pass` block is converted with its values kept.
+3. **Nothing changes for an owner who skips every question**: professional emails, neutral documents and recaps, no sign-off, translation off.
+
+---
+
 ## v2026.09.16.1 — 2026-09-16
 
 **Theme**: `/listen` in every session. Live capture of a call moves from the instance template into the Maestro plugin, so it works in an instance, in a satellite repo and in any other folder, and files the note where that context keeps documents.

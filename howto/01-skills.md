@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.16.1
+maestro_version: v2026.09.17.1
 tags: [howto, skills, claude-code, orchestrator, customization]
 description: How to add, invoke, write, and retire skills in your orchestrator. Skills are lightweight capabilities loaded in the root context.
 ---

@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.16.1
+maestro_version: v2026.09.17.1
 tags: [howto, customization, preferences, identity, orchestrator]
 description: How to customize your orchestrator — identity, owner profile, context, file territories, integrations, communication style. All through `private/preferences.md`.
 ---

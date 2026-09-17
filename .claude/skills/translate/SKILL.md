@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.16.1
+maestro_version: v2026.09.17.1
 name: translate
 description: Translate a draft the owner wrote, in two labeled versions, under the writing register. Runs only in an instance whose `## Writing register` block sets `translation.enabled` to true; elsewhere it hands the request back to ordinary chat. Use when the owner pastes a draft in the source language of `translation.pair` (an email, a message, a reply) and asks to translate it, or when a draft opens with `translation.new_context_marker`. Also translates a text someone else wrote that the owner wants to read in the target language, revises a draft already written in the target language ("Revised") and cleans transcribed speech. Interface strings, code and files of a software project are never its business.
 ---

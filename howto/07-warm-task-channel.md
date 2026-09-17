@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.16.1
+maestro_version: v2026.09.17.1
 tags: [howto, tasks, warm-channel, cold-layer, gc, acme, basecamp, integrations]
 description: Configure an optional external task system as the "warm" layer of the orchestrator, with the memory db as the "cold" layer and a lazy garbage collector that archives done tasks at session start.
 ---

@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.15.1
+maestro_version: v2026.09.17.1
 tags: [howto, writing-register, prose, style, register, domains, tone, translation, preferences, humanizer, unslop, orchestrator, discipline]
 description: "Full reference for the writing register: rule zero, the seven prose prohibitions with bilingual examples, the perimeter that follows the reader, the three domains (communication, documentation, synthesis) with their tones, the lexical tells, the per-instance values in preferences and the questions setup and sync ask, the post-pass through the `writing-register` skill, the `bin/register-check` tool and its heuristics. The condensed rules live in CLAUDE.md."
 ---

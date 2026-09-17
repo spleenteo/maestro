@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.16.1
+maestro_version: v2026.09.17.1
 tags: [howto, backup, sync, privacy, gitignore, symlinks, cloud-drive, orchestrator]
 description: How to back up and synchronize your orchestrator safely — what to keep out of git, how to sync across machines via cloud drives, and how to symlink external apps, skills, and agents.
 ---

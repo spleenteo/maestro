@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.16.1
+maestro_version: v2026.09.17.1
 tags: [howto, index, orchestrator, documentation]
 description: Index of how-to guides for working with your orchestrator beyond the first setup. Read these when you want to extend or customize deeper than the default behavior.
 ---

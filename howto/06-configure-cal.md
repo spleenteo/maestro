@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.16.1
+maestro_version: v2026.09.17.1
 tags: [howto, cal, scheduler, channels, routines, configuration, agents]
 description: How to configure the `scheduler` agent (alias Cal) — adding data channels (task trackers, calendars), writing routines, and understanding the seven `question_types`.
 ---
