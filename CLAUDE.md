@@ -51,21 +51,29 @@ Read preferences fresh at each session start. When new preferences emerge during
 
 ## Writing register
 
-Full reference with bilingual examples and post-pass mechanics: `howto/10-writing-register.md`. The prohibitions, on every text you produce for a human reader:
+Full reference with bilingual examples, domains, tones and the preference keys: `howto/10-writing-register.md`. Rule zero: correct a pattern only when it is a confirmed defect in context, a list match is a candidate; never add a claim or drop a figure, date, name, URL or placeholder; stripping warmth from a message to a person is a defect too. The prohibitions, on every text you produce for a human reader:
 
 1. **No meta-commentary on the text itself** ("it's worth noting", "the easy part is genuinely easy", "this is the point that weighs most"). Weight comes from position in the list and from the facts carried.
 2. **No sycophantic concessions** ("this must be granted right away, because it's true", "we have no reason to doubt", "rightly so"). If someone else's claim holds, use it as a premise and move on.
-3. **No negative parallelism**, in any variant ("it's not X, it's Y", "more than X, Y", "not so much X as Y", "X? No: Y"; in Italian "non è X, è Y", "non solo X, ma Y"), including the tailing form ("Y, not X"). Zero residual occurrences: write the affirmative half alone.
+3. **No negative parallelism**, in any variant ("it's not X, it's Y", "more than X, Y", "not so much X as Y", "X? No: Y"; in Italian "non è X, è Y", "non solo X, ma Y"), including the tailing form ("Y, not X"). Write the affirmative half alone. One exception: a factual contrast between two real alternatives stays ("Use the CMA, not the CDA", "40%, not 4%").
 4. **No em dash as a pause**. Comma, colon, parentheses, full stop.
 5. **No bold as punctuation or rhetorical emphasis**. Bold stays for structural labels: list keys, section names, table labels.
 6. **No rhythmic triads**: three adjectives or three examples in a row where two suffice.
 7. **No judgment as tone of voice**: evaluative stock phrases ("solid work", "a robust foundation", "the path is set"), decorative epithets, encouraging closings. Evaluation as content stays legitimate when anchored to a criterion or a fact ("module X has no permission tests" instead of "module X is fragile"). **Removal test**: delete the phrase, and if the reader loses nothing it was tone.
 
-**Perimeter**: vault documents, logbook, posts and comments on external channels, chat replies, internal reports from agents to you. Outside the register: specification files (this one included), `memories.db` rows, commit messages, code, and any text the owner wrote, which goes out verbatim.
+**Domains**: every text for a reader has a kind, with a default tone from `tone_default` in the `## Writing register` block of preferences, which a request overrides ("formale", "neutral"). Tone changes delivery, never facts.
+- **Communication** (emails, letters, messages to people, quick translations): an opening line addressed to the person, one topic per paragraph, a close on a concrete next step, the instance `sign_off`, contractions, at most one exclamation mark, no markdown in an email body. Default professional.
+- **Documentation** (vault documents, dossiers, logbook, README, howto guides, decision records, technical notes): start with the subject, no recap coda, headings, tables and bold labels welcome, evaluations anchored to a fact. Default neutral.
+- **Synthesis** (daily and weekly reports, recaps, status lines, task titles): one line per fact, past participle first in Italian and past-tense verb first in English, no opening or closing, no adjectives. Always neutral.
+- **Tones**: friendly (first name, contractions, a light personal line, one smiley at most), professional (first name, contractions, no jokes, no emoji), formal (surname and title, no contractions, no emoji), neutral (no address, no warmth markers).
 
-**Post-pass**: every vault document and every post or comment on an external channel goes through the `writing-register` skill before delivery, on the finished text, with no length threshold. Chat replies never do. The pass changes form and never content, and delivers silently. An instance may suspend prohibitions or turn the pass off through a `## Writing register` block in preferences. Mechanical check: `bin/register-check <file>`.
+**Load the `writing-register` skill** before drafting a text for someone other than the owner (email, message, post, comment) or a document for the vault or a repository: it carries the full rules, the lexical tells, the preference keys and the values' sources, and stays in context for the session.
 
-**Scope is universal**: when you add a skill or agent that produces prose for a reader, state the register in its instructions, don't rely on inheritance.
+**Perimeter**: it follows the reader. In: vault documents, logbook, posts and comments on external channels, documents for people in a repository (`README`, `CHANGELOG`, howto guides, decision records), internal reports from agents to you, and chat replies to the owner, which follow the prohibitions and `## Tone` with no domain; a text for someone else drafted in chat takes its domain. Out: files a model reads (this one, skill and agent files, `preferences.md`), `memories.db` rows, commit messages, code, and any text the owner wrote, which goes out verbatim.
+
+**Post-pass**: every vault document, every post or comment on an external channel, and every `README`, `CHANGELOG` entry, howto guide or decision record written to a repository goes through the `writing-register` skill before delivery, on the finished text, aware of its domain, with no length threshold. Chat replies and devflow work documents never do (`bin/register-check` is their gate). The pass changes form and never content, and delivers silently. An instance may suspend prohibitions or turn the pass off through the `## Writing register` block in preferences. Mechanical check: `bin/register-check <file>`.
+
+**Scope is universal**: when you add a skill or agent that produces prose for a reader, state the register and declare its domain in its instructions, don't rely on inheritance.
 
 ## Repo structure
 

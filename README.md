@@ -82,7 +82,7 @@ Every instance built from this template has:
 - **`memories.db.template`**: empty SQLite seed with the schema, copied into `private/` by `new-instance`.
 - **`.claude/roster.yaml`**: registry of active craft agents (ships with `librarian` and `scheduler` enrolled).
 - **`.claude/agents/`**: the shipped craft agents `hr` (recruiter and manager of the roster), `librarian` (vault research and frontmatter hygiene), `scheduler` (cold data layer for prospective/retrospective questions).
-- **`.claude/skills/`**: the hub skills `logbook` (daily note in your configured `logbook_path`), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (post-pass that enforces the prose register).
+- **`.claude/skills/`**: the hub skills `logbook` (daily note in your configured `logbook_path`), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (the prose register in full: loaded before writing an email, a message or a document, and run as the post-pass on the finished text).
 - **`bin/mem`**: CLI wrapper for `memories.db` (escape-safe writes, relative dates, reports), backed by `bin/mem-vec` for the optional semantic layer.
 - **`bin/session-digest`**: pulls the owner's messages from the day's parallel sessions, for the `logbook` skill.
 - **`bin/register-check`**: mechanical check of the writing register prohibitions that carry a syntactic signature.
@@ -118,7 +118,7 @@ After setup, the `howto/` folder has eleven guides:
 - [`howto/07-warm-task-channel.md`](howto/07-warm-task-channel.md): wire an external task manager as the warm layer, with `memories.db` as the cold layer
 - [`howto/08-markdown-discipline.md`](howto/08-markdown-discipline.md): frontmatter, tags, descriptions, YAML safety, wikilinks
 - [`howto/09-memoria-semantica.md`](howto/09-memoria-semantica.md): the optional semantic layer over `memories.db` and the vault
-- [`howto/10-writing-register.md`](howto/10-writing-register.md): the seven prose prohibitions, the post-pass, and `bin/register-check`
+- [`howto/10-writing-register.md`](howto/10-writing-register.md): the seven prose prohibitions, the three kinds of text and their tones, the per-instance values, the post-pass, and `bin/register-check`
 - [`howto/11-maestro-net.md`](howto/11-maestro-net.md): cross-talk between several Maestro instances (`recap`, `ask`, a satellite's `request`, the instance registry)
 
 ## Status

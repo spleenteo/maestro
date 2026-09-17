@@ -63,6 +63,13 @@ setup_completed: true
 
 ## Writing register
 
+```yaml
+tone_default:
+  communication: friendly
+communication:
+  sign_off: "Have a nice day,\\n--\\nAda"
+```
+
 Setext heading LEAK
 -------------------
 
@@ -164,6 +171,24 @@ class TestSessionStart(HookCase):
         self.assertEqual(json.loads(self.marker().read_text())["vault"], str(self.vault))
         self.assertNotIn("maestro-net request", ctx)
         self.assertIn("/maestro:listen", ctx)
+
+    def test_identity_extract_keeps_a_fenced_register_block(self):
+        self.write_registry()
+        self.add_satellite_row()
+        ctx = self.context(self.session_start(self.repo))
+        self.assertIn('sign_off: "Have a nice day,\\n--\\nAda"', ctx)
+        self.assertIn("communication: friendly", ctx)
+        self.assertNotIn("LEAK", ctx)
+
+    def test_register_skill_pointer_only_when_the_mother_has_the_skill(self):
+        self.write_registry()
+        self.add_satellite_row()
+        skill = self.mother / ".claude" / "skills" / "writing-register" / "SKILL.md"
+        self.assertNotIn(str(skill), self.context(self.session_start(self.repo)))
+        skill.parent.mkdir(parents=True)
+        skill.write_text("# Writing register\n")
+        ctx = self.context(self.session_start(self.repo))
+        self.assertIn(f"read `{skill}`", ctx)
 
     def test_plugin_skills_line_stays_when_request_is_granted(self):
         self.write_registry(accepts="recap, ask, request")

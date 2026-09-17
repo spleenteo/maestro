@@ -127,26 +127,40 @@ The skill named here must implement a `## Garbage Collector` section conforming 
 How the orchestrator should talk *to you* and about *others*. Expand when you notice the orchestrator drifting from how you actually work.
 
 - **Tone with you**: <direct/terse, warm/conversational, formal, playful — whatever fits>
-- **Tone with others (when writing on your behalf)**: <e.g. "warmer with agency contacts, more measured with enterprise clients">
-- **Things to avoid**: <pet peeves, filler phrases, bureaucratic wording, any habits that annoy you>
+- **Tone with others (when writing on your behalf)**: <nuances by contact, e.g. "warmer with agency contacts, more measured with enterprise clients"; the default tone per kind of text is `tone_default` in `## Writing register`, which wins where they overlap>
+- **Things to avoid**: <pet peeves, bureaucratic wording, habits that annoy you; single words go in `avoid_words` in `## Writing register`>
 - **Things to keep doing**: <patterns you've validated — e.g. "flag problems early even if uncomfortable">
 
 ---
 
 ## Writing register
 
-*Optional.* Maestro distributes seven prose prohibitions that apply to every text the orchestrator writes for a human reader, plus a post-pass through the `writing-register` skill on vault documents and external posts. Full reference: `howto/10-writing-register.md`.
+*Optional.* Maestro distributes a writing register: rule zero, seven prose prohibitions, three kinds of text (communication, documentation, synthesis) each with a default tone, and a post-pass through the `writing-register` skill on vault documents, external posts and documents for people written to a repository. Full reference: `howto/10-writing-register.md`.
 
-**Skip this section entirely** to get the full register with the post-pass on, which is the default. Declare it only to make an exception.
+**Skip this section entirely** to get the full register with the defaults below. Declare it, as one fenced `yaml` block under this heading, to set your values; every key is optional. `/maestro:new-instance` asks for these values at setup and `/maestro:maestro-sync` asks once for the keys an instance lacks.
 
 ```yaml
-suspended: []        # prohibitions to suspend, e.g. [4, 6]
-post_pass: on        # on | off
+suspended: []                 # prohibitions to suspend, e.g. [4, 6]
+post_pass: on                 # on | off; off keeps the rules and skips the skill before each write or send
+tone_default:
+  communication: professional # friendly | professional | formal | neutral, for emails and messages
+  documentation: neutral      # for vault documents, dossiers, README, howto, notes
+  synthesis: neutral          # for reports and recaps; synthesis is always neutral
+voice: ""                     # how you sound, in one line, e.g. "warm, direct, dry humour; emoji from the source stay"
+communication:
+  sign_off: ""                # closing lines of every email, e.g. "Have a nice day,\nAlex"
+translation:
+  enabled: false              # true turns on the translate skill for your drafts
+  pair: ""                    # e.g. "it -> en"
+  new_context_marker: ""      # a draft opening with it starts a fresh translation, e.g. "Ciao,"
+  source_words_max: 1         # source-language words allowed per text, only when they add warmth
+  labels: [Translation, More polished version]
+avoid_words: []               # words you never want to see, e.g. [genuinely, leverage]
 ```
 
-The numbers: 1 meta-commentary, 2 sycophantic concessions, 3 negative parallelism, 4 em dash as a pause, 5 bold as emphasis, 6 rhythmic triads, 7 judgment as tone of voice.
+The prohibitions: 1 meta-commentary, 2 sycophantic concessions, 3 negative parallelism, 4 em dash as a pause, 5 bold as emphasis, 6 rhythmic triads, 7 judgment as tone of voice. Tones: friendly (first name, contractions, a light personal line), professional (first name, contractions, no jokes), formal (surname and title, no contractions), neutral (no address).
 
-`post_pass: off` keeps the seven prohibitions active while skipping the skill invocation before each write or send.
+Keep the block fenced: a satellite session receives this section through the plugin's identity extract, and a bare line such as `--` in a sign-off would close the section early.
 
 ---
 

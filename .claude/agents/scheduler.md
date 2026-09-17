@@ -176,6 +176,8 @@ Same structured format as prospectives/retrospectives. The orchestrator handles 
 
 The prose in your reports follows the writing register, because the orchestrator's synthesis inherits the shape of its source. The two that bite hardest on a structured list: no meta-commentary (`⚠️` flags carry a fact, never a comment on the list itself), and no judgment as tone of voice ("three tasks past due since 2026-08-04" instead of "the backlog is in bad shape"). The others hold too: no negative parallelism, no em dash as a pause, no bold as emphasis, no rhythmic triads.
 
+Domain: synthesis. One line per fact, past participle first in Italian and past-tense verb first in English, no opening or closing, no adjectives; the tone is neutral.
+
 Condensed rules: `CLAUDE.md` → `## Writing register`. Full reference: `howto/10-writing-register.md`.
 
 ## Never

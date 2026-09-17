@@ -107,7 +107,7 @@ once per capture.
 | `--mic-label` | the owner's nick from preferences | the owner's nick from the identity extract; ask when it isn't there | ask |
 | Destination proposed at close | a vault folder chosen from people and topic | the vault folder, or a subfolder of it; without one, ask | ask |
 | Memory at close | `"<project>/bin/mem" save` | `MEM_SCOPE=<scope> "<mother>/bin/mem" save` | none |
-| Register pass on the note | the `writing-register` skill | the rules in `<mother>/CLAUDE.md`, section `## Writing register`, adjusted by the `Writing register` block of the identity extract when there is one, then `"<mother>/bin/register-check" <note>` | none |
+| Register pass on the note | the `writing-register` skill, documentation domain | the rules in `<mother>/CLAUDE.md`, section `## Writing register`, and the skill file the session block points to when the mother has one (`<mother>/.claude/skills/writing-register/SKILL.md`), with the values of the `Writing register` block of the identity extract; documentation domain; then `"<mother>/bin/register-check" <note>` | none |
 
 - In an instance, call the root's `bin/mem` by absolute path: a worktree has no
   `private/`, so its own copy finds no memory.
@@ -275,7 +275,8 @@ everything.
   (people, areas, subjects), and a one-line `description:`. Quote any value
   containing `: ` or starting with a YAML-sensitive character.
 - **The note goes through the register pass of its context** before delivery,
-  on the finished text. The transcript never does: those are other people's
+  on the finished text, as documentation (subject first, no recap coda,
+  evaluations anchored to a fact). The transcript never does: those are other people's
   words and they go out untouched.
 - **Never invent a speaker.** When a line's attribution is unclear, leave it
   unattributed.

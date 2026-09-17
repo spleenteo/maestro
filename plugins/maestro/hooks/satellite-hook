@@ -184,6 +184,11 @@ def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity
         f"- Prose for a human reader follows the writing register: `{mother / 'CLAUDE.md'}`, "
         "section `## Writing register`.",
     ]
+    register_skill = mother / ".claude" / "skills" / "writing-register" / "SKILL.md"
+    if register_skill.is_file():
+        lines.append(f"- Before drafting a text for a person (email, message, post, comment) or a document, "
+                     f"read `{register_skill}`: the kinds of text, the tones, and how to read the values of "
+                     "the `Writing register` block above.")
     if can_request:
         lines.append(f"- For work that belongs to the mother (its skills, agents, vault documents): "
                      f"`maestro-net request \"<goal and where the result goes>\"`. The answer arrives as a "

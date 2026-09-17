@@ -47,14 +47,14 @@ Rules the plans and the code must follow. Devflow passes this file to every plan
 ## Prose
 
 - Every file in the repo is in English.
-- The writing register (`howto/10-writing-register.md`) applies to README, CHANGELOG and devflow documents. Skills, agents, `CLAUDE.md` and howto are specification files outside it (`howto/10-writing-register.md`, Perimeter): emphasis and contrasts that carry an instruction stay. A skill or agent that produces prose for a reader states the register in its own instructions. (Corrected on 2026-09-14: the first version put skills, agents and howto inside the register, and the V1 and V2 register passes on howto followed that error.)
+- The writing register (`howto/10-writing-register.md`) follows the reader: it applies to README, CHANGELOG, the howto guides, decision records and devflow documents, in the documentation domain. Skills, agents and `CLAUDE.md` are read by a model and stay outside it (decision of 2026-09-17, `docs/decisions-log/2026-09-17-register-perimeter-follows-reader.md`, which supersedes the correction of 2026-09-14 for howto): emphasis and contrasts that carry an instruction stay there, and rule zero protects them in a howto guide. A skill or agent that produces prose for a reader states the register and its domain in its own instructions.
 - Markdown files carry `tags:` and `description:` frontmatter (`howto/08-markdown-discipline.md`).
 
 ## Gate
 
 ```bash
 python3 -m unittest discover -s tests -t .
-bin/register-check <every README, CHANGELOG or devflow document touched by the slice>
+bin/register-check <every README, CHANGELOG, howto guide, decision record or devflow document touched by the slice>
 ```
 
 Baseline on 2026-09-13: 160 tests, OK, 5 skipped.

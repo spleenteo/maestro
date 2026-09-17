@@ -265,7 +265,7 @@ Write a "day zero" logbook note at `<logbook_path>/YYYY-MM-DD-day-zero.md`. Two 
 
 Voice: the **owner's first person** (per the `logbook` skill convention). Language: the owner's default language. Frontmatter must include `tags:` (multi-dimensional) and `description:` (one line).
 
-The note follows the writing register of the new instance (`<destination>/howto/10-writing-register.md`). After writing it, run `"<destination>/bin/register-check" "<file>"` on it, with `<file>` the note's absolute path. Fix every violation it reports and re-run until it exits 0; judge the candidates it lists by reading them.
+The note follows the writing register of the new instance, documentation domain: read `<destination>/.claude/skills/writing-register/SKILL.md` by that absolute path before writing (the destination's skills are not listed in this session), keeping the logbook's first-person narrative. Full reference: `<destination>/howto/10-writing-register.md`. After writing it, run `"<destination>/bin/register-check" "<file>"` on it, with `<file>` the note's absolute path. Fix every violation it reports and re-run until it exits 0; judge the candidates it lists by reading them.
 
 Template (translate into the owner's language):
 
@@ -304,7 +304,7 @@ Write an orientation TIL note at `<til_path>/YYYY-MM-DD-how-to-work-with-<orches
 
 Voice: owner's first person. Language: owner's default.
 
-The note follows the writing register like the logbook note: run `"<destination>/bin/register-check" "<file>"` on it and fix what it reports before announcing.
+The note follows the writing register like the logbook note, documentation domain: run `"<destination>/bin/register-check" "<file>"` on it and fix what it reports before announcing.
 
 Template (translate into the owner's language):
 
