@@ -45,13 +45,22 @@ MASK_PATTERNS = [
     re.compile(r"\[\[[^\]]*\]\]"),     # wikilink Obsidian
     re.compile(r"\]\([^)]*\)"),        # target di un link markdown
     re.compile(r"https?://\S+"),       # URL nudo
+    # Citazioni tra virgolette doppie bilanciate sulla stessa riga: un
+    # esempio citato non è prosa dell'autore. Gli apici singoli restano
+    # fuori: sono apostrofi ("it's not X, it's Y" deve continuare a fermarsi).
+    re.compile(r'"[^"\n]*"'),          # virgolette dritte
+    re.compile(r"\u201c[^\u201d\n]*\u201d"),  # virgolette curve “…”
+    re.compile(r"\u00ab[^\u00bb\n]*\u00bb"),  # caporali «…»
 ]
 
 
 def mask_line(line: str) -> str:
-    """Sostituisce codice inline, wikilink, target di link e URL con NUL.
+    """Sostituisce codice inline, wikilink, target di link, URL e citazioni
+    tra virgolette doppie con NUL.
 
     La lunghezza resta invariata, così le colonne riportate restano vere.
+    Una virgoletta spaiata (un pollice, una citazione aperta su un'altra
+    riga) non maschera nulla.
     """
     for pattern in MASK_PATTERNS:
         line = pattern.sub(lambda m: MASK * len(m.group(0)), line)
@@ -109,7 +118,9 @@ _CONJ_WORDS = "and|or|e|ed|o|oppure"
 _CONJ = r"(?:%s)" % _CONJ_WORDS
 
 # Cattura l'intera sequenza enumerativa, non tre voci a caso al suo interno:
-# una triade è un elenco di tre, e "a, b, c, d e f" non lo è.
+# una triade è un elenco di tre, e "a, b, c, d e f" non lo è. Le sequenze
+# senza virgola di Oxford passano poi da is_reportable_triad, e i titoli
+# sono esclusi come per il divieto 4.
 RE_RULE6 = re.compile(
     r"\b(" + _ITEM + r"(?:,\s+" + _ITEM + r")+,?\s+" + _CONJ + r"\s+" + _ITEM + r")\b",
     re.I | re.UNICODE,
@@ -135,6 +146,59 @@ def count_items(run: str) -> int:
     else:
         tail = 1
     return len(parts) - 1 + tail
+
+
+# Parole funzione, entrambe le lingue: una voce che ne contiene una non è
+# un membro parallelo di una triade ritmica ("with its default", "no opening").
+FUNCTION_WORDS = frozenset(
+    "a an the with in per of to for any its their just no on at by from "
+    "into than as "
+    "il lo la i gli le un una uno con di da su ogni suo sua suoi sue senza "
+    "tra fra".split()
+)
+
+
+def _words(item: str) -> List[str]:
+    return item.split()
+
+
+def is_reportable_triad(run: str) -> bool:
+    """Decide se una sequenza di tre voci è una triade da segnalare.
+
+    Con la virgola di Oxford ("a, b, and c") l'elenco è inequivocabile e
+    vale com'è. Senza ("a, b and c") una virgola sola più una coppia è la
+    forma di metà delle frasi normali ("per ogni domanda, rispondi qui o
+    prenota"): la voce centrale, l'unica delimitata da entrambi i lati, fa
+    da riferimento. La regex cattura prima e ultima voce con avidità fino
+    a tre parole, quindi la prima si riduce alle ultime k parole (e cade se
+    la parola che le precede è una parola funzione) e l'ultima si tronca
+    alla prima parola funzione. Si segnala solo se le tre voci
+    hanno k parole e nessuna contiene una parola funzione.
+    """
+    parts = [p.strip() for p in run.split(",")]
+    if len(parts) >= 3:
+        return True
+    first, last = parts
+    if RE_LEADING_CONJ.match(last):
+        return True
+    split = RE_INNER_CONJ.split(last, maxsplit=1)
+    if len(split) != 2:
+        return False
+    middle, tail = (_words(x) for x in split)
+    k = len(middle)
+    if k == 0:
+        return False
+    first_words = _words(first)
+    head = first_words[-k:]
+    # "perimeter by reader, domains and tones": la prima voce chiude un
+    # sintagma retto da una parola funzione, non apre un elenco.
+    if len(first_words) > k and first_words[-k - 1].lower() in FUNCTION_WORDS:
+        return False
+    cut = next((i for i, w in enumerate(tail) if w.lower() in FUNCTION_WORDS), len(tail))
+    tail = tail[:cut]
+    if len(head) != k or len(tail) != k:
+        return False
+    return not any(w.lower() in FUNCTION_WORDS for w in head + middle)
 
 # ---------------------------------------------------------------------------
 # Divieto 5 — grassetto
@@ -283,9 +347,11 @@ def analyze(text: str, skip: Optional[Set[int]] = None,
                         path=path,
                     ))
 
-        if 6 not in skip:
+        if 6 not in skip and not is_heading:
             for m in RE_RULE6.finditer(masked):
                 if count_items(m.group(1)) != 3:
+                    continue
+                if not is_reportable_triad(m.group(1)):
                     continue
                 out.append(Finding(
                     rule=6, kind=KIND[6], line=lineno, col=m.start() + 1,
@@ -324,7 +390,9 @@ def build_parser() -> argparse.ArgumentParser:
                     "5 bold as emphasis, 6 rhythmic triad). Prohibitions 1, 2 "
                     "and 7 are semantic and belong to the writing-register skill.",
         epilog="Exit 0 clean, 1 findings, 2 usage error. Rules 4 and 5 are "
-               "reported as violations, rules 3 and 6 as candidates for review.",
+               "reported as violations, rules 3 and 6 as candidates for review. "
+               "Quoted spans in double quotes, inline code, wikilinks, link "
+               "targets and URLs are masked; headings skip rules 4 and 6.",
     )
     p.add_argument("paths", nargs="+",
                    help="Files to check, or - to read stdin")

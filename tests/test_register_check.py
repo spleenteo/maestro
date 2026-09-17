@@ -193,6 +193,59 @@ class TestRule6Triads(unittest.TestCase):
     def test_ignores_fenced_code(self):
         self.assertNotIn(6, rules("prose\n\n```\na, b, and c\n```\n"))
 
+    # Forma senza virgola di Oxford: una virgola sola più una coppia non basta.
+    # La voce centrale è l'unica delimitata da entrambi i lati e fa da riferimento.
+
+    def test_pair_after_a_clause_is_clean(self):
+        text = ("For any follow-up question, just reply here or grab a slot: "
+                "https://calendly.com/example\n")
+        self.assertNotIn(6, rules(text))
+
+    def test_pair_after_a_clause_is_clean_with_negation(self):
+        self.assertNotIn(6, rules("past-tense verb first in English, no opening or closing\n"))
+
+    def test_heading_triad_is_clean(self):
+        self.assertNotIn(6, rules("### Translation skill, optional and minimal\n"))
+
+    def test_pair_with_articles_is_clean(self):
+        text = "domains and tones with bilingual examples, the lexical tells and calques\n"
+        self.assertNotIn(6, rules(text))
+
+    def test_pair_after_a_possessive_is_clean(self):
+        text = ("the preference keys and their defaults, the setup and sync "
+                "questions with their examples\n")
+        self.assertNotIn(6, rules(text))
+
+    def test_pair_with_trailing_content_word_is_clean(self):
+        text = "Defaults: communication professional, documentation and synthesis neutral\n"
+        self.assertNotIn(6, rules(text))
+
+    def test_pair_with_prepositions_is_clean(self):
+        text = "One question per key, with its default and one example per option\n"
+        self.assertNotIn(6, rules(text))
+
+    def test_verb_phrases_with_articles_are_clean(self):
+        text = "run on a copy asks the questions, writes the backup and the block\n"
+        self.assertNotIn(6, rules(text))
+
+    def test_pair_inside_parentheses_is_clean(self):
+        text = ("sample block (communication friendly with a sign-off, "
+                "documentation and synthesis neutral)\n")
+        self.assertNotIn(6, rules(text))
+
+    def test_pair_after_a_prepositional_phrase_is_clean(self):
+        text = "perimeter by reader, domains and tones with bilingual examples\n"
+        self.assertNotIn(6, rules(text))
+
+    def test_multiword_parallel_triad_is_reported(self):
+        self.assertIn(6, rules("It reads files, checks syntax and writes reports.\n"))
+
+    def test_triad_with_a_tail_is_reported(self):
+        self.assertIn(6, rules("The tool is fast, cheap and reliable to use.\n"))
+
+    def test_oxford_form_ignores_item_shape(self):
+        self.assertIn(6, rules("Fast, with care, and on time.\n"))
+
 
 # ---------------------------------------------------------------------------
 # Masking e regioni saltate
@@ -205,6 +258,26 @@ class TestMasking(unittest.TestCase):
 
     def test_url_is_masked(self):
         self.assertNotIn(4, rules("see https://example.com/a—b for details\n"))
+
+    def test_straight_double_quotes_are_masked(self):
+        text = 'He wrote "it\'s not a bug, it\'s a feature" in the draft.\n'
+        self.assertNotIn(3, rules(text))
+
+    def test_curly_double_quotes_are_masked(self):
+        self.assertNotIn(4, rules("The note said “wait — later” and stopped.\n"))
+
+    def test_guillemets_are_masked(self):
+        self.assertNotIn(4, rules("Il testo diceva «aspetta — dopo» e basta.\n"))
+
+    def test_apostrophes_stay_unmasked(self):
+        self.assertIn(3, rules("It's not a bug, it's a feature.\n"))
+
+    def test_lone_quote_masks_nothing(self):
+        self.assertIn(4, rules('A 27" screen — too small for that.\n'))
+
+    def test_columns_survive_a_quoted_span(self):
+        text = 'She said "fine" — then left.\n'
+        self.assertEqual(findings(text, 4)[0].col, text.index("—") + 1)
 
     def test_link_target_is_masked(self):
         self.assertNotIn(4, rules("see [the doc](./a—b.md) for details\n"))

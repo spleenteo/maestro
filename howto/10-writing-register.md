@@ -213,7 +213,7 @@ Exit 0 means clean, 1 means findings, 2 means a usage error or an unreadable fil
 
 Rules 4 and 5 are reported as `violation`: the match is the offence. Rules 3 and 6 are reported as `candidate`: the match is a probable offence that a reader confirms. A three-item run inside a longer enumeration is not a triad, and the tool counts the whole run before reporting.
 
-The tool skips YAML frontmatter, fenced code blocks and blockquote lines, and masks inline code, wikilinks, link targets and bare URLs before matching. Prohibitions 1, 2 and 7 are semantic and stay with the skill.
+The tool skips YAML frontmatter, fenced code blocks and blockquote lines, and masks inline code, wikilinks, link targets, bare URLs and quoted spans in balanced double quotes (`"…"`, `“…”`, `«…»`) before matching, so a quoted example of a banned pattern raises nothing. Single quotes stay unmasked: they are apostrophes. Two inch marks on one line mask the span between them. Headings skip rules 4 and 6. Without the Oxford comma, a run of three is reported only when its items are parallel: same length, no function word (`the`, `with`, `its`, `no`; `il`, `con`, `senza`); a comma followed by a pair (`for any question, reply here or book a slot`) is a clause, and a triad whose last item opens with a preposition (`chiaro, diretto e senza fronzoli`) is left to the reader. Prohibitions 1, 2 and 7 are semantic and stay with the skill.
 
 The tool never reads `preferences.md`. Exceptions reach it as `--skip`, passed by the skill that read them.
 
