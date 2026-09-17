@@ -108,7 +108,7 @@ Calques from the source language are the usual translation risk. From Italian in
 
 | Domain | For | Default tone |
 |---|---|---|
-| Communication | emails, letters, chat messages to people (customers, partners, colleagues), quick translations for chat | `tone_default.communication` (professional) |
+| Communication | emails, letters, chat messages to people (customers, partners, colleagues), quick translations for chat; a draft to translate in two versions goes to the `translate` skill where translation is enabled | `tone_default.communication` (professional) |
 | Documentation | dossiers, vault documents, logbook entries, README and howto guides, decision records, technical notes | `tone_default.documentation` (neutral) |
 | Synthesis | daily and weekly reports, recaps, status lines, task titles in reports and task managers | neutral, always |
 

@@ -267,6 +267,24 @@ Keep the block fenced. A satellite session receives this section through the plu
 | 5 | Do you translate your drafts? If yes: language pair, source-language words allowed per text, labels | off | "it -> en", 1, [Translation, More polished version] |
 | 6 | Words you never want to see? | none | [genuinely, leverage] |
 
+## Translation
+
+Owners who write drafts in one language and send them in another enable the `translate` skill through the `translation` keys of the block. It returns two labeled versions of the draft and nothing else: the first keeps the source's form and register, the second is what a native speaker would write with the same voice and facts. Both follow the register in the communication domain; names, figures, dates, URLs, emoji and placeholders stay exact, and a doubt about the source goes in one `Note:` line after the blocks. A draft opening with `new_context_marker` starts a fresh translation. A draft already in the target language gets the same two blocks, the first labeled `Revised`.
+
+`communication.sign_off` closes both versions only when it is set. Most owners sign their own emails, and the key stays empty; an owner whose flow always ends the same way sets it once.
+
+```
+Translation
++++++++++++++++++++++++++
+Hi Alex, thanks for the call today. The export ships on Thursday, I'll write as soon as it's live.
+
+More polished version
++++++++++++++++++++++++++
+Hi Alex, thanks for today's call. The export ships on Thursday; I'll let you know the moment it's live.
+```
+
+Without the `translation` keys, a request to translate is answered as ordinary chat, and the skill says in one line how to turn it on. In a satellite the skill is the mother's, reached through the pointer the session hook writes when the mother enables translation.
+
 ## The post-pass
 
 Every document destined for the vault, every post or comment on an external channel, and every `README`, `CHANGELOG` entry, howto guide or decision record written to a repository goes through the `writing-register` skill before delivery, on the finished text, aware of its domain. There is no length threshold: a two-line Basecamp comment goes through it, because what leaves the house is the hardest to retract.

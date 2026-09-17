@@ -18,6 +18,8 @@ Translating a draft under the register is optional: most owners never translate.
 
 `translate` ships as `.claude/skills/translate/` with `origin: maestro` and reaches instances through the reverse scan of `maestro-sync`. The `## Writing register` section of `CLAUDE.md` loads it only when the instance's preferences enable translation. A satellite of a mother that enables it reaches the mother's copy through a line of the plugin's session hook.
 
+Note of 2026-09-17, slice V4: development satellites are code repositories too and receive the skill through the hook pointer, which names the trigger (a draft in the source language, or one opening with the marker) so a request about interface strings never reaches it; the "code repositories" argument below holds for folders outside Maestro. The sign-off on both versions is optional: `communication.sign_off` closes them only when the owner sets it.
+
 ## Alternatives discarded
 
 - **A plugin skill**: it would be listed in every session on the machine, code repositories included, where a request to translate interface strings means something else; a plain folder has no preferences to enable it. `listen` went to the plugin because a call can happen in any folder and needs no per-instance values.

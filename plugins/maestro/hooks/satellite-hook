@@ -144,6 +144,22 @@ def identity_extract(mother: Path) -> str:
     return "\n".join(kept).strip()
 
 
+def translation_enabled(identity: str) -> bool:
+    """True when the identity extract's Writing register block sets translation.enabled: true.
+
+    Reads the indented lines under a `translation:` key inside a fenced block;
+    a bare-line block never carries the key, so it reads as off."""
+    in_block = False
+    for line in identity.splitlines():
+        stripped = line.strip()
+        if not line.startswith((" ", "\t")) and stripped:
+            in_block = stripped == "translation:"
+            continue
+        if in_block and re.fullmatch(r"enabled:\s*(true|yes|on)", stripped, re.I):
+            return True
+    return False
+
+
 def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity: str,
                  exported: bool, vault_open: bool, can_request: bool) -> str:
     mem = mother / "bin" / "mem"
@@ -189,6 +205,11 @@ def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity
         lines.append(f"- Before drafting a text for a person (email, message, post, comment) or a document, "
                      f"read `{register_skill}`: the domains, the tones, and how to read the values of "
                      "the `Writing register` block above.")
+    translate_skill = mother / ".claude" / "skills" / "translate" / "SKILL.md"
+    if translate_skill.is_file() and translation_enabled(identity):
+        lines.append(f"- A draft to translate (in the source language of the mother's `translation.pair`, or "
+                     f"opening with its `new_context_marker`): read `{translate_skill}` and follow it; "
+                     "interface strings and code are never its business.")
     lines.append(f"- Mechanical check on any finished text: `\"{mother / 'bin' / 'register-check'}\" <file>` "
                  "(or `-` with the text on stdin).")
     if can_request:
