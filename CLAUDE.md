@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.17.1
+maestro_version: v2026.09.24.1
 ---
 
 # Orchestrator
@@ -221,6 +221,28 @@ When an idea's question closes, convert it: create the task in the task manager,
 
 Review the open ideas periodically. Each survivor should carry either the decision it's waiting for (tag `workbench`) or the condition that will wake it up (tag `dormant`).
 
+### Task creation thresholds
+
+These rules decide **whether** a task is created, whatever store holds the owner's tasks: the warm channel declared in preferences (`## Warm task channel`, reached through its skill) or, without one, `memories.db`. They hold in every session, including sessions where the channel's skill is not loaded.
+
+A task is created when at least one of these holds:
+
+1. **Direct request** — the owner asks for it: "add a task", "remind me to…", "segna che devo…".
+2. **A date** — there is a day by which the action has to happen.
+3. **Evident urgency** — a legal deadline, a money consequence, a third party waiting.
+
+With none of the three, no task. The thing stays an `idea` when a question is still open, or you ask the owner once whether they want it as a task. An "I should…" with no date and no urgency does not become a task on its own.
+
+**Granularity**: a task is an outcome the owner will meet while planning, not every step toward it. A step toward an outcome already tracked (send the deck, check a reply, brief someone before a call), or a step that gets done within the session, goes into the existing task's notes or checklist, unless the owner asks for it as a task of its own.
+
+**Before creating**: search the store for a related open task (the channel skill's search, or `bin/mem todo` and `bin/mem search`). Related → update that task's notes. Clearly different → create a new one.
+
+**Priority**: the store's neutral level by default. Raise it only on the owner's explicit request or for the urgency of condition 3.
+
+**No numeric cap** on tasks per area.
+
+These are admission rules: they don't constrain the task's fields, which follow the defaults of the store (an undated task stays undated when the owner wants it so). An instance may tighten or loosen them in preferences, under `## Warm task channel` → `### Task creation thresholds`; the instance block wins where they differ. Pattern: `howto/07-warm-task-channel.md`.
+
 ### Proactive triggers
 
 Write to the db **proactively**, without waiting to be asked, when you detect:
@@ -228,7 +250,7 @@ Write to the db **proactively**, without waiting to be asked, when you detect:
 - **Completed work** — a task finished, a feature shipped, a bug fixed, a configuration done → `memory`
 - **The owner tells you something happened** — a call, a meeting, a decision, a purchase → `memory`
 - **Closing signals** — "ok", "perfect", "done", "thanks", "next topic" → check whether the previous exchange is worth recording as `memory`
-- **The owner lists things to do** — "I need to…", "remind me…", "segna che devo…" → `task` with `status: todo`
+- **The owner lists things to do** — "I need to…", "remind me…", "segna che devo…" → apply the task creation thresholds above. When one holds, create the task where tasks live: through the warm channel's skill when preferences declare one, otherwise `task` with `status: todo` here. With a warm channel, `memories.db` holds no open tasks.
 - **An idea emerges** — "we could…", "someday I'd like…", "is there a way to…" → `idea` with `status: open`. This includes **meta-ideas** about the orchestrator itself (memory, workflows, tooling, how you collaborate) — easy to mis-read as "just technical discussion" and skip. Register when it emerges; update to `done` or `dismissed` once evaluated together.
 
 ### Early-morning rule

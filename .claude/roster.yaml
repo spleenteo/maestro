@@ -14,4 +14,11 @@ active:
     status: active
     hired_at: "2026-04-22"
     version: "1.0.0"
+  - name: steward
+    alias: Della
+    description: Backlog steward. Weekly review of the open task rows in memories.db and the live tasks on the warm channel declared in preferences; proposes reasoned closures, groupings under a parent idea, true duplicates, and moves to the right store, judged against the task creation thresholds. Proposes without executing, every write stays with the orchestrator. Never talks to the owner directly.
+    file: .claude/agents/steward.md
+    status: active
+    hired_at: "2026-09-24"
+    version: "1.0.0"
 retired: []

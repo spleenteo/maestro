@@ -82,8 +82,8 @@ Every instance built from this template has:
 - **`private/preferences.md`**: identity + owner profile + customizations, loaded at every session start. Gitignored.
 - **`private/memories.db`**: SQLite log of memories, tasks, ideas. Gitignored.
 - **`memories.db.template`**: empty SQLite seed with the schema, copied into `private/` by `new-instance`.
-- **`.claude/roster.yaml`**: registry of active craft agents (ships with `librarian` and `scheduler` enrolled).
-- **`.claude/agents/`**: the shipped craft agents `hr` (recruiter and manager of the roster), `librarian` (vault research and frontmatter hygiene), `scheduler` (cold data layer for prospective/retrospective questions).
+- **`.claude/roster.yaml`**: registry of active craft agents (ships with `librarian`, `scheduler` and `steward` enrolled).
+- **`.claude/agents/`**: the shipped craft agents `hr` (recruiter and manager of the roster), `librarian` (vault research and frontmatter hygiene), `scheduler` (cold data layer for prospective/retrospective questions), `steward` (weekly backlog review that proposes closures, groupings and moves, never writes).
 - **`.claude/skills/`**: the hub skills `logbook` (daily note in your configured `logbook_path`), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (the prose register in full: loaded before writing an email, a message or a document, and run as the post-pass on the finished text), `translate` (two versions of a draft in the owner's target language, only where preferences enable translation).
 - **`bin/mem`**: CLI wrapper for `memories.db` (escape-safe writes, relative dates, reports), backed by `bin/mem-vec` for the optional semantic layer.
 - **`bin/session-digest`**: pulls the owner's messages from the day's parallel sessions, for the `logbook` skill.

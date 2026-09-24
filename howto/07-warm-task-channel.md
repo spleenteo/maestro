@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.17.1
+maestro_version: v2026.09.24.1
 tags: [howto, tasks, warm-channel, cold-layer, gc, acme, basecamp, integrations]
 description: Configure an optional external task system as the "warm" layer of the orchestrator, with the memory db as the "cold" layer and a lazy garbage collector that archives done tasks at session start.
 ---
@@ -9,7 +9,7 @@ description: Configure an optional external task system as the "warm" layer of t
 
 Some owners use a dedicated task manager (Acme, Basecamp todos, Todoist, Linear, custom) and want the orchestrator to treat that as the source of truth for "things to do" instead of the memory db. This guide explains the pattern: a warm layer outside the orchestrator, a cold layer in `memories.db`, and a lazy garbage collector that bridges them.
 
-It's optional. If you don't declare a warm task channel, the orchestrator keeps using `type='task'` in `memories.db` as documented in guide 04, [Memory and integrations](04-memory-and-integrations.md).
+It's optional. If you don't declare a warm task channel, the orchestrator keeps using `type='task'` in `memories.db` as documented in guide 04, [Memory and integrations](04-memory-and-integrations.md). The task creation thresholds in `CLAUDE.md` apply either way.
 
 ## The three pieces
 
@@ -53,7 +53,28 @@ The skill named in `skill:` (e.g. `acme-task-manager`, `basecamp-task-manager`) 
 5. Updates the watermark: `bin/mem marker set <marker_name> <now-iso>`.
 6. Announces in chat in one line: `📦 archived N tasks: <inline ≤3 | count + first 3 if ≥4>`. Silent if N=0.
 
-Beyond GC, the skill typically also exposes read/write operations to the warm layer (list today, create a task, complete one). Those are channel-specific and not part of this guide.
+Beyond GC, the skill typically also exposes read/write operations to the warm layer (list today, create a task, complete one). Those are channel-specific and not part of this guide, with one exception: creation.
+
+### Creation thresholds (required section)
+
+The skill must also carry a `## Creation` section, because the skill is where tasks actually get created. When it is loaded, its own instructions are the ones the orchestrator follows, so the thresholds have to be written there too, next to the create call. The rules themselves live in `CLAUDE.md` → `## Memory` → `### Task creation thresholds`, and hold whether a warm channel is declared or not:
+
+1. A task is created only on a direct request, a date by which the action has to happen, or evident urgency (legal deadline, money consequence, a third party waiting). With none of the three it stays an idea, or the orchestrator asks the owner once.
+2. **Granularity**: a step toward an outcome already tracked goes into that task's notes, unless the owner asks for it as a task of its own.
+3. **Search before creating**, and update the related task instead of adding a sibling.
+4. **Neutral priority** by default.
+
+The `## Creation` section maps each rule onto the channel, and adds no new rule of its own:
+
+| Rule | What the skill states |
+|---|---|
+| Thresholds | One line pointing at `CLAUDE.md` → `### Task creation thresholds`, plus the instance block in preferences if one exists. |
+| Granularity | Where a step goes in this channel: the task's notes, a checklist, a comment, a subtask. |
+| Search before creating | The read call that finds related open tasks (keyword search, list overview). |
+| Priority | The channel's neutral value (`normal`, `Medium`, no flag). |
+| Field defaults | List, project, section, dates, estimate: the channel's defaults. They follow the thresholds and never replace them. |
+
+A skill that only wraps the create call, with no `## Creation` section, lets every next step of a conversation become a task.
 
 ### Archive memory format (recommended)
 
@@ -113,7 +134,8 @@ Because the warm tool is allowed to forget. Acme deletes done tasks after a wind
 
 ## Anti-patterns
 
-- **Two writers**: the warm layer and `memories.db` both having `type='task'` rows for the same thing. Pick one. With a warm channel, `memories.db` does not hold open tasks, only their archived form after GC.
+- **Two writers**: the warm layer and `memories.db` both having `type='task'` rows for the same thing. Pick one. With a warm channel, `memories.db` does not hold open tasks, only their archived form after GC. The proactive trigger in `CLAUDE.md` sends new tasks to the channel's skill for this reason.
+- **Micro-step flood**: every next step of a conversation created as its own task ("send the deck", "check the reply", "brief them before the call"). The signal is in the closing times: many tasks closed within one to three days of their creation. The fix is the granularity rule of the creation thresholds, written in the skill's `## Creation` section. Routing to the right channel doesn't prevent it: one instance whose tasks all went to its warm channel saw monthly creations climb from 7 to 31 in three months, with 22 of 46 closed tasks closed within three days.
 - **Eager sync**: trying to mirror the warm layer in real time. The point of the GC is laziness: it runs at session start, not continuously.
 - **Silent writes**: archiving without the one-line announcement. The owner must always see what landed.
 - **Hardcoding the channel name in `CLAUDE.md`**: the channel name comes from preferences, the orchestrator never hardcodes "Acme" or "Basecamp" in its top-level instructions.

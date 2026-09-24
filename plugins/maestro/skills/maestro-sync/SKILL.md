@@ -24,7 +24,7 @@ The skill operates on files marked with both `origin: maestro` and `maestro_vers
 
 - `CLAUDE.md` (top-level)
 - `.claude/skills/<name>/SKILL.md` for hub skills distributed by Maestro (e.g. `logbook`, `add-external-app`, `guide`)
-- `.claude/agents/<name>.md` for craft agents distributed by Maestro (e.g. `librarian`, `scheduler`, `hr`)
+- `.claude/agents/<name>.md` for craft agents distributed by Maestro (e.g. `librarian`, `scheduler`, `steward`, `hr`)
 - `howto/*.md` guides distributed by Maestro
 
 Files **never** in scope:

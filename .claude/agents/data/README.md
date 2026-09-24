@@ -10,7 +10,7 @@ Where every piece of config the orchestrator depends on actually lives:
 | File | Role | Nature | Gitignored |
 |------|------|--------|:---:|
 | `.claude/agents/data/channels.yaml` | Channel map + `question_types` routing. Read by `scheduler` (Cal) at every invocation. | Shared, versioned | no |
-| `.claude/agents/*.md` | Agent definitions (hr, librarian, scheduler, …) | Shared, versioned | no |
+| `.claude/agents/*.md` | Agent definitions (hr, librarian, scheduler, steward, …) | Shared, versioned | no |
 | `.claude/roster.yaml` | Active agent registry — source of truth for delegation | Shared, versioned | no |
 | `.claude/skills/*/SKILL.md` | Skill definitions | Shared, versioned | no |
 | `private/preferences.md` | Owner profile: identity, territories, timezone, integrations | Private | **yes** |

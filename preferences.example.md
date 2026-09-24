@@ -118,7 +118,15 @@ archive_tag: <acme-archive | basecamp-archive | ...>          # tag prepended to
 marker_name: <last-acme-flush | last-basecamp-flush | ...>    # watermark key in memories.db
 ```
 
-The skill named here must implement a `## Garbage Collector` section conforming to the contract in the howto. Maestro ships no GC skill by default — the channel implementation is added as a personal customization.
+The skill named here must implement a `## Garbage Collector` section and a `## Creation` section conforming to the contract in the howto. Maestro ships no channel skill by default — the channel implementation is added as a personal customization.
+
+### Task creation thresholds
+
+*Optional.* The rules that decide whether a task is created live in `CLAUDE.md` → `### Task creation thresholds` and apply with or without a warm channel. Write this subsection only to tighten or loosen them for this instance; where it differs, it wins.
+
+```
+<e.g. "No task without a date, even on direct request: undated work stays an idea.">
+```
 
 ---
 

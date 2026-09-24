@@ -8,6 +8,38 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.09.24.1 — 2026-09-24
+
+**Theme**: fewer, truer tasks. The rules that decide whether a task is created now sit in `CLAUDE.md` and in every channel skill, whatever store holds the tasks. A steward agent reviews the backlog against them each week.
+
+### Added
+
+- **Task creation thresholds** (`CLAUDE.md` → `## Memory` → `### Task creation thresholds`): a task is created on a direct request, a date by which the action has to happen, or evident urgency (legal deadline, money consequence, a third party waiting). With none of the three it stays an idea, or the orchestrator asks once. A step toward an outcome already tracked goes into that task's notes; search before creating; neutral priority by default; no numeric cap per area. The rules decide admission and leave the store's field defaults alone.
+- **`## Creation` section in the channel skill contract** (`howto/07-warm-task-channel.md`): each `<channel>-task-manager` skill maps the thresholds onto its channel (where a step goes, the read call that finds related tasks, the neutral priority value) and adds no rule of its own. New anti-pattern: micro-step flood.
+- **`steward` agent** (`.claude/agents/steward.md`, alias Della, enrolled in `.claude/roster.yaml`): a weekly review, never on Monday, of the open task rows in `memories.db` and the live tasks on the warm channel. Four passes (lapsed rows, groups for a parent idea, true duplicates versus recurring occurrences, routing), a synthesis report and a JSON block of operations the orchestrator applies after the owner's yes. It reads the log through `bin/mem`, reads the channel through its skill, and writes nothing. The instance adds the channel's read tools to its `tools:` field.
+- **Optional override** in `preferences.example.md`: `## Warm task channel` → `### Task creation thresholds`, which wins over `CLAUDE.md` where it differs.
+
+### Changed
+
+- **The proactive trigger for things to do** (`CLAUDE.md` → `### Proactive triggers`) applies the thresholds, then creates the task through the warm channel's skill when preferences declare one, in `memories.db` otherwise. It used to write `task` rows in `memories.db` unconditionally, even with a warm channel declared.
+- `howto/04`, `README.md`, `.claude/agents/data/README.md` and the `maestro-sync` skill's list of distributed agents follow.
+
+### Why
+
+In one instance the unconditional trigger wrote 161 task rows next to its warm channel between April and September 2026, 45 of them still open. In a second instance the trigger already went to the warm channel, and creations still climbed from 7 a month to 31 in three months, with 22 of 46 closed tasks closed within three days. Routing fixes the first case; the thresholds, written where tasks are created, address the second.
+
+- **Work**: `task-creation-thresholds`
+- **Decision**: [task creation thresholds live in `CLAUDE.md` and in the channel skill](docs/decisions-log/2026-09-24-task-creation-thresholds.md)
+
+### Migration
+
+1. **Run `/maestro:maestro-sync`** in each instance: `CLAUDE.md`, `howto/04`, `howto/07` and the roster arrive as diffs, `steward.md` as a new file.
+2. **Add a `## Creation` section** to the instance's channel skill, following the table in `howto/07`.
+3. **Thresholds already written in preferences** can stay as the override block, or go if they repeat `CLAUDE.md`.
+4. **Add the channel's read tools** to `steward`'s `tools:` field, then run a first pass by hand.
+
+---
+
 ## v2026.09.17.1 — 2026-09-17
 
 **Theme**: the writing register learns what kind of text it is shaping. One set of prohibitions had been binding an email to a partner and a daily recap alike, so the email lost its greeting and its sign-off. The register now names three domains (communication, documentation, synthesis), each with a default tone the owner sets once, and the same rules translate a draft.

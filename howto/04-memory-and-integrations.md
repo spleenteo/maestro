@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.17.1
+maestro_version: v2026.09.24.1
 tags: [howto, memory, integrations, mcp, sqlite, basecamp, calendar, tasks]
 description: How the memory db works, how to query and extend it, and how to integrate external tools (Basecamp, reminders, Google Calendar) without losing the orchestrator's single source of truth.
 ---
@@ -33,7 +33,7 @@ Columns: `id`, `date`, `title`, `description`, `tags`, `type`, `status`, `due_da
 The orchestrator writes to `log` on its own initiative when it detects signals (see `CLAUDE.md` → `## Memory` → "Proactive triggers"). Examples:
 
 - You close a topic with "ok", "thanks", "done" → candidate `memory` entry
-- You say "I need to...", "remind me..." → `task`
+- You say "I need to...", "remind me..." → `task`, when the task creation thresholds hold (`CLAUDE.md` → `### Task creation thresholds`: a direct request, a date or evident urgency). With a warm task channel declared, the task goes there instead ([guide 07](07-warm-task-channel.md)).
 - You say "we could...", "someday I'd like..." → `idea`
 - Work is completed in the session → `memory`
 
