@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./docs/work/archive/**)",
+      "Grep(./docs/work/archive/**)"
+    ]
+  }
+}
