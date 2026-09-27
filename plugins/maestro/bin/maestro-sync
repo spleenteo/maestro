@@ -9,16 +9,28 @@ command never asks anything.
                     checks the instance root, reads the mirror and working
                     tree paths from private/preferences.md, reports the
                     working tree's state, refreshes the read-only mirror to
-                    origin/main and checks the installed plugin against it.
+                    origin/main, checks the installed plugin against it,
+                    then scans the instance and the mirror and writes the
+                    plan to private/maestro-sync.plan.json: the changelog
+                    slice from the instance's version floor to upstream and
+                    one item per thing to do, of kind update (a marked file
+                    that differs, the instance's tools: carried over), new
+                    (a marked upstream file the instance lacks), bin (the
+                    drifted bin/ scripts), retired (a retired path still
+                    marked, or the listen unit with its state), register
+                    (writing register keys the preferences lack) or orphan
+                    (marked here, gone upstream: reported, never removed).
     apply           not implemented yet
     note            not implemented yet
     rollback        not implemented yet
     backups         not implemented yet
 
-`plan` writes only the mirror (clone on first run, fetch, reset): the
-instance's files are read. Without --plugin-root the repository URL comes
-from this command's own plugin root and the check that the loaded plugin
-is the installed one is skipped, with a warning.
+`plan` writes only the mirror (clone on first run, fetch, reset) and the
+plan file: the instance's other files are read. Without --plugin-root the
+repository URL comes from this command's own plugin root and the check
+that the loaded plugin is the installed one is skipped, with a warning.
+The plan is printed as a readable summary, or as the plan file's JSON
+with --json.
 
 Exit codes, always explicit, never a silent degradation:
      0  OK              done
@@ -36,18 +48,25 @@ Exit codes, always explicit, never a silent degradation:
 from __future__ import annotations
 
 import argparse
+import difflib
+import glob
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 sys.dont_write_bytecode = True  # the plugin folder is a checkout: no __pycache__/
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from maestro_registry import is_instance_dir  # noqa: E402
+from maestro_versions import (  # noqa: E402
+    BASELINE_VERSION, MARKDOWN_GLOBS, changelog_top_version, parse_version, read_marker)
 
 OK = 0
 E_USAGE = 2
@@ -85,6 +104,33 @@ NO_PLUGIN_ROOT_WARNING = (
 WORKTREE_FILES_SHOWN = 10
 WORKTREE_COMMITS_SHOWN = 5
 
+PLAN_FILE = Path("private") / "maestro-sync.plan.json"
+BACKUPS_DIR = Path("private") / "backups"
+PREFS_FILE = Path("private") / "preferences.md"
+
+# Phase 4b: folders of the mirror that hold template-only or plugin-distributed
+# material, never delivered by this command.
+MIRROR_EXCLUDED = ("docs/", "plugins/", ".claude-plugin/", "user-skills/", ".claude/skills/maestro-sync/")
+
+# Phase 6b: paths Maestro once distributed and has since retired. A `.md`
+# path is its own marker file; a folder is marked through its SKILL.md.
+RETIRED_PATHS = (
+    ".claude/skills/maestro-sync",
+    ".claude/skills/setup",
+    ".claude/skills/.disabled/setup",
+    "user-skills/maestro-net",
+    "howto/09-memoria-semantica.md",
+)
+LISTEN_UNIT = "listen"
+LISTEN_SKILL = ".claude/skills/listen"
+LISTEN_MEMBERS = (LISTEN_SKILL, "bin/listen", "bin/listen-updates", "bin/audiowatch.swift")
+LISTEN_STATE_FILE = Path(".local") / "state" / "listen" / "current.json"
+LISTEN_MONITOR_PATTERN = "/bin/listen-update[s]( |$)"
+
+REGISTER_KEYS_CMD = "maestro-register-keys"
+NEW_PREVIEW_LINES = 30
+ITEM_PREFIX = {"update": "u", "new": "n", "bin": "b", "retired": "r", "register": "g", "orphan": "o"}
+
 
 class SyncError(Exception):
     """A failure with an exit code; the message goes to stderr."""
@@ -98,11 +144,11 @@ class SyncError(Exception):
 # Subprocess helpers
 # --------------------------------------------------------------------------
 
-def git(cwd: Path, *args: str) -> str:
+def git(cwd: Path, *args: str, input: Optional[str] = None) -> str:
     """One git call, its stdout. A non-zero exit, or git not runnable, is
     E_MIRROR with git's own message: nothing degrades into an empty result."""
     try:
-        r = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
+        r = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, input=input)
     except OSError as exc:
         raise SyncError(E_MIRROR, f"cannot run git in {cwd}: {exc}")
     if r.returncode != 0:
@@ -113,6 +159,32 @@ def git(cwd: Path, *args: str) -> str:
 
 def real(path) -> Path:
     return Path(os.path.realpath(os.path.expanduser(str(path))))
+
+
+def read_text(path: Path) -> str:
+    """The file's text with its line endings as written (no newline translation)."""
+    with open(path, encoding="utf-8", newline="") as fh:
+        return fh.read()
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def write_json_atomic(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # --------------------------------------------------------------------------
@@ -289,14 +361,568 @@ def check_plugin(mirror: Path, plugin_root: Optional[Path]) -> str:
 
 
 # --------------------------------------------------------------------------
-# plan
+# Phase 4: the instance scan
 # --------------------------------------------------------------------------
 
-def print_summary(plan: dict) -> None:
+def _under_retired(rel: str) -> bool:
+    """Whether a relative path lies on a retired path or a listen member:
+    such a file is never diffed and never lowers the version floor."""
+    for retired in RETIRED_PATHS + LISTEN_MEMBERS:
+        if rel == retired or rel.startswith(retired + "/"):
+            return True
+    return False
+
+
+def _crosses_symlink(root: Path, rel: str) -> bool:
+    """Whether the file or any folder on the way to it, below `root`, is a symlink."""
+    current = root
+    for part in Path(rel).parts:
+        current = current / part
+        if os.path.islink(current):
+            return True
+    return False
+
+
+def scan_instance(root: Path) -> List[dict]:
+    """The marked files of the four globs, each with its version (the
+    baseline when the marker carries none): no recursion, no symlink
+    following, retired paths excluded. Sorted by path."""
+    found: List[dict] = []
+    for pattern in MARKDOWN_GLOBS:
+        for match in sorted(glob.glob(os.path.join(glob.escape(str(root)), pattern))):
+            rel = os.path.relpath(match, str(root))
+            if _crosses_symlink(root, rel) or not os.path.isfile(match) or _under_retired(rel):
+                continue
+            marked, version = read_marker(match)
+            if marked:
+                found.append({"path": rel, "version": version or BASELINE_VERSION})
+    return sorted(found, key=lambda f: f["path"])
+
+
+def version_floor(scanned: List[dict]) -> Optional[str]:
+    """The lowest version across the scanned files, compared as tuples."""
+    versions = []
+    for entry in scanned:
+        try:
+            versions.append((parse_version(entry["version"]), entry["version"]))
+        except ValueError:
+            continue
+    return min(versions)[1] if versions else None
+
+
+# --------------------------------------------------------------------------
+# Phase 4b: the reverse scan of the mirror
+# --------------------------------------------------------------------------
+
+def scan_mirror_new(mirror: Path, root: Path) -> List[dict]:
+    """The mirror's tracked, marked `*.md` files outside the excluded
+    folders whose path is absent from the instance: new upstream files."""
+    pathspec = ["--", "*.md"] + [f":!:{folder}**" for folder in MIRROR_EXCLUDED]
+    listed = git(mirror, "ls-files", "-z", *pathspec).split("\0")
+    new: List[dict] = []
+    for rel in sorted(p for p in listed if p):
+        if os.path.lexists(root / rel):
+            continue
+        marked, version = read_marker(mirror / rel)
+        if marked:
+            new.append({"path": rel, "version": version or BASELINE_VERSION})
+    return new
+
+
+def new_file_preview(text: str) -> Tuple[str, int]:
+    """The first lines of a new file plus a count of the ones left out."""
+    lines = text.splitlines()
+    preview = "\n".join(lines[:NEW_PREVIEW_LINES])
+    rest = max(0, len(lines) - NEW_PREVIEW_LINES)
+    if rest:
+        preview += f"\n[... {rest} more lines]"
+    return preview, len(lines)
+
+
+# --------------------------------------------------------------------------
+# Phase 5: the changelog slice
+# --------------------------------------------------------------------------
+
+def changelog_slice(mirror: Path, floor: Optional[str], upstream: Optional[str]) -> str:
+    """The CHANGELOG entries strictly above `floor` and up to `upstream`
+    included, most recent first, as text. Empty without a changelog or
+    without a floor."""
+    changelog = mirror / "CHANGELOG.md"
+    if not changelog.is_file() or floor is None:
+        return ""
+    low = parse_version(floor)
+    high = parse_version(upstream) if upstream else None
+    entries: List[str] = []
+    current: Optional[List[str]] = None
+    for line in read_text(changelog).splitlines():
+        m = re.match(r"^##\s+(v\d{4}\.\d{2}\.\d{2}\.\d+)\b", line)
+        if m:
+            version = parse_version(m.group(1))
+            keep = version > low and (high is None or version <= high)
+            current = [line] if keep else None
+            if keep:
+                entries.append("")
+                entries.extend(current)
+            continue
+        if line.startswith("## "):
+            current = None
+            continue
+        if current is not None:
+            entries.append(line)
+    return "\n".join(entries).strip("\n")
+
+
+# --------------------------------------------------------------------------
+# Phase 5b: bin/ drift
+# --------------------------------------------------------------------------
+
+def bin_drift(mirror: Path, root: Path) -> List[dict]:
+    """Every file tracked under bin/ in the mirror that the instance lacks
+    (`missing`) or holds with another checksum (`differs`)."""
+    listed = git(mirror, "ls-files", "-z", "bin/").split("\0")
+    drift: List[dict] = []
+    for rel in sorted(p for p in listed if p):
+        target = root / rel
+        if not target.is_file():
+            drift.append({"path": rel, "state": "missing", "checksum": None,
+                          "mirror_checksum": sha256(mirror / rel)})
+            continue
+        own, theirs = sha256(target), sha256(mirror / rel)
+        if own != theirs:
+            drift.append({"path": rel, "state": "differs", "checksum": own, "mirror_checksum": theirs})
+    return drift
+
+
+# --------------------------------------------------------------------------
+# Phase 6: diffs with the tools: exemption, locally_modified
+# --------------------------------------------------------------------------
+
+def split_frontmatter(text: str) -> Optional[Tuple[List[str], List[str], str]]:
+    """(frontmatter lines, body lines, line ending) for a text opening with
+    `---`, the lines kept without their endings; None without frontmatter."""
+    ending = "\r\n" if "\r\n" in text else "\n"
+    lines = text.split(ending)
+    if not lines or lines[0].strip() != "---":
+        return None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            return lines[1:i], lines[i + 1:], ending
+    return None
+
+
+def frontmatter_groups(fm_lines: List[str]) -> List[Tuple[Optional[str], List[str]]]:
+    """The frontmatter as (key, lines) groups: a top-level `key:` line opens
+    a group and its indented or `- ` continuation lines follow it; lines
+    before the first key form a group keyed None."""
+    groups: List[Tuple[Optional[str], List[str]]] = []
+    for line in fm_lines:
+        m = re.match(r"^([A-Za-z_][\w.-]*)\s*:", line)
+        if m:
+            groups.append((m.group(1), [line]))
+        elif groups:
+            groups[-1][1].append(line)
+        else:
+            groups.append((None, [line]))
+    return groups
+
+
+def _tools_group(fm_lines: List[str]) -> Optional[List[str]]:
+    for key, lines in frontmatter_groups(fm_lines):
+        if key == "tools":
+            return lines
+    return None
+
+
+def _with_tools(text: str, tools: Optional[List[str]]) -> str:
+    """`text` with its `tools:` group replaced by `tools` (appended at the
+    end of the frontmatter when absent, dropped when `tools` is None)."""
+    parts = split_frontmatter(text)
+    if parts is None:
+        return text
+    fm, body, ending = parts
+    out: List[str] = []
+    placed = False
+    for key, lines in frontmatter_groups(fm):
+        if key == "tools":
+            if tools is not None and not placed:
+                out.extend(tools)
+                placed = True
+            continue
+        out.extend(lines)
+    if tools is not None and not placed:
+        out.extend(tools)
+    return ending.join(["---"] + out + ["---"] + body)
+
+
+def _frontmatter_dict(fm_lines: List[str]) -> Dict[Optional[str], List[List[str]]]:
+    out: Dict[Optional[str], List[List[str]]] = {}
+    for key, lines in frontmatter_groups(fm_lines):
+        out.setdefault(key, []).append(lines)
+    return out
+
+
+def diff_with_tools_exemption(inst_text: str, mirror_text: str,
+                              path: str = "") -> Tuple[Optional[str], str]:
+    """(unified diff, merged text): the merged text is the mirror's with the
+    instance's `tools:` group carried over; the diff is None when the two
+    agree once `tools:` is set aside (frontmatter compared key by key, the
+    body as is). A file without frontmatter on either side is compared whole."""
+    inst_parts = split_frontmatter(inst_text)
+    mirror_parts = split_frontmatter(mirror_text)
+    merged = mirror_text
+    if inst_parts is not None and mirror_parts is not None:
+        inst_tools = _tools_group(inst_parts[0])
+        if inst_tools is not None:
+            merged = _with_tools(mirror_text, inst_tools)
+        inst_keys = _frontmatter_dict(inst_parts[0])
+        mirror_keys = _frontmatter_dict(mirror_parts[0])
+        inst_keys.pop("tools", None)
+        mirror_keys.pop("tools", None)
+        if inst_keys == mirror_keys and inst_parts[1] == mirror_parts[1]:
+            return None, merged
+    if inst_text == merged:
+        return None, merged
+    diff = "".join(difflib.unified_diff(
+        inst_text.splitlines(keepends=True), merged.splitlines(keepends=True),
+        fromfile=f"instance/{path}", tofile=f"mirror/{path}"))
+    return diff, merged
+
+
+def last_manifest(root: Path) -> Optional[dict]:
+    """The manifest of the newest backup set, by folder stamp; None without
+    one, or when the newest can't be read."""
+    sets = sorted((root / BACKUPS_DIR).glob("*-sync"), key=lambda p: p.name, reverse=True)
+    for folder in sets:
+        manifest = folder / "manifest.json"
+        if not manifest.is_file():
+            continue
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+    return None
+
+
+def locally_modified(mirror: Path, path: str, inst_text_normalised: str,
+                     last_manifest: Optional[dict]) -> bool:
+    """Whether the instance's text (its `tools:` already set to the mirror's
+    value) matches no blob of `path` across the mirror's history. The last
+    manifest's `mirror_head` is tried first; not found anywhere is True."""
+    blob = git(mirror, "hash-object", "--stdin", input=inst_text_normalised).strip()
+    candidates: List[str] = []
+    head = (last_manifest or {}).get("mirror_head")
+    if isinstance(head, str) and SHA_RE.fullmatch(head):
+        candidates.append(head)
+    candidates.extend(sha for sha in git(mirror, "log", "--format=%H", "--", path).split() if sha)
+    if not candidates:
+        return True
+    queries = "\n".join(f"{sha}:{path}" for sha in candidates) + "\n"
+    for line in git(mirror, "cat-file", "--batch-check", input=queries).splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[1] == "blob" and fields[0] == blob:
+            return False
+    return True
+
+
+# --------------------------------------------------------------------------
+# Phase 6b: retired paths and the listen unit
+# --------------------------------------------------------------------------
+
+def marker_file(root: Path, rel: str) -> Path:
+    """The file that carries a retired path's marker: the file itself for a
+    `.md` path, SKILL.md inside a folder."""
+    target = root / rel
+    return target / "SKILL.md" if target.is_dir() else target
+
+
+def files_under(root: Path, rel: str) -> List[str]:
+    target = root / rel
+    if target.is_file():
+        return [rel]
+    found: List[str] = []
+    for dirpath, _dirs, names in os.walk(target):
+        for name in names:
+            found.append(os.path.relpath(os.path.join(dirpath, name), str(root)))
+    return sorted(found)
+
+
+def _run_proc(argv: List[str]) -> Tuple[Optional[int], str]:
+    """(return code, stdout) of a process check; (None, "") when the
+    command isn't runnable at all."""
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True)
+    except OSError:
+        return None, ""
+    return r.returncode, r.stdout
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def listen_running() -> Optional[str]:
+    """Why the listen unit can't go yet: a capture supervisor named by
+    `~/.local/state/listen/current.json` and alive with `_supervise` on its
+    command line, or an old `listen-updates` monitor found by pgrep. None
+    when neither runs."""
+    state = Path(os.path.expanduser("~")) / LISTEN_STATE_FILE
+    if state.is_file():
+        try:
+            pid = int(json.loads(state.read_text(encoding="utf-8")).get("supervisor_pid") or 0)
+        except (OSError, ValueError, AttributeError, TypeError):
+            pid = 0
+        if pid > 0 and _pid_alive(pid):
+            code, out = _run_proc(["ps", "-o", "command=", "-p", str(pid)])
+            if code == 0 and "_supervise" in out:
+                return f"capture supervisor pid {pid}, state {state}"
+    code, out = _run_proc(["pgrep", "-o", "-u", str(os.getuid()), "-f", LISTEN_MONITOR_PATTERN])
+    if code == 0 and out.strip():
+        return f"old listen-updates monitor pid {out.split()[0]}"
+    return None
+
+
+def listen_members(root: Path) -> List[dict]:
+    """The existing members of the listen unit, each with its marker."""
+    members: List[dict] = []
+    for rel in LISTEN_MEMBERS:
+        marker = marker_file(root, rel)
+        if not marker.is_file():
+            continue
+        marked, _version = read_marker(marker)
+        members.append({"path": rel, "marked": marked, "checksum": sha256(marker)})
+    return members
+
+
+def listen_unit(root: Path) -> Tuple[str, Optional[str], List[dict]]:
+    """(state, reason, members) of the listen unit: `absent` (no marked
+    member), `kept` (the skill exists without the marker: the owner's own),
+    `postponed` (a capture or an old monitor runs, the reason says which) or
+    `listed`. One process check per call."""
+    members = listen_members(root)
+    if not any(m["marked"] for m in members):
+        return "absent", None, members
+    if any(m["path"] == LISTEN_SKILL and not m["marked"] for m in members):
+        return "kept", None, members
+    reason = listen_running()
+    if reason:
+        return "postponed", reason, members
+    return "listed", None, members
+
+
+def listen_state(root: Path) -> str:
+    """The listen unit's state alone. Apply calls it again at its own time:
+    the plan's state is never trusted."""
+    return listen_unit(root)[0]
+
+
+def retired_items(root: Path) -> List[dict]:
+    """The retired paths still in the instance and marked, plus the listen
+    unit as one item when at least one of its members is marked."""
+    items: List[dict] = []
+    for rel in RETIRED_PATHS:
+        marker = marker_file(root, rel)
+        if not marker.is_file():
+            continue
+        marked, _version = read_marker(marker)
+        if not marked:
+            continue
+        items.append({
+            "kind": "retired", "path": rel, "state": "listed",
+            "members": [{"path": rel, "marked": True, "checksum": sha256(marker)}],
+            "files": files_under(root, rel),
+        })
+    state, reason, members = listen_unit(root)
+    if state != "absent":
+        files: List[str] = []
+        for member in members:
+            files.extend(files_under(root, member["path"]))
+        item = {"kind": "retired", "path": LISTEN_UNIT, "state": state, "members": members,
+                "files": files}
+        if reason:
+            item["reason"] = reason
+        items.append(item)
+    return items
+
+
+# --------------------------------------------------------------------------
+# Phase 6c: the writing register keys
+# --------------------------------------------------------------------------
+
+def register_keys_command() -> Path:
+    """`maestro-register-keys` next to this script, else on PATH."""
+    sibling = Path(__file__).resolve().parent / REGISTER_KEYS_CMD
+    if sibling.is_file():
+        return sibling
+    found = shutil.which(REGISTER_KEYS_CMD)
+    if found:
+        return Path(found)
+    raise SyncError(E_PLUGIN, f"{REGISTER_KEYS_CMD} is neither next to this command nor on PATH")
+
+
+def register_item(root: Path) -> Optional[dict]:
+    """One `register` item when `maestro-register-keys report` finds keys
+    missing from the preferences' `## Writing register` block; None when
+    the block is complete."""
+    prefs = root / PREFS_FILE
+    exe = register_keys_command()
+    try:
+        r = subprocess.run([str(exe), "report", str(prefs)], capture_output=True, text=True)
+    except OSError as exc:
+        raise SyncError(E_PLUGIN, f"cannot run {exe}: {exc}")
+    if r.returncode != 0:
+        detail = " ".join((r.stderr.strip() or r.stdout.strip()).split())
+        raise SyncError(E_PLUGIN, f"{REGISTER_KEYS_CMD} report failed (exit {r.returncode}): {detail}")
+    try:
+        report = json.loads(r.stdout)
+    except ValueError as exc:
+        raise SyncError(E_PLUGIN, f"{REGISTER_KEYS_CMD} report returned no JSON: {exc}")
+    missing = report.get("missing") or []
+    if not missing:
+        return None
+    return {"kind": "register", "path": str(PREFS_FILE), "block": report.get("block"),
+            "missing": missing, "hints": report.get("hints") or {}, "checksum": sha256(prefs)}
+
+
+# --------------------------------------------------------------------------
+# The plan
+# --------------------------------------------------------------------------
+
+def _item(kind: str, path: str, **fields) -> dict:
+    """An item with the keys every kind shares, then the kind's own."""
+    item: Dict[str, object] = {"id": None, "kind": kind, "path": path, "from": None, "to": None,
+                               "checksum": None}
+    item.update(fields)
+    return item
+
+
+def build_items(instance: Path, mirror: Path, upstream: Optional[str],
+                warnings: List[str]) -> Tuple[List[dict], List[dict]]:
+    """(scanned instance files, items) for phases 4 to 6c, ids assigned per
+    kind in the order update, new, bin, retired, register, orphan."""
+    scanned = scan_instance(instance)
+    manifest = last_manifest(instance)
+    updates: List[dict] = []
+    orphans: List[dict] = []
+    for entry in scanned:
+        rel = entry["path"]
+        inst_file, mirror_file = instance / rel, mirror / rel
+        if not mirror_file.is_file():
+            orphans.append(_item("orphan", rel, **{"from": entry["version"]}, checksum=sha256(inst_file)))
+            continue
+        inst_text, mirror_text = read_text(inst_file), read_text(mirror_file)
+        diff, _merged = diff_with_tools_exemption(inst_text, mirror_text, rel)
+        if diff is None:
+            continue
+        mirror_tools = _tools_group(split_frontmatter(mirror_text)[0]) \
+            if split_frontmatter(mirror_text) else None
+        normalised = _with_tools(inst_text, mirror_tools) if split_frontmatter(inst_text) else inst_text
+        _marked, mirror_version = read_marker(mirror_file)
+        updates.append(_item(
+            "update", rel, **{"from": entry["version"]}, to=mirror_version or upstream, diff=diff,
+            locally_modified=locally_modified(mirror, rel, normalised, manifest),
+            checksum=sha256(inst_file)))
+
+    news: List[dict] = []
+    for entry in scan_mirror_new(mirror, instance):
+        text = read_text(mirror / entry["path"])
+        preview, total = new_file_preview(text)
+        parts = split_frontmatter(text)
+        description = None
+        if parts:
+            for line in parts[0]:
+                m = re.match(r"^description:\s*(.*?)\s*$", line)
+                if m:
+                    description = m.group(1).strip().strip("\"'")
+        news.append(_item("new", entry["path"], to=entry["version"], preview=preview, lines=total,
+                          description=description))
+
+    bins: List[dict] = []
+    drift = bin_drift(mirror, instance)
+    if drift:
+        bins.append(_item("bin", "bin", files=drift))
+
+    retired = [_item(**it) for it in retired_items(instance)]
+    registers: List[dict] = []
+    reg = register_item(instance)
+    if reg is not None:
+        registers.append(_item(**reg))
+
+    items: List[dict] = []
+    for group in (updates, news, bins, retired, registers, orphans):
+        for n, item in enumerate(group, start=1):
+            item["id"] = f"{ITEM_PREFIX[item['kind']]}{n}"
+            items.append(item)
+    return scanned, items
+
+
+def build_plan(instance: Path, mirror: Path, mirror_head: str, plugin_sha: str, repo_url: str,
+               tree: dict, warnings: List[str]) -> dict:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    changelog_file = mirror / "CHANGELOG.md"
+    upstream = changelog_top_version(changelog_file) if changelog_file.is_file() else None
+    if upstream is None:
+        warnings.append(f"no version heading found in {changelog_file}: the changelog slice is empty")
+    scanned, items = build_items(instance, mirror, upstream, warnings)
+    floor = version_floor(scanned)
+    if floor is None:
+        warnings.append("no marked file found in the instance: no version floor, no changelog slice")
+    return {
+        "created_at": now.isoformat(),
+        "stamp": now.strftime("%Y%m%d-%H%M%S"),
+        "instance": str(instance),
+        "mirror": str(mirror),
+        "mirror_head": mirror_head,
+        "plugin": plugin_sha,
+        "repo_url": repo_url,
+        "versions": {"floor": floor, "upstream": upstream},
+        "worktree": tree,
+        "changelog": changelog_slice(mirror, floor, upstream),
+        "warnings": warnings,
+        "items": items,
+    }
+
+
+def item_line(item: dict) -> str:
+    kind, path = item["kind"], item["path"]
+    if kind == "update":
+        tail = f"{item['from']} -> {item['to']}" + (" (locally modified)" if item["locally_modified"] else "")
+    elif kind == "new":
+        tail = f"-> {item['to']} ({item['lines']} lines)"
+    elif kind == "bin":
+        tail = ", ".join(f"{f['path']} {f['state']}" for f in item["files"])
+    elif kind == "retired":
+        tail = item["state"] + (f": {item['reason']}" if item.get("reason") else "")
+        if item["state"] == "listed":
+            tail += " (" + ", ".join(m["path"] + ("" if m["marked"] else " kept") for m in item["members"]) + ")"
+    elif kind == "register":
+        tail = f"{len(item['missing'])} keys missing, block {item['block']}"
+    else:
+        tail = f"{item['from']} (no longer upstream: keep, archive or delete by hand)"
+    return f"{item['id']:<4} {kind:<8} {path} {tail}"
+
+
+def print_summary(plan: dict, plan_file: Path) -> None:
     print(f"INSTANCE {plan['instance']}")
     print(f"MIRROR {plan['mirror']}")
     print(f"MIRROR_HEAD {plan['mirror_head']}")
     print(f"PLUGIN {plan['plugin']}")
+    versions = plan["versions"]
+    print(f"VERSIONS {versions['floor']} -> {versions['upstream']}")
+    if plan["changelog"]:
+        print("CHANGELOG")
+        print(plan["changelog"])
+    print(f"ITEMS {len(plan['items'])}")
+    for item in plan["items"]:
+        print(item_line(item))
     tree = plan["worktree"]
     print(f"WORKTREE {tree['state']}" + (f" {tree['path']}" if tree["path"] else ""))
     for line in tree["files"][:WORKTREE_FILES_SHOWN]:
@@ -305,11 +931,12 @@ def print_summary(plan: dict) -> None:
         print(f"  {line}")
     for warning in plan["warnings"]:
         print(f"WARNING {warning}")
+    print(f"PLAN {plan_file}")
 
 
 def cmd_plan(args) -> int:
     instance = instance_root(args.instance or os.getcwd())
-    prefs = instance / "private" / "preferences.md"
+    prefs = instance / PREFS_FILE
     mirror = Path(read_pref_key(prefs, MIRROR_KEY) or os.path.expanduser(DEFAULT_MIRROR))
     worktree = read_pref_key(prefs, WORKTREE_KEY)
     tree = worktree_status(worktree)
@@ -323,19 +950,16 @@ def cmd_plan(args) -> int:
     mirror_head = refresh_mirror(mirror, repo_url, instance, worktree)
     plugin_sha = check_plugin(mirror, plugin_root)
 
-    plan: Dict[str, object] = {
-        "instance": str(instance),
-        "mirror": str(mirror),
-        "mirror_head": mirror_head,
-        "plugin": plugin_sha,
-        "repo_url": repo_url,
-        "worktree": tree,
-        "warnings": warnings,
-    }
+    plan = build_plan(instance, mirror, mirror_head, plugin_sha, repo_url, tree, warnings)
+    plan_file = instance / PLAN_FILE
+    try:
+        write_json_atomic(plan_file, plan)
+    except OSError as exc:
+        raise SyncError(E_NOT_INSTANCE, f"cannot write the plan {plan_file}: {exc}")
     if args.json:
-        print(json.dumps(plan, indent=2))
+        print(json.dumps(plan, indent=2, ensure_ascii=False))
     else:
-        print_summary(plan)
+        print_summary(plan, plan_file)
     return OK
 
 
