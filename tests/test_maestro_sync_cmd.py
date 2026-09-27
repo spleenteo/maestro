@@ -23,6 +23,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -40,10 +41,17 @@ E_USAGE = 2
 E_NOT_INSTANCE = 3
 E_MIRROR = 4
 E_PLUGIN = 5
+E_STALE = 6
+E_ITEM = 7
+E_PARTIAL = 8
+E_LOCKED = 9
 
 LISTEN_MEMBERS = (".claude/skills/listen", "bin/listen", "bin/listen-updates",
                   "bin/audiowatch.swift")
 PLAN_FILE = "private/maestro-sync.plan.json"
+LOG_FILE = "private/maestro-sync.log"
+LOCK_FILE = "private/maestro-sync.lock"
+BACKUPS_DIR = "private/backups"
 
 OLD_VERSION = "v2026.01.01.1"
 NEW_VERSION = "v2026.02.01.1"
@@ -333,6 +341,30 @@ class SyncFixture(unittest.TestCase):
         subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=wt, check=True)
         return wt
 
+    # -- apply, note and the backup set --------------------------------------
+
+    def apply(self, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+        return run_sync("apply", "--instance", str(self.instance), *args,
+                        env={**self.env, **(env or {})}, cwd=self.root)
+
+    def note(self, *args: str) -> subprocess.CompletedProcess:
+        return run_sync("note", "--instance", str(self.instance), *args, env=self.env, cwd=self.root)
+
+    def sets(self) -> list[Path]:
+        return sorted((self.instance / BACKUPS_DIR).glob("*-sync"))
+
+    def manifest(self) -> dict:
+        sets = self.sets()
+        self.assertEqual(len(sets), 1, [s.name for s in sets])
+        return json.loads((sets[0] / "manifest.json").read_text())
+
+    def log_lines(self) -> list[str]:
+        log = self.instance / LOG_FILE
+        return log.read_text().splitlines() if log.exists() else []
+
+    def item_id(self, plan: dict, path: str) -> str:
+        return next(it["id"] for it in plan["items"] if it["path"] == path)
+
 
 # ---------------------------------------------------------------------------
 # The command itself
@@ -359,7 +391,7 @@ class TestCommandShape(SyncFixture):
         self.assertIn("plan", r.stderr)
 
     def test_later_verbs_are_registered_but_not_implemented_yet(self):
-        for verb in ("apply", "note", "rollback", "backups"):
+        for verb in ("rollback", "backups"):
             with self.subTest(verb=verb):
                 r = run_sync(verb, env=self.env, cwd=self.instance)
                 self.assertEqual(r.returncode, E_USAGE)
@@ -1102,6 +1134,388 @@ class TestPlanOutput(SyncFixture):
         r = self.plan()
         for prefix in ("u1 ", "n1 ", "b1 ", "r1 ", "g1 ", "o1 "):
             self.assertIn(f"\n{prefix}", "\n" + r.stdout)
+
+
+# ---------------------------------------------------------------------------
+# apply — update and new
+# ---------------------------------------------------------------------------
+
+LOG_LINE = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z  "
+
+
+class TestApplyUpdate(SyncFixture):
+    REL = ".claude/agents/librarian.md"
+
+    def test_every_update_is_applied_with_the_mirror_text(self):
+        plan = self.plan_json()
+        r = self.apply("--kind", "update")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        for rel in MARKED_PATHS:
+            self.assertEqual((self.instance / rel).read_text(),
+                             marked_md(NEW_VERSION, description=rel, body="New body.\n"))
+        self.assertIn(f"SET {self.instance.resolve() / BACKUPS_DIR / (plan['stamp'] + '-sync')}", r.stdout)
+        for it in plan["items"]:
+            if it["kind"] == "update":
+                self.assertRegex(r.stdout, rf"(?m)^applied +{it['id']} +update +{re.escape(it['path'])}$")
+
+    def test_the_instance_tools_line_is_carried_over(self):
+        self.push_main({self.REL: marked_md(
+            NEW_VERSION, description=self.REL, body="New body.\n", tools="Read, Grep")})
+        write(self.instance / self.REL, marked_md(OLD_VERSION, description=self.REL, tools="Read, mcp__acme__*"))
+        plan = self.plan_json()
+        r = self.apply("--items", self.item_id(plan, self.REL))
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual((self.instance / self.REL).read_text(), marked_md(
+            NEW_VERSION, description=self.REL, body="New body.\n", tools="Read, mcp__acme__*"))
+
+    def test_the_log_line_names_the_versions_and_the_path(self):
+        self.plan_json()
+        self.apply("--items", "u1")
+        lines = self.log_lines()
+        self.assertEqual(len(lines), 1)
+        self.assertRegex(lines[0], LOG_LINE + re.escape(
+            f"{OLD_VERSION} → {NEW_VERSION}  {sorted(MARKED_PATHS)[0]} (applied)") + "$")
+
+    def test_a_locally_modified_item_is_skipped_by_kind(self):
+        mine = marked_md(OLD_VERSION, description="CLAUDE.md", body="Body, with my own rule.\n")
+        write(self.instance / "CLAUDE.md", mine)
+        self.plan_json()
+        r = self.apply("--kind", "update")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertIn("skipped (locally modified): CLAUDE.md", r.stderr.splitlines())
+        self.assertEqual((self.instance / "CLAUDE.md").read_text(), mine)
+        self.assertNotIn("CLAUDE.md", [it["path"] for it in self.manifest()["items"]])
+        self.assertEqual((self.instance / MARKED_PATHS[1]).read_text(),
+                         marked_md(NEW_VERSION, description=MARKED_PATHS[1], body="New body.\n"))
+
+    def test_a_locally_modified_item_is_applied_by_id(self):
+        write(self.instance / "CLAUDE.md", marked_md(OLD_VERSION, description="CLAUDE.md", body="Mine.\n"))
+        plan = self.plan_json()
+        r = self.apply("--items", self.item_id(plan, "CLAUDE.md"))
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual((self.instance / "CLAUDE.md").read_text(),
+                         marked_md(NEW_VERSION, description="CLAUDE.md", body="New body.\n"))
+
+    def test_nothing_selected_creates_no_set(self):
+        for rel in MARKED_PATHS:
+            write(self.instance / rel, marked_md(OLD_VERSION, description=rel, body=f"Mine {rel}.\n"))
+        self.plan_json()
+        r = self.apply("--kind", "update")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual(len(r.stderr.splitlines()), len(MARKED_PATHS))
+        self.assertEqual(self.sets(), [])
+        self.assertIn("nothing to apply", r.stdout)
+
+    def test_from_file_replaces_the_text_as_given(self):
+        write(self.instance / "CLAUDE.md", marked_md(OLD_VERSION, description="CLAUDE.md", body="Mine.\n"))
+        plan = self.plan_json()
+        merged = write(self.root / "merged file.md",
+                       "---\ndescription: merged by the owner\n---\n\nMerged.\n")
+        uid = self.item_id(plan, "CLAUDE.md")
+        r = self.apply("--items", uid, "--from", str(merged))
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual((self.instance / "CLAUDE.md").read_text(), merged.read_text())
+        entry = next(it for it in self.manifest()["items"] if it["id"] == uid)
+        self.assertEqual((entry["outcome"], entry["from_file"]), ("applied", str(merged)))
+        self.assertRegex(self.log_lines()[0], LOG_LINE + re.escape(
+            f"{OLD_VERSION} → {NEW_VERSION}  CLAUDE.md (applied, merged)") + "$")
+
+    def test_from_with_kind_is_refused(self):
+        self.plan_json()
+        merged = write(self.root / "merged file.md", "x\n")
+        r = self.apply("--kind", "update", "--from", str(merged))
+        self.assertEqual(r.returncode, E_USAGE)
+        self.assertIn("--from", r.stderr)
+        self.assertEqual(self.sets(), [])
+
+    def test_from_with_two_items_is_refused(self):
+        self.plan_json()
+        merged = write(self.root / "merged file.md", "x\n")
+        r = self.apply("--items", "u1,u2", "--from", str(merged))
+        self.assertEqual(r.returncode, E_USAGE)
+        self.assertIn("--from", r.stderr)
+        self.assertEqual(self.sets(), [])
+
+    def test_from_with_a_missing_file_is_refused(self):
+        self.plan_json()
+        r = self.apply("--items", "u1", "--from", str(self.root / "no such file.md"))
+        self.assertEqual(r.returncode, E_USAGE)
+        self.assertEqual(self.sets(), [])
+
+    def test_items_and_kind_together_or_neither_are_refused(self):
+        self.plan_json()
+        self.assertEqual(self.apply("--items", "u1", "--kind", "update").returncode, E_USAGE)
+        self.assertEqual(self.apply().returncode, E_USAGE)
+        self.assertEqual(self.sets(), [])
+
+    def test_a_changed_file_is_stale_and_nothing_is_written(self):
+        self.plan_json()
+        edited = marked_md(OLD_VERSION, description="CLAUDE.md", body="Edited after the plan.\n")
+        write(self.instance / "CLAUDE.md", edited)
+        r = self.apply("--kind", "update")
+        self.assertEqual(r.returncode, E_STALE)
+        self.assertIn("CLAUDE.md", r.stderr)
+        self.assertEqual((self.instance / "CLAUDE.md").read_text(), edited)
+        for rel in MARKED_PATHS[1:]:
+            self.assertEqual((self.instance / rel).read_text(), marked_md(OLD_VERSION, description=rel))
+        self.assertEqual(self.sets(), [])
+
+    def test_a_moved_mirror_head_is_stale(self):
+        self.plan_json()
+        subprocess.run(["git", "checkout", "-q", "--detach", self.mirror_src.old], cwd=self.mirror, check=True)
+        r = self.apply("--kind", "update")
+        self.assertEqual(r.returncode, E_STALE)
+        self.assertIn("mirror", r.stderr)
+        self.assertEqual(self.sets(), [])
+        self.assertEqual((self.instance / "CLAUDE.md").read_text(),
+                         marked_md(OLD_VERSION, description="CLAUDE.md"))
+
+    def test_an_unknown_id_is_refused(self):
+        self.plan_json()
+        r = self.apply("--items", "u99")
+        self.assertEqual(r.returncode, E_ITEM)
+        self.assertIn("u99", r.stderr)
+        self.assertEqual(self.sets(), [])
+
+    def test_without_a_plan_apply_is_an_item_error(self):
+        r = self.apply("--kind", "update")
+        self.assertEqual(r.returncode, E_ITEM)
+        self.assertIn("plan", r.stderr)
+
+    def test_an_orphan_is_never_applied(self):
+        write(self.instance / "howto" / "99-mine.md", marked_md(OLD_VERSION))
+        self.plan_json()
+        r = self.apply("--items", "o1")
+        self.assertEqual(r.returncode, E_ITEM)
+        self.assertTrue((self.instance / "howto" / "99-mine.md").exists())
+
+    def test_the_other_kinds_are_not_implemented_yet(self):
+        recorder_procs(self.bindir)
+        write(self.instance / "bin" / "mem", "#!/bin/sh\necho old\n", mode=0o755)
+        seed_listen(self.instance)
+        self.plan_json()
+        for item_id, kind in (("b1", "bin"), ("r1", "retired"), ("g1", "register")):
+            with self.subTest(kind=kind):
+                r = self.apply("--items", item_id)
+                self.assertEqual(r.returncode, E_ITEM)
+                self.assertIn(f"not implemented yet: {kind}", r.stderr)
+        self.assertEqual(self.sets(), [])
+
+    def test_a_kept_item_is_refused(self):
+        recorder_procs(self.bindir)
+        seed_listen(self.instance, unmarked=(".claude/skills/listen",))
+        self.plan_json()
+        r = self.apply("--items", "r1")
+        self.assertEqual(r.returncode, E_ITEM)
+        self.assertIn("kept", r.stderr)
+
+
+class TestApplyNew(SyncFixture):
+    NEW = "howto/08-markdown-discipline.md"
+
+    def setUp(self):
+        super().setUp()
+        self.push_main({self.NEW: marked_md(NEW_VERSION, description="markdown discipline", body="Rules.\n")})
+
+    def test_a_new_file_is_copied_and_logged(self):
+        self.plan_json()
+        r = self.apply("--kind", "new")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual((self.instance / self.NEW).read_text(),
+                         marked_md(NEW_VERSION, description="markdown discipline", body="Rules.\n"))
+        self.assertRegex(self.log_lines()[0], LOG_LINE + re.escape(f"— → {NEW_VERSION}  {self.NEW} (new)") + "$")
+        entry = self.manifest()["items"][0]
+        self.assertEqual((entry["kind"], entry["outcome"], entry["backups"]), ("new", "applied", []))
+
+    def test_a_new_file_whose_path_appeared_is_stale(self):
+        self.plan_json()
+        write(self.instance / self.NEW, "the owner wrote it meanwhile\n")
+        r = self.apply("--items", "n1")
+        self.assertEqual(r.returncode, E_STALE)
+        self.assertEqual((self.instance / self.NEW).read_text(), "the owner wrote it meanwhile\n")
+        self.assertEqual(self.sets(), [])
+
+    def test_from_on_a_new_item_is_refused(self):
+        self.plan_json()
+        merged = write(self.root / "merged file.md", "x\n")
+        r = self.apply("--items", "n1", "--from", str(merged))
+        self.assertEqual(r.returncode, E_USAGE)
+        self.assertFalse((self.instance / self.NEW).exists())
+
+
+# ---------------------------------------------------------------------------
+# apply — the backup set, the lock, failures
+# ---------------------------------------------------------------------------
+
+class TestBackupSet(SyncFixture):
+    def test_the_set_is_named_by_the_plan_stamp_and_holds_the_replaced_files(self):
+        plan = self.plan_json()
+        originals = {rel: (self.instance / rel).read_bytes() for rel in MARKED_PATHS}
+        self.apply("--kind", "update")
+        sets = self.sets()
+        self.assertEqual([s.name for s in sets], [f"{plan['stamp']}-sync"])
+        for rel in MARKED_PATHS:
+            self.assertEqual((sets[0] / "files" / rel).read_bytes(), originals[rel])
+
+    def test_the_manifest_records_every_outcome_and_backup(self):
+        plan = self.plan_json()
+        self.apply("--kind", "update")
+        manifest = self.manifest()
+        self.assertEqual((manifest["from"], manifest["to"], manifest["mirror_head"]),
+                         (OLD_VERSION, NEW_VERSION, self.mirror_src.main))
+        self.assertEqual(manifest["stamp"], plan["stamp"])
+        self.assertRegex(manifest["created_at"], r"^\d{4}-\d{2}-\d{2}T")
+        self.assertEqual(manifest["db"], "db/memories.db")
+        self.assertEqual([it["outcome"] for it in manifest["items"]], ["applied"] * len(MARKED_PATHS))
+        self.assertEqual([it["backups"] for it in manifest["items"]], [[p] for p in sorted(MARKED_PATHS)])
+        self.assertEqual([it["id"] for it in manifest["items"]],
+                         [f"u{i}" for i in range(1, len(MARKED_PATHS) + 1)])
+
+    def test_the_db_copy_is_a_checked_sqlite_file_in_delete_mode(self):
+        self.plan_json()
+        self.apply("--items", "u1")
+        copy = self.sets()[0] / "db" / "memories.db"
+        self.assertTrue(copy.stat().st_size > 0)
+        with sqlite3.connect(str(copy)) as conn:
+            self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertEqual(conn.execute("PRAGMA journal_mode").fetchone()[0], "delete")
+            pages = conn.execute("PRAGMA page_count").fetchone()[0]
+        with sqlite3.connect(str(self.instance / "private" / "memories.db")) as conn:
+            self.assertEqual(conn.execute("PRAGMA page_count").fetchone()[0], pages)
+
+    def test_without_a_db_the_manifest_says_null(self):
+        (self.instance / "private" / "memories.db").unlink()
+        self.plan_json()
+        r = self.apply("--items", "u1")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        manifest = self.manifest()
+        self.assertIsNone(manifest["db"])
+        self.assertFalse((self.sets()[0] / "db").exists())
+
+    def test_two_apply_runs_on_one_plan_share_one_set(self):
+        self.plan_json()
+        self.assertEqual(self.apply("--items", "u1").returncode, OK)
+        db_copy = self.sets()[0] / "db" / "memories.db"
+        first_stat = db_copy.stat()
+        self.assertEqual(self.apply("--items", "u2").returncode, OK)
+        manifest = self.manifest()
+        self.assertEqual([(it["id"], it["outcome"]) for it in manifest["items"]],
+                         [("u1", "applied"), ("u2", "applied")])
+        self.assertEqual((db_copy.stat().st_ino, db_copy.stat().st_mtime_ns),
+                         (first_stat.st_ino, first_stat.st_mtime_ns))
+        self.assertEqual(len(self.log_lines()), 2)
+
+    def test_a_failed_item_stops_the_run_and_the_manifest_shows_it(self):
+        # `howto/aa` is a plain file in the instance, so the new file below
+        # it can't be created: the first new item fails, the second stays
+        # pending, the run ends with E_PARTIAL and the set says what happened.
+        self.push_main({
+            "howto/aa/blocked.md": marked_md(NEW_VERSION, description="blocked"),
+            "howto/zz-later.md": marked_md(NEW_VERSION, description="later"),
+        })
+        write(self.instance / "howto" / "aa", "a file where a folder is needed\n")
+        self.plan_json()
+        r = self.apply("--kind", "new")
+        self.assertEqual(r.returncode, E_PARTIAL, r.stderr)
+        self.assertIn("howto/aa/blocked.md", r.stderr)
+        manifest = self.manifest()
+        outcomes = {it["path"]: it["outcome"] for it in manifest["items"]}
+        self.assertEqual(outcomes, {"howto/aa/blocked.md": "failed", "howto/zz-later.md": "pending"})
+        self.assertTrue(next(it for it in manifest["items"] if it["outcome"] == "failed")["error"])
+        self.assertFalse((self.instance / "howto" / "zz-later.md").exists())
+        self.assertEqual(self.log_lines(), [])
+        self.assertTrue((self.sets()[0] / "db" / "memories.db").is_file())
+
+    def test_a_failure_after_a_success_is_partial(self):
+        self.push_main({"howto/aa/blocked.md": marked_md(NEW_VERSION, description="blocked")})
+        write(self.instance / "howto" / "aa", "a file\n")
+        self.plan_json()
+        r = self.apply("--items", "u1,n1")
+        self.assertEqual(r.returncode, E_PARTIAL, r.stderr)
+        self.assertEqual([it["outcome"] for it in self.manifest()["items"]], ["applied", "failed"])
+        self.assertEqual(len(self.log_lines()), 1)
+
+    def test_an_existing_lock_is_refused_and_left_alone(self):
+        self.plan_json()
+        lock = write(self.instance / LOCK_FILE, "4242\n")
+        r = self.apply("--kind", "update")
+        self.assertEqual(r.returncode, E_LOCKED)
+        self.assertIn("maestro-sync.lock", r.stderr)
+        self.assertEqual(lock.read_text(), "4242\n")
+        self.assertEqual(self.sets(), [])
+        self.assertEqual((self.instance / "CLAUDE.md").read_text(),
+                         marked_md(OLD_VERSION, description="CLAUDE.md"))
+
+    def test_the_lock_is_released_after_a_failure(self):
+        self.plan_json()
+        write(self.instance / "CLAUDE.md", marked_md(OLD_VERSION, description="CLAUDE.md", body="Edited.\n"))
+        self.assertEqual(self.apply("--kind", "update").returncode, E_STALE)
+        self.assertFalse((self.instance / LOCK_FILE).exists())
+        self.assertEqual(self.apply("--items", "u2").returncode, OK)
+        self.assertFalse((self.instance / LOCK_FILE).exists())
+
+
+# ---------------------------------------------------------------------------
+# note
+# ---------------------------------------------------------------------------
+
+class TestNote(SyncFixture):
+    def setUp(self):
+        super().setUp()
+        recorder_procs(self.bindir)
+        seed_listen(self.instance)
+        self.plan_json()
+
+    def test_skipped_names_the_item(self):
+        r = self.note("u1", "--outcome", "skipped")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertRegex(self.log_lines()[0], LOG_LINE + re.escape(
+            f"{OLD_VERSION} → {NEW_VERSION}  {sorted(MARKED_PATHS)[0]} (skipped by owner)") + "$")
+
+    def test_aborted_counts_the_files_and_needs_no_id(self):
+        r = self.note("--outcome", "aborted", "--count", "3")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertRegex(self.log_lines()[0], LOG_LINE + r"ABORTED by owner after 3 files$")
+
+    def test_aborted_with_an_id_checks_it_against_the_plan(self):
+        self.assertEqual(self.note("u1", "--outcome", "aborted", "--count", "1").returncode, OK)
+        self.assertRegex(self.log_lines()[0], LOG_LINE + r"ABORTED by owner after 1 files$")
+        self.assertEqual(self.note("u99", "--outcome", "aborted", "--count", "1").returncode, E_ITEM)
+
+    def test_kept_on_the_retired_unit(self):
+        r = self.note("r1", "--outcome", "kept")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertRegex(self.log_lines()[0], LOG_LINE + re.escape(
+            f"— → {NEW_VERSION}  listen (retired, kept by owner)") + "$")
+
+    def test_kept_on_the_register_item(self):
+        r = self.note("g1", "--outcome", "kept")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertRegex(self.log_lines()[0], LOG_LINE + re.escape(
+            f"— → {NEW_VERSION}  private/preferences.md (register, kept by owner)") + "$")
+
+    def test_kept_on_an_update_is_a_usage_error(self):
+        r = self.note("u1", "--outcome", "kept")
+        self.assertEqual(r.returncode, E_USAGE)
+        self.assertEqual(self.log_lines(), [])
+
+    def test_skipped_without_an_id_is_a_usage_error(self):
+        r = self.note("--outcome", "skipped")
+        self.assertEqual(r.returncode, E_USAGE)
+        self.assertEqual(self.log_lines(), [])
+
+    def test_an_unknown_id_is_refused(self):
+        r = self.note("u99", "--outcome", "skipped")
+        self.assertEqual(r.returncode, E_ITEM)
+        self.assertEqual(self.log_lines(), [])
+
+    def test_notes_append_after_apply_lines(self):
+        self.apply("--items", "u1")
+        self.note("u2", "--outcome", "skipped")
+        lines = self.log_lines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn("(applied)", lines[0])
+        self.assertIn("(skipped by owner)", lines[1])
 
 
 if __name__ == "__main__":

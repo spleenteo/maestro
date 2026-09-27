@@ -20,8 +20,28 @@ command never asks anything.
                     marked, or the listen unit with its state), register
                     (writing register keys the preferences lack) or orphan
                     (marked here, gone upstream: reported, never removed).
-    apply           not implemented yet
-    note            not implemented yet
+    apply --items ID[,ID...] | --kind KIND [--from FILE] [--instance DIR]
+                    applies items of the last plan, after a backup set at
+                    private/backups/<stamp>-sync/ named by the plan's stamp
+                    and shared by every apply on that plan: manifest.json
+                    first, with every selected item pending, the memory db
+                    copied once per set through sqlite3's online backup and
+                    checked, every replaced file copied to files/<path>
+                    before it is touched, the manifest rewritten after each
+                    item. `update` writes the mirror text with the instance's
+                    tools: line carried over (or the text of --from FILE as
+                    given, for one item: the owner's merge); `new` copies the
+                    upstream file. --kind update leaves out the items the
+                    owner modified locally (stderr: `skipped (locally
+                    modified): <path>`); they go through --items. Every
+                    applied item appends a line to private/maestro-sync.log.
+                    The kinds bin, retired and register are not implemented
+                    yet; orphans are never applied.
+    note [ID] --outcome skipped|aborted|kept [--count N] [--instance DIR]
+                    appends to the log an outcome the skill decided: an item
+                    `(skipped by owner)`, `ABORTED by owner after N files`
+                    (no item needed), a retired path or the register keys
+                    `(kept by owner)`.
     rollback        not implemented yet
     backups         not implemented yet
 
@@ -31,6 +51,13 @@ repository URL comes from this command's own plugin root and the check
 that the loaded plugin is the installed one is skipped, with a warning.
 The plan is printed as a readable summary, or as the plan file's JSON
 with --json.
+
+`apply` holds private/maestro-sync.lock while it runs (E_LOCKED when
+another apply holds it) and refuses a stale plan (E_STALE) when the mirror's
+HEAD moved or a file no longer matches the checksum the plan recorded (for
+a new file: when its path now exists). A failed item stops the run: the
+items before it stay applied, the ones after it stay pending in the
+manifest, and the exit code is E_PARTIAL.
 
 Exit codes, always explicit, never a silent degradation:
      0  OK              done
@@ -55,6 +82,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -107,6 +135,19 @@ WORKTREE_COMMITS_SHOWN = 5
 PLAN_FILE = Path("private") / "maestro-sync.plan.json"
 BACKUPS_DIR = Path("private") / "backups"
 PREFS_FILE = Path("private") / "preferences.md"
+LOCK_FILE = Path("private") / "maestro-sync.lock"
+LOG_FILE = Path("private") / "maestro-sync.log"
+DB_FILE = Path("private") / "memories.db"
+MANIFEST_NAME = "manifest.json"
+SET_SUFFIX = "-sync"
+SET_FILES_DIR = "files"
+SET_DB_PATH = "db/memories.db"
+NO_VERSION = "—"
+
+APPLY_KINDS = ("update", "new", "bin", "retired", "register")
+APPLIED_KINDS = ("update", "new")  # T4a; bin, retired and register follow in T4b
+NOTE_OUTCOMES = ("skipped", "aborted", "kept")
+KEPT_KINDS = ("retired", "register")
 
 # Phase 4b: folders of the mirror that hold template-only or plugin-distributed
 # material, never delivered by this command.
@@ -963,6 +1004,362 @@ def cmd_plan(args) -> int:
     return OK
 
 
+# --------------------------------------------------------------------------
+# apply: the plan on disk, the lock, the log
+# --------------------------------------------------------------------------
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def log_stamp(now: Optional[datetime] = None) -> str:
+    """`2026-04-30T18:42:13Z`, the timestamp of every log line."""
+    return (now or utc_now()).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def append_log(root: Path, line: str) -> None:
+    path = root / LOG_FILE
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError as exc:
+        raise SyncError(E_NOT_INSTANCE, f"cannot append to {path}: {exc}")
+
+
+def item_log_line(item: dict, marker: str, upstream: Optional[str]) -> str:
+    """`<ISO>Z  <from> → <to>  <path> (<marker>)`, an em dash standing for a
+    version the item has none of (a new file has no `from`; a retired path
+    or the register keys take the plan's upstream as `to`)."""
+    frm = item.get("from") or NO_VERSION
+    to = item.get("to") or upstream or NO_VERSION
+    return f"{log_stamp()}  {frm} → {to}  {item['path']} ({marker})"
+
+
+def load_plan(root: Path) -> dict:
+    """The plan file of `root`, checked for its shape and its instance.
+    E_ITEM when missing, unreadable or made for another instance."""
+    plan_file = root / PLAN_FILE
+    try:
+        data = json.loads(plan_file.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SyncError(E_ITEM, f"no plan to apply ({exc}): run `maestro-sync plan` first")
+    except ValueError as exc:
+        raise SyncError(E_ITEM, f"bad plan {plan_file}: {exc}")
+    keys = ("stamp", "mirror", "mirror_head", "versions", "items")
+    if not isinstance(data, dict) or any(k not in data for k in keys) or not isinstance(data["items"], list):
+        raise SyncError(E_ITEM, f"bad plan {plan_file}: expected the keys {', '.join(keys)}")
+    if data.get("instance") != str(root):
+        raise SyncError(E_ITEM, f"the plan {plan_file} was made for {data.get('instance')}, not for {root}")
+    return data
+
+
+def plan_item(plan: dict, item_id: str) -> dict:
+    for item in plan["items"]:
+        if item.get("id") == item_id:
+            return item
+    known = ", ".join(str(it.get("id")) for it in plan["items"]) or "none"
+    raise SyncError(E_ITEM, f"unknown item {item_id}: the plan holds {known}")
+
+
+def acquire_lock(root: Path) -> Path:
+    """private/maestro-sync.lock, created with O_CREAT | O_EXCL so two applies
+    never run at once. The caller removes it in a `finally`."""
+    lock = root / LOCK_FILE
+    try:
+        fd = os.open(str(lock), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        raise SyncError(E_LOCKED, f"another apply holds {lock}: wait for it to finish, or remove "
+                                  "the file if no maestro-sync is running")
+    except OSError as exc:
+        raise SyncError(E_NOT_INSTANCE, f"cannot create {lock}: {exc}")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(f"{os.getpid()}\n")
+    return lock
+
+
+def release_lock(lock: Path) -> None:
+    try:
+        os.unlink(lock)
+    except OSError:
+        pass
+
+
+# --------------------------------------------------------------------------
+# apply: the backup set
+# --------------------------------------------------------------------------
+
+def set_dir_for(root: Path, plan: dict) -> Path:
+    return root / BACKUPS_DIR / f"{plan['stamp']}{SET_SUFFIX}"
+
+
+def write_manifest(set_dir: Path, manifest: dict, code: int = E_NOT_INSTANCE) -> None:
+    """The manifest, replaced atomically (tempfile + os.replace)."""
+    try:
+        write_json_atomic(set_dir / MANIFEST_NAME, manifest)
+    except OSError as exc:
+        raise SyncError(code, f"cannot write {set_dir / MANIFEST_NAME}: {exc}")
+
+
+def backup_db(src: Path, dest: Path) -> None:
+    """The memory db copied through sqlite3's online backup, then switched
+    to journal_mode=DELETE and checked: integrity_check ok, the same
+    page_count as the source, a non-empty file."""
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        source = sqlite3.connect(str(src))
+        try:
+            copy = sqlite3.connect(str(dest))
+            try:
+                source.backup(copy)
+                copy.execute("PRAGMA journal_mode=DELETE").fetchone()
+                verdict = copy.execute("PRAGMA integrity_check").fetchone()[0]
+                pages = (source.execute("PRAGMA page_count").fetchone()[0],
+                         copy.execute("PRAGMA page_count").fetchone()[0])
+            finally:
+                copy.close()
+        finally:
+            source.close()
+        size = dest.stat().st_size
+    except (sqlite3.Error, OSError) as exc:
+        raise SyncError(E_NOT_INSTANCE, f"cannot back up {src} to {dest}: {exc}")
+    if verdict != "ok" or pages[0] != pages[1] or size == 0:
+        raise SyncError(E_NOT_INSTANCE,
+                        f"the backup {dest} failed its check (integrity {verdict}, pages "
+                        f"{pages[0]} vs {pages[1]}, {size} bytes): nothing applied")
+
+
+def manifest_entry(item: dict) -> dict:
+    return {"id": item["id"], "kind": item["kind"], "path": item["path"], "from": item.get("from"),
+            "to": item.get("to"), "outcome": "pending", "backups": [], "from_file": None}
+
+
+def open_set(root: Path, plan: dict, selected: List[dict]) -> Tuple[Path, dict]:
+    """The backup set of this plan, created on the first apply and reused
+    by the next ones: the manifest is written first, every selected item
+    `pending`, then the db is copied once per set. Returns (set dir, manifest)."""
+    set_dir = set_dir_for(root, plan)
+    manifest_file = set_dir / MANIFEST_NAME
+    fresh = not manifest_file.is_file()
+    if fresh:
+        has_db = (root / DB_FILE).is_file()
+        manifest: Dict[str, object] = {
+            "stamp": plan["stamp"], "instance": str(root),
+            "from": plan["versions"].get("floor"), "to": plan["versions"].get("upstream"),
+            "mirror_head": plan["mirror_head"], "created_at": utc_now().isoformat(),
+            "db": SET_DB_PATH if has_db else None, "items": [],
+        }
+    else:
+        try:
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise SyncError(E_ITEM, f"bad manifest {manifest_file}: {exc}")
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("items"), list):
+            raise SyncError(E_ITEM, f"bad manifest {manifest_file}: no items list")
+    entries: List[dict] = manifest["items"]  # type: ignore[assignment]
+    by_id = {entry.get("id"): i for i, entry in enumerate(entries)}
+    for item in selected:
+        entry = manifest_entry(item)
+        if item["id"] in by_id:
+            entries[by_id[item["id"]]] = entry
+        else:
+            entries.append(entry)
+    try:
+        set_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise SyncError(E_NOT_INSTANCE, f"cannot create the backup set {set_dir}: {exc}")
+    write_manifest(set_dir, manifest)
+    if fresh and manifest["db"]:
+        dest = set_dir / SET_DB_PATH
+        try:
+            backup_db(root / DB_FILE, dest)
+        except SyncError:
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            manifest["db"] = None
+            write_manifest(set_dir, manifest)
+            raise
+    return set_dir, manifest
+
+
+def back_up_file(root: Path, set_dir: Path, rel: str) -> None:
+    """A copy of the instance file at files/<rel> inside the set."""
+    dest = set_dir / SET_FILES_DIR / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(root / rel, dest)
+
+
+# --------------------------------------------------------------------------
+# apply: the items
+# --------------------------------------------------------------------------
+
+def select_items(plan: dict, ids: Optional[List[str]], kind: Optional[str]) -> List[dict]:
+    """The items to apply: those named by id (each checked against the plan)
+    or every item of a kind, minus, for --kind update, the locally modified
+    ones, listed on stderr. E_ITEM for an orphan, a kept retired item, or a
+    kind this command doesn't apply yet."""
+    if ids:
+        candidates = []
+        for item_id in ids:
+            item = plan_item(plan, item_id)
+            if item not in candidates:
+                candidates.append(item)
+    else:
+        candidates = [it for it in plan["items"] if it.get("kind") == kind]
+    selected: List[dict] = []
+    for item in candidates:
+        if item["kind"] == "orphan":
+            raise SyncError(E_ITEM, f"{item['id']} {item['path']} is an orphan: reported, never applied")
+        if item["kind"] == "retired" and item.get("state") == "kept":
+            raise SyncError(E_ITEM, f"{item['id']} {item['path']} is kept: its skill carries no marker, "
+                                    "so nothing of it is removed")
+        if item["kind"] not in APPLIED_KINDS:
+            raise SyncError(E_ITEM, f"not implemented yet: {item['kind']} ({item['id']} {item['path']})")
+        if kind == "update" and item.get("locally_modified"):
+            print(f"skipped (locally modified): {item['path']}", file=sys.stderr)
+            continue
+        selected.append(item)
+    return selected
+
+
+def check_fresh(root: Path, plan: dict, selected: List[dict]) -> None:
+    """E_STALE when the mirror's HEAD is no longer the plan's, or a selected
+    file changed since the plan (a new file's path now exists)."""
+    mirror = Path(plan["mirror"])
+    head = git(mirror, "rev-parse", "HEAD").strip()
+    if head != plan["mirror_head"]:
+        raise SyncError(E_STALE, f"the mirror {mirror} is at {head[:12]}, the plan was made at "
+                                 f"{str(plan['mirror_head'])[:12]}: run `maestro-sync plan` again")
+    for item in selected:
+        target = root / item["path"]
+        if item["kind"] == "new":
+            if os.path.lexists(target):
+                raise SyncError(E_STALE, f"{item['path']} appeared since the plan: run `maestro-sync plan` again")
+        elif not target.is_file() or sha256(target) != item.get("checksum"):
+            raise SyncError(E_STALE, f"{item['path']} changed since the plan: run `maestro-sync plan` again")
+
+
+def apply_update(root: Path, mirror: Path, item: dict, from_bytes: Optional[bytes]) -> None:
+    """The mirror text with the instance's tools: carried over, or the
+    --from text as given, written over the instance file."""
+    target = root / item["path"]
+    if from_bytes is None:
+        _diff, merged = diff_with_tools_exemption(read_text(target), read_text(mirror / item["path"]),
+                                                  item["path"])
+        from_bytes = merged.encode("utf-8")
+    with open(target, "wb") as fh:
+        fh.write(from_bytes)
+
+
+def apply_new(root: Path, mirror: Path, item: dict) -> None:
+    target = root / item["path"]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(mirror / item["path"], target)
+
+
+def run_apply(root: Path, plan: dict, selected: List[dict], from_path: Optional[Path],
+              from_bytes: Optional[bytes]) -> int:
+    """The selected items, in order, against one backup set: each file
+    backed up before it is touched, the manifest rewritten after each
+    item, a log line per applied item. A failure stops the run."""
+    mirror = Path(plan["mirror"])
+    upstream = plan["versions"].get("upstream")
+    set_dir, manifest = open_set(root, plan, selected)
+    print(f"SET {set_dir}")
+    entries = {entry["id"]: entry for entry in manifest["items"]}
+    applied = failed = 0
+    for item in selected:
+        entry = entries[item["id"]]
+        try:
+            if item["kind"] == "update":
+                back_up_file(root, set_dir, item["path"])
+                entry["backups"] = [item["path"]]
+                write_manifest(set_dir, manifest, E_PARTIAL)
+                apply_update(root, mirror, item, from_bytes)
+                marker = "applied, merged" if from_bytes is not None else "applied"
+            else:
+                apply_new(root, mirror, item)
+                marker = "new"
+        except (OSError, UnicodeDecodeError, SyncError) as exc:
+            entry["outcome"] = "failed"
+            entry["error"] = str(exc)
+            write_manifest(set_dir, manifest, E_PARTIAL)
+            print(f"maestro-sync: {item['id']} {item['path']} failed: {exc}", file=sys.stderr)
+            print(f"failed   {item['id']:<4} {item['kind']:<8} {item['path']}")
+            failed += 1
+            break
+        entry["outcome"] = "applied"
+        entry["applied_at"] = utc_now().isoformat()
+        if from_path is not None:
+            entry["from_file"] = str(from_path)
+        write_manifest(set_dir, manifest, E_PARTIAL)
+        append_log(root, item_log_line(item, marker, upstream))
+        print(f"applied  {item['id']:<4} {item['kind']:<8} {item['path']}")
+        applied += 1
+    pending = len(selected) - applied - failed
+    print(f"RESULT applied={applied} failed={failed} pending={pending}")
+    return E_PARTIAL if failed else OK
+
+
+def cmd_apply(args) -> int:
+    ids = [i.strip() for i in (args.items or "").split(",") if i.strip()] if args.items else None
+    if bool(ids) == bool(args.kind):
+        raise SyncError(E_USAGE, "give either --items ID[,ID...] or --kind KIND")
+    from_path = from_bytes = None
+    if args.from_file:
+        if args.kind or len(ids) != 1:
+            raise SyncError(E_USAGE, "--from FILE goes with exactly one --items id, never with --kind")
+        from_path = Path(args.from_file)
+        try:
+            from_bytes = from_path.read_bytes()
+        except OSError as exc:
+            raise SyncError(E_USAGE, f"cannot read --from {from_path}: {exc}")
+    root = instance_root(args.instance or os.getcwd())
+    plan = load_plan(root)
+    lock = acquire_lock(root)
+    try:
+        selected = select_items(plan, ids, args.kind)
+        if from_path is not None and selected and selected[0]["kind"] != "update":
+            raise SyncError(E_USAGE, f"--from FILE applies to an update item, {selected[0]['id']} is "
+                                     f"{selected[0]['kind']}")
+        check_fresh(root, plan, selected)
+        if not selected:
+            print("nothing to apply")
+            return OK
+        return run_apply(root, plan, selected, from_path, from_bytes)
+    finally:
+        release_lock(lock)
+
+
+# --------------------------------------------------------------------------
+# note
+# --------------------------------------------------------------------------
+
+def cmd_note(args) -> int:
+    root = instance_root(args.instance or os.getcwd())
+    plan = load_plan(root)
+    if args.id is None and args.outcome != "aborted":
+        raise SyncError(E_USAGE, f"an item id is required for --outcome {args.outcome}")
+    if args.count is not None and args.outcome != "aborted":
+        raise SyncError(E_USAGE, "--count goes with --outcome aborted")
+    item = plan_item(plan, args.id) if args.id is not None else None
+    upstream = plan["versions"].get("upstream")
+    if args.outcome == "aborted":
+        line = f"{log_stamp()}  ABORTED by owner after {args.count or 0} files"
+    elif args.outcome == "skipped":
+        line = item_log_line(item, "skipped by owner", upstream)
+    else:
+        if item["kind"] not in KEPT_KINDS:
+            raise SyncError(E_USAGE, f"--outcome kept applies to {' or '.join(KEPT_KINDS)} items, "
+                                     f"{item['id']} is {item['kind']}")
+        line = item_log_line(item, f"{item['kind']}, kept by owner", upstream)
+    append_log(root, line)
+    print(line)
+    return OK
+
+
 def cmd_not_implemented(args) -> int:
     print(f"maestro-sync: `{args.verb}` is not implemented yet", file=sys.stderr)
     return E_USAGE
@@ -991,9 +1388,23 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true", help="print the plan as JSON")
     sp.set_defaults(func=cmd_plan)
 
-    for verb, text in (("apply", "Apply items of the last plan, after a backup set"),
-                       ("note", "Record an outcome the skill decided"),
-                       ("rollback", "Restore a backup set"),
+    sp = sub.add_parser("apply", help="Apply items of the last plan, after a backup set")
+    sp.add_argument("--items", metavar="ID[,ID...]", help="the item ids to apply, in order")
+    sp.add_argument("--kind", choices=APPLY_KINDS,
+                    help="every item of this kind (update leaves out the locally modified ones)")
+    sp.add_argument("--from", dest="from_file", metavar="FILE",
+                    help="with one --items id of kind update: write this file's text as given")
+    sp.add_argument("--instance", help="instance root (default: the current directory)")
+    sp.set_defaults(func=cmd_apply)
+
+    sp = sub.add_parser("note", help="Record in the log an outcome the skill decided")
+    sp.add_argument("id", nargs="?", help="the item (needed for skipped and kept)")
+    sp.add_argument("--outcome", required=True, choices=NOTE_OUTCOMES)
+    sp.add_argument("--count", type=int, metavar="N", help="with aborted: files applied before the stop")
+    sp.add_argument("--instance", help="instance root (default: the current directory)")
+    sp.set_defaults(func=cmd_note)
+
+    for verb, text in (("rollback", "Restore a backup set"),
                        ("backups", "List the backup sets")):
         sp = sub.add_parser(verb, help=f"{text} (not implemented yet)")
         sp.add_argument("rest", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
