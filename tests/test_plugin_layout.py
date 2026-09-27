@@ -79,6 +79,18 @@ class TestPluginJson(unittest.TestCase):
         self.assertNotIn("version", self.data)
 
 
+def _marker_scan_window(path: Path, text: str) -> str:
+    """The window the marker rules (docs/work/2026-09-27-sync-script/slices.md,
+    also plugins/maestro/bin/maestro_versions.py) actually check: a markdown
+    file's frontmatter only; any other file's first three lines only. A
+    mention past that window is never a mark, so a script whose body names
+    the marker strings by necessity — maestro-sync itself,
+    maestro_versions.py — reads clean."""
+    if path.suffix == ".md":
+        return text.split("\n---", 1)[0] if text.startswith("---") else ""
+    return "\n".join(text.splitlines()[:3])
+
+
 class TestNoOriginMarker(unittest.TestCase):
     """Plugin files carry no `origin: maestro` marker (Task 2 brief): the
     plugin distributes them, and an instance still running an old
@@ -97,15 +109,46 @@ class TestNoOriginMarker(unittest.TestCase):
                     text = path.read_text(encoding="utf-8")
                 except (UnicodeDecodeError, OSError):
                     continue
-                # Markdown: the frontmatter only, since maestro-sync's body names
-                # the marker it scans for. Every other file: the whole text.
-                if path.suffix == ".md":
-                    scanned = text.split("\n---", 1)[0] if text.startswith("---") else ""
-                else:
-                    scanned = text
+                scanned = _marker_scan_window(path, text)
                 if "origin: maestro" in scanned or "maestro_version:" in scanned:
                     offenders.append(str(path.relative_to(ROOT)))
         self.assertEqual(offenders, [])
+
+    def test_a_scripts_body_mention_past_the_first_three_lines_is_not_a_mark(self):
+        """The narrowed rule scans only the first three lines of a
+        non-markdown file: a script whose body — beyond that window —
+        documents or matches the marker strings (as maestro_versions.py
+        does) must not be flagged. The temp file lives under plugins/ for
+        the length of this test only."""
+        tmp = PLUGIN_DIR / "bin" / "_tmp_marker_body_test.py"
+        body = (
+            "#!/usr/bin/env python3\n"
+            "# a plain comment, no marker here\n"
+            "# another plain comment\n"
+            "\n"
+            "# origin: maestro\n"
+            "# maestro_version: v2026.04.29.1\n"
+        )
+        try:
+            tmp.write_text(body, encoding="utf-8")
+            scanned = _marker_scan_window(tmp, tmp.read_text(encoding="utf-8"))
+            self.assertNotIn("origin: maestro", scanned)
+            self.assertNotIn("maestro_version:", scanned)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def test_a_scripts_marker_within_the_first_three_lines_is_still_caught(self):
+        """The counterpart of the test above: the window narrows, it never
+        disappears. A marker inside the first three lines is still an
+        offender — proof the rule change didn't just turn the check off."""
+        tmp = PLUGIN_DIR / "bin" / "_tmp_marker_head_test.py"
+        body = "#!/usr/bin/env python3\n# origin: maestro\nprint(1)\n"
+        try:
+            tmp.write_text(body, encoding="utf-8")
+            scanned = _marker_scan_window(tmp, tmp.read_text(encoding="utf-8"))
+            self.assertIn("origin: maestro", scanned)
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
 class TestMaestroNetScriptPlacement(unittest.TestCase):

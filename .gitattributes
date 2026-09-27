@@ -50,3 +50,8 @@ tests/test_maestro_listen.py export-ignore
 
 # This test runs the plugin's maestro-register-keys out of plugins/.
 tests/test_maestro_register_keys.py export-ignore
+
+# This test loads plugins/maestro/bin/maestro_versions.py directly and
+# checks it against the template's own CHANGELOG.md: meaningless without
+# plugins/, absent from an archived instance.
+tests/test_maestro_versions.py export-ignore
