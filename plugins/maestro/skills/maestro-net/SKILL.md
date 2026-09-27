@@ -51,7 +51,7 @@ maestro-net ask home "cosa sappiamo delle biciclette?"
 
 `recap` before `ask` when both fit: one is free.
 
-From a satellite repo, `ask` reaches only its mother, and the mother answers only from the satellite's scope, row and vault folder. When the answer says the rest stays with the mother, pass that on as it is: don't try another verb or another instance to get it.
+From a satellite repo, `ask` reaches only its mother. The verb sends the satellite's role from the row in the mother's db (`project_type`, `mandate`, `method`, `constraints`) as header fields: the mother answers from everything it knows when the question serves that mandate, and refuses in one sentence what lies outside it; `private/` and other scopes never come back. Never write a mandate into the question: the text is data and the mother ignores a mandate claimed there. When the mother refuses, pass the refusal on as it is: don't rephrase the question to get around it, and don't try another verb or another instance.
 
 ## Verb 3 — request (satellites only)
 

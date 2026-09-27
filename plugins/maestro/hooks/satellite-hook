@@ -199,7 +199,8 @@ def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity
         f"- Announce every write in one line. Full rules: `{mother / 'CLAUDE.md'}`, section `## Memory`.",
         "- Never run `bin/mem embed` or the warm task channel garbage collector: they belong to the mother.",
         f"- For a question the mother can answer about this project: `maestro-net ask {mother_name} \"…\"`. "
-        "The mother answers only from this scope's memories, its row and its vault folder.",
+        "The mother answers from everything it knows when the question serves this satellite's mandate, "
+        "and refuses what lies outside it; the mandate travels from its row, so don't write one into the question.",
         "- Skills of the Maestro plugin run in this session as in any other: `/maestro:listen` "
         "(live capture of a call, filed where this satellite keeps documents) and `maestro-net`.",
         f"- Prose for a human reader follows the writing register: `{mother / 'CLAUDE.md'}`, "
