@@ -5,6 +5,20 @@ description: "What Maestro is and how its pieces fit: one orchestrator instance 
 
 # Maestro
 
+- [What Maestro is](#what-maestro-is)
+- [Long-term memory](#long-term-memory)
+- [Sub-apps and satellites](#sub-apps-and-satellites)
+- [Preferences](#preferences)
+- [Install and setup](#install-and-setup)
+- [Keeping an instance up to date](#keeping-an-instance-up-to-date)
+- [What's included](#whats-included)
+- [Requirements](#requirements)
+- [Going deeper](#going-deeper)
+- [Development](#development)
+- [License](#license)
+
+## What Maestro is
+
 Maestro is a template for an orchestrator built on Claude Code: an assistant with a name and a character you choose, that keeps a long-term memory of what you do, writes into your notes, and coordinates a small team of agents and skills instead of doing everything itself.
 
 You create one instance per context, and the context is whatever you decide it is:
