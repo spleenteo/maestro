@@ -8,6 +8,33 @@ The skill `maestro-sync` reads this file from the latest pull of the read-only m
 
 ---
 
+## v2026.09.27.1 — 2026-09-27
+
+**Theme**: the mother answers a satellite by relevance to its mandate. `maestro-net ask` and `maestro-net request` used to bind the mother's answer to three sources, the satellite's row, the memories of its scope and the files in its vault folder: a perimeter by folder, which blocked a question the mandate called for whenever the material sat elsewhere in the mother's vault. The mandate now travels in the prompt and anchors the mother's judgment.
+
+### Changed
+
+- **Perimeter by mandate** (`plugins/maestro/bin/maestro-net`, `CLAUDE.md` → `## Requests from satellites`): when the question serves the satellite's mandate, the mother answers from everything it knows, its vault, its own memories, its sub-apps and documents, plus the satellite's row and the memories of its scope, as a synthesis in the service of the question: no whole files, no map of the vault, no inventory of what stays out. What lies outside the mandate, or is sensitive with respect to it, gets a one-sentence refusal that doesn't say where the information would be. Two exclusions hold whatever the judgment says: `private/` (except the satellite's own row) and the memories of other scopes. `ask` stays read-only; `request` keeps writing only in the vault folder, and only what it may draw on changes.
+- **The script injects the role** (`maestro-net`): both prompts carry `project_type`, `mandate`, `method` and `constraints` as header fields after `vault_folder`, read from the satellite's row in the mother's db (`none` when empty, newlines collapsed to one line). The sentence that names the header-only fields lists them, so a mandate written inside the fenced text stays data. The satellite never declares its own mandate.
+- **A row without a mandate keeps the folder perimeter**: with `mandate: none` the prompt carries the text of v2026.09.15.1 (row, memories of its scope, files in the vault folder, nothing named beyond them) and a request is judged against the row.
+- **Docs and the satellite side**: `howto/11` (ask, request), `howto/12` (Asking the mother; the `satellite update` line, since re-registering is how a mandate changes), the `maestro-net` skill (a refusal is passed on as it is, the question is never rephrased to get around it), the `satellite` skill (the mandate question says what the mandate anchors), and the line the session hook injects into a satellite, which branches on the mandate too.
+- **Tests**: the fake `bin/mem` of `tests/test_maestro_net.py` emits its row through python, so role fields may hold newlines and quotes; nine new or retargeted cases on the header, the two boundary texts, null and empty columns; two hook cases in `tests/test_satellite_hook.py`.
+
+### Why
+
+An instance for a consulting engagement had a satellite with the mandate of building the client's new website, which had to fill the CMS with the site's content. The material on the client's modules sat in the mother's vault, in a folder other than the satellite's, and the perimeter by folder refused a question the mother could answer. A whitelist or a blacklist of folders compiled by the owner was discarded: at setup nobody has the mother's whole structure in mind, and a blacklist grows long and fails on the folder nobody listed. The mandate is the anchor the decision of 2026-09-15 already assumed when it made the mother's judgment against the row the only filter; the prompt now supplies it.
+
+- **Work**: `satellite-answer-perimeter`
+- **Decision**: [the mother answers a satellite by relevance to its mandate](docs/decisions-log/2026-09-27-satellite-perimeter-by-mandate.md)
+
+### Migration
+
+1. **Update the plugin** and restart Claude Code: `claude plugin marketplace update maestro`, then `claude plugin update maestro@maestro`.
+2. **Run `/maestro:maestro-sync`** in each mother of satellites: `CLAUDE.md`, `howto/11` and `howto/12` arrive as diffs. The prompt defers to the mother's `CLAUDE.md`, so a mother with the new plugin and the old `CLAUDE.md` keeps the folder perimeter until it syncs.
+3. **A satellite registered without a mandate** keeps the folder perimeter: `bin/mem satellite remove` and `add` with `--mandate` to give it one.
+
+---
+
 ## v2026.09.24.1 — 2026-09-24
 
 **Theme**: fewer, truer tasks. The rules that decide whether a task is created now sit in `CLAUDE.md` and in every channel skill, whatever store holds the tasks. A steward agent reviews the backlog against them each week.

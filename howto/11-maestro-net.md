@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.17.1
+maestro_version: v2026.09.27.1
 tags: [howto, maestro-net, cross-istanza, registry, skill, plugin, marketplace, chezmoi, isolamento, orchestrator]
 description: "How several Maestro instances talk to each other: the verbs `recap` and `ask`, a satellite's `request` to its mother, the `~/.claude/maestro-instances.yaml` registry and its `satellites:` block, installing `maestro-net` from the Maestro Claude Code plugin, and how a failure degrades explicitly. Reference for maestro-net."
 ---
