@@ -7,7 +7,7 @@ description: How to hire, use, and retire craft agents via the HR agent. Agents 
 
 # How to add agents and use HR
 
-An agent is a subagent of the orchestrator with its own identity, scope, and isolated context. Agents are invoked via the `Task` tool with `subagent_type: <name>`. They return their output to the orchestrator, which filters and presents it to the owner. Agents never speak directly to the owner.
+An agent is a subagent of the orchestrator with its own identity, scope, and isolated context. Agents are invoked via the `Agent` tool with `subagent_type: <name>`. They return their output to the orchestrator, which filters and presents it to the owner. Agents never speak directly to the owner.
 
 Agents are the right abstraction when:
 
@@ -38,7 +38,7 @@ version: 1
 active:
   - name: <technical-name>
     alias: <optional human name>
-    installed_at: YYYY-MM-DD
+    hired_at: YYYY-MM-DD
     version: 1.0.0
 retired: []
 ```
@@ -72,7 +72,7 @@ If you say yes:
 2. HR adds an entry to `roster.yaml` (`active`).
 3. HR reports back: *"Agent `appliances` hired."*
 
-The orchestrator can now delegate to it with `Task(subagent_type=appliances)`.
+The orchestrator can now delegate to it with `Agent(subagent_type=appliances)`.
 
 ## Using an agent once hired
 
@@ -80,7 +80,7 @@ You never invoke the agent directly. You ask the orchestrator something that mat
 
 > "How old is my dishwasher?"
 
-The orchestrator reads the roster, sees `appliances` is active, opens its file to confirm the match, then runs `Task(subagent_type=appliances, prompt="...")`. The agent does its thing and returns a result. The orchestrator synthesizes and replies to you.
+The orchestrator reads the roster, sees `appliances` is active, opens its file to confirm the match, then runs `Agent(subagent_type=appliances, prompt="...")`. The agent does its thing and returns a result. The orchestrator synthesizes and replies to you.
 
 ### Aliases
 
@@ -89,11 +89,11 @@ In the roster, an agent can have an `alias` (a human name):
 ```yaml
 - name: appliances
   alias: Max
-  installed_at: 2026-04-18
+  hired_at: 2026-04-18
   version: 1.0.0
 ```
 
-You can refer to the agent by alias in conversation (*"ask Max what's up with the dryer"*). The orchestrator resolves to the technical `name` when invoking the Task tool. When the orchestrator mentions the agent back to you, it uses the alias.
+You can refer to the agent by alias in conversation (*"ask Max what's up with the dryer"*). The orchestrator resolves to the technical `name` when invoking the Agent tool. When the orchestrator mentions the agent back to you, it uses the alias.
 
 ## Agent structure — what lives in `<name>.md`
 
@@ -124,7 +124,7 @@ Tell the orchestrator you want to retire an agent. It invokes HR; HR:
 
 1. Asks for confirmation.
 2. Moves the roster entry from `active` to `retired`, with `retired_at: YYYY-MM-DD`.
-3. Moves the file from `.claude/agents/<name>.md` to `.claude/agents/.retired/<name>.md`.
+3. Moves the file from `.claude/agents/<name>.md` to `.claude/agents/.retired/<name>.md` (creating the folder on first use; a dot-folder is not loaded as an agent).
 4. Reports back.
 
 **Retirement never deletes.** History is preserved. You can un-retire by moving files and roster entries back.

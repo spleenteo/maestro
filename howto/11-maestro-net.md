@@ -1,7 +1,7 @@
 ---
 origin: maestro
 maestro_version: v2026.09.27.1
-tags: [howto, maestro-net, cross-istanza, registry, skill, plugin, marketplace, chezmoi, isolamento, orchestrator]
+tags: [howto, maestro-net, cross-instance, registry, skill, plugin, marketplace, isolation, orchestrator]
 description: "How several Maestro instances talk to each other: the verbs `recap` and `ask`, a satellite's `request` to its mother, the `~/.claude/maestro-instances.yaml` registry and its `satellites:` block, installing `maestro-net` from the Maestro Claude Code plugin, and how a failure degrades explicitly. Reference for maestro-net."
 ---
 
@@ -30,26 +30,18 @@ claude plugin update maestro@maestro
 From any session, the skill runs as `/maestro:maestro-net` (the `<plugin>:<skill>` form every plugin skill uses), and the Bash tool can call the `maestro-net` command directly, because the plugin puts its `bin/` on the Bash tool's `PATH` while it's enabled:
 
 ```bash
-maestro-net recap home "titolo" -d "contesto" -t tag1,tag2
+maestro-net recap home "title" -d "context" -t tag1,tag2
 ```
 
 **That `PATH` entry exists only inside a Claude Code session's Bash tool.** It is not on the owner's own terminal `PATH`, and it is not on a hook process's `PATH`: hooks run outside the Bash tool's environment entirely. A hook that needs `maestro-net` calls it by full path instead, built from the variable Claude Code sets to the plugin's own root: `${CLAUDE_PLUGIN_ROOT}/bin/maestro-net`.
 
 ### Migrating from the user-level copy
 
-Instances that installed the earlier `user-skills/maestro-net` by hand (`cp -R user-skills/maestro-net ~/.claude/skills/`, per an older version of this guide) now carry two copies: the hand-copied one in `~/.claude/skills/`, and the plugin's. If `~/.claude` is managed with chezmoi, drop the old copy from chezmoi first:
-
-```bash
-chezmoi forget ~/.claude/skills/maestro-net
-```
-
-`forget` drops the entry from chezmoi's source state; the live folder stays on disk until removed by hand, which is also the only step when chezmoi isn't involved:
+Instances that installed the earlier `user-skills/maestro-net` by hand (`cp -R user-skills/maestro-net ~/.claude/skills/`, per an older version of this guide) carry two copies. Remove the hand-copied one, and drop it from any dotfile manager that tracks `~/.claude`:
 
 ```bash
 /bin/rm -rf ~/.claude/skills/maestro-net
 ```
-
-On a second machine chezmoi manages, `chezmoi forget` isn't the instruction to repeat: once the chezmoi source commit carrying this change has reached it, that machine's chezmoi source state no longer has the entry either, so `forget` has nothing left to drop there and fails. The instruction on the second machine is the plain removal above (`/bin/rm -rf ~/.claude/skills/maestro-net`) only, or skip per-machine `forget` entirely and list the path in `.chezmoiremove` in the chezmoi source directory, so `chezmoi apply` deletes the folder on every machine that applies that source state.
 
 ## The constraint
 
@@ -70,7 +62,7 @@ Enforcement, concretely: the remote command's environment is stripped of `MEM_DB
 Writes a memory into the recipient's db by invoking the recipient's own `bin/mem` with an absolute path. `bin/mem` resolves its database from the location of the script, so an instance invoked from anywhere still writes into its own db.
 
 ```bash
-maestro-net recap home "titolo" -d "contesto" -t tag1,tag2
+maestro-net recap home "title" -d "context" -t tag1,tag2
 ```
 
 The row is always tagged `from:<sender>`, which is what makes the arrival readable later. The sender is resolved in three steps: `--from` if given, otherwise the registry name of the directory the command runs from, otherwise that directory's name. The confirmation says which one applied.
@@ -82,7 +74,7 @@ No model is involved. This is the cheap verb, and the reason handoff was left ou
 Runs `claude -p` in the recipient's directory. The recipient's `CLAUDE.md`, preferences and memory apply, so the answer comes from that instance rather than from a generic model reading its files.
 
 ```bash
-maestro-net ask home "cosa sappiamo delle biciclette?"
+maestro-net ask home "what do we know about the bikes?"
 ```
 
 The prompt carries a read-only clause: answer, write nothing, open no task, call no state-changing MCP. No persistent session is opened, and nothing appears in the agent view. Default timeout 180 seconds.
@@ -141,7 +133,7 @@ The scanner works from `~/.claude/projects/`. Those directory names are slugs wh
 
 `--accepts recap` narrows what the proposal grants; `--force` overwrites an existing registry, which `--write` refuses to do on its own. `maestro-net list` shows what's currently registered, and flags any path that no longer exists on disk.
 
-The registry itself stays out of chezmoi when instance paths differ between machines; add it there only once the paths match on every machine chezmoi applies to.
+The registry holds absolute paths: sync it between machines only when the instance paths match on both.
 
 ### Adding or removing one instance
 
@@ -156,17 +148,15 @@ maestro-net register home --path /Users/you/Sites/home-instance \
 - **`--path`** must be absolute. It is stored as its real path, symlinks resolved, and compared by real path against every entry already in the registry: a name already there (case-insensitively) or a path already there (by real path, so a symlink to an already-registered instance is caught too) exits 9.
 - **`--domain`** defaults to empty and is always written double-quoted, matching the quoting `scan` already uses. A value carrying `"` or a line break can't be represented and is refused (exit 2).
 - **`--accepts`** defaults to `recap,ask`. Every value must be a verb this copy of `maestro-net` recognizes, or it's a usage error: stricter than a registry it only *reads*, where an unknown verb in `accepts` is dropped with a warning instead.
-- `register` refuses a `--path` that isn't a Maestro instance's own root: no `private/preferences.md` and `bin/mem` there is the same signature check the scanner applies, in its own function so a later satellite-entry command can register a project root without it.
+- `register` refuses a `--path` that isn't a Maestro instance's own root (no `private/preferences.md` and `bin/mem` there), the same signature check the scanner applies.
 
-The entry lands with the same field order and indentation `render_registry` uses (`path`, then `domain`, then `accepts`), inserted at the end of the `instances:` block. Every other line in the file, including comments and the other instances' `domain` and `accepts`, is untouched: `register` edits the text surgically rather than reparsing and rewriting the whole registry the way `scan --write` does.
-
-`unregister <name>` removes one instance the same surgical way. An unknown name resolves like everywhere else in this tool (exit 5, known names listed in the error).
+The entry lands at the end of the `instances:` block, with the fields in the order `path`, `domain`, `accepts`. Every other line in the file, comments and the other instances' `domain` and `accepts` included, stays as it was. `unregister <name>` removes one instance the same way; an unknown name exits 5 with the known names listed.
 
 ```bash
 maestro-net unregister home
 ```
 
-Both assume a single writer: nothing locks the registry file, so two `register`/`unregister` calls racing on it can each read before the other writes, and the second write silently loses the first's change.
+Both write the file atomically, but neither locks it: two calls racing on the registry can each read before the other writes, and the second write loses the first's change.
 
 ### Satellites
 

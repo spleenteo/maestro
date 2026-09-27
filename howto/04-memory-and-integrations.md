@@ -76,14 +76,14 @@ Just ask the orchestrator in natural language: *"what did I do yesterday?"*, *"o
 
 ## CLI helper — `bin/mem`
 
-The repo ships a small Python CLI at `bin/mem` that wraps the common operations on `memories.db`. It's the preferred layer the orchestrator uses for everyday reads and writes: see `CLAUDE.md` → `## Memory` → "Commands" / "Reports" for the full surface.
+The repo ships a small Python CLI at `bin/mem` that wraps the common operations on `memories.db`. It's the preferred layer the orchestrator uses for everyday reads and writes: see `bin/mem --help` for the full surface and `CLAUDE.md` → `## Memory` for how the orchestrator uses it.
 
 Why it exists:
 
 - **No more escape errors** on apostrophes/accents/quotes: the CLI uses parameterized SQL under the hood, you never build query text by hand.
 - **Relative dates**: `--due tomorrow`, `--date +3d`, `--since yesterday`. Resolved to ISO inside the CLI.
 - **Early-morning rule**: between 00:00 and 06:00 local time, a missing `--date` resolves to *yesterday*, matching how the lived day is attributed in the memory log.
-- **Read options**: `today --date DAY [--to DAY]` reads one day or an inclusive range; `todo --due-until DAY` limits open tasks to those due by a day; `search --completed-since DAY --completed-until DAY` filters on `completed_date` (rows without one drop out); `search --limit 0` lifts the row cap on keyword search. `--semantic` refuses `--limit 0` and the `--completed-since`/`--completed-until` filters (exit code 2); see `howto/09-memoria-semantica.md`.
+- **Read options**: `today --date DAY [--to DAY]` reads one day or an inclusive range; `todo --due-until DAY` limits open tasks to those due by a day; `search --completed-since DAY --completed-until DAY` filters on `completed_date` (rows without one drop out); `search --limit 0` lifts the row cap on keyword search. `--semantic` refuses `--limit 0` and the `--completed-since`/`--completed-until` filters (exit code 2); see `howto/09-semantic-memory.md`.
 - **Bulk writes**: `mem save --bulk` reads a JSON array from stdin and inserts every row in a single SQLite transaction. Useful when archiving many rows at once (e.g., flushing an external task store into the cold layer).
 - **Markers**: `mem marker get|set <name>` provides a named upsert for watermarks and sync cursors.
 - **JSON-by-pipe**: when stdout is not a TTY, output is compact JSON for consumption by the orchestrator; on TTY it's a human-readable table.

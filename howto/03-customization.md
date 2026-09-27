@@ -142,7 +142,11 @@ How the orchestrator should talk:
 
 This is also where the orchestrator will propose additions over time when it picks up on patterns in how you actually work.
 
-### 9. Notes
+### 9. Available apps, Warm task channel, Writing register
+
+Three blocks other parts of the system fill or read: `## Available apps` is written by the `add-external-app` skill (one row per sub-app, with its `access`); `## Warm task channel` declares an external task manager, per `howto/07-warm-task-channel.md`; `## Writing register` holds the prose values (tones, voice, sign-off, translation), per `howto/10-writing-register.md`. Edit them by hand when a value changes; the structure of each is described in `preferences.example.md`.
+
+### 10. Notes
 
 Free-form, for anything that doesn't fit the blocks above.
 

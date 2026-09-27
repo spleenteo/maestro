@@ -186,7 +186,7 @@ Walk the instance's repository (`<instance-path>`) and collect files with `origi
 - `.claude/agents/*.md`
 - `howto/*.md`
 
-Leave out every file under a retired path of Phase 6b (`.claude/skills/maestro-sync/`, `.claude/skills/setup/`, `.claude/skills/.disabled/setup/`, `.claude/skills/listen/`): they are never diffed and never lower the version floor.
+Leave out every file under a retired path of Phase 6b (`.claude/skills/maestro-sync/`, `.claude/skills/setup/`, `.claude/skills/.disabled/setup/`, `.claude/skills/listen/`, `howto/09-memoria-semantica.md`): they are never diffed and never lower the version floor.
 
 For each match, read the file's `maestro_version` value. Build a list:
 
@@ -406,7 +406,7 @@ Some paths Maestro once distributed are gone upstream, and a sync can't see them
 INSTANCE="<instance-path>"
 marked() {
   case "$1" in
-    */SKILL.md) awk 'NR==1 && !/^---$/{exit} /^---$/{n++; if(n==2) exit; next} {print}' "$1" | grep -q '^origin: maestro$' ;;
+    *.md) awk 'NR==1 && !/^---$/{exit} /^---$/{n++; if(n==2) exit; next} {print}' "$1" | grep -q '^origin: maestro$' ;;
     *) head -n 3 "$1" | grep -Eq '^(#|//) origin: maestro$' ;;
   esac
 }
@@ -429,8 +429,8 @@ listen_running() {
   fi
   return 1
 }
-for p in .claude/skills/maestro-sync .claude/skills/setup .claude/skills/.disabled/setup user-skills/maestro-net; do
-  f="$INSTANCE/$p/SKILL.md"
+for p in .claude/skills/maestro-sync .claude/skills/setup .claude/skills/.disabled/setup user-skills/maestro-net howto/09-memoria-semantica.md; do
+  case "$p" in *.md) f="$INSTANCE/$p" ;; *) f="$INSTANCE/$p/SKILL.md" ;; esac
   if [ -f "$f" ] && marked "$f"; then
     echo "retired $p"
     find "$INSTANCE/$p" -type f | sed "s|^$INSTANCE/|    |"
@@ -482,7 +482,7 @@ set -eo pipefail
 INSTANCE="<instance-path>"
 RETIRED="<retired-path>"
 case "$RETIRED" in
-  .claude/skills/maestro-sync|.claude/skills/setup|.claude/skills/.disabled/setup|user-skills/maestro-net|listen) ;;
+  .claude/skills/maestro-sync|.claude/skills/setup|.claude/skills/.disabled/setup|user-skills/maestro-net|listen|howto/09-memoria-semantica.md) ;;
   *) echo "Refusing to remove '$RETIRED': not a retired path." >&2; exit 2 ;;
 esac
 if [ ! -f "$INSTANCE/private/preferences.md" ] || [ ! -f "$INSTANCE/bin/mem" ]; then
@@ -492,7 +492,7 @@ fi
 if [ "$RETIRED" = "listen" ]; then
   marked() {
     case "$1" in
-      */SKILL.md) awk 'NR==1 && !/^---$/{exit} /^---$/{n++; if(n==2) exit; next} {print}' "$1" | grep -q '^origin: maestro$' ;;
+      *.md) awk 'NR==1 && !/^---$/{exit} /^---$/{n++; if(n==2) exit; next} {print}' "$1" | grep -q '^origin: maestro$' ;;
       *) head -n 3 "$1" | grep -Eq '^(#|//) origin: maestro$' ;;
     esac
   }

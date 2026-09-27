@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # origin: maestro
 # maestro_version: v2026.07.16.2
-"""mem — CLI wrapper su memories.db.
+"""mem: the CLI over memories.db.
 
-Riduce verbosity, escape, error-rate delle scritture SQL grezze da parte
-dell'orchestrator. Output table su TTY, JSON su pipe.
-Path db: env MEM_DB > <repo>/private/memories.db (auto-detect dal path dello script).
+It spares the orchestrator the verbosity, the escaping and the error rate of
+raw SQL writes. Output: a table on a TTY, JSON on a pipe.
+Db path: env MEM_DB, else <repo>/private/memories.db, found from the script's own path.
 """
 
 from __future__ import annotations

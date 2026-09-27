@@ -26,7 +26,7 @@ It is Python, stdlib only, no network beyond what `claude` itself does.
 Writes a memory into the recipient's `memories.db`, invoking the recipient's own `bin/mem` with an absolute path. No model involved, so the cost is zero.
 
 ```bash
-maestro-net recap home "titolo della memoria" \
+maestro-net recap home "memory title" \
   -d "contesto lungo, opzionale" -t tag1,tag2
 ```
 
@@ -42,7 +42,7 @@ Report to the owner in one line what was written and to whom, the same disciplin
 Runs `claude -p` in the recipient's directory, so their `CLAUDE.md`, their preferences and their memory apply, then reports the answer. No persistent session is opened.
 
 ```bash
-maestro-net ask home "cosa sappiamo delle biciclette?"
+maestro-net ask home "what do we know about the bikes?"
 ```
 
 - The prompt carries a read-only clause: answer, write nothing, open no task, call no state-changing MCP.

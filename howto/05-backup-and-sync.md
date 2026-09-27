@@ -101,11 +101,11 @@ If you have a project that lives elsewhere on your filesystem and you want the o
 /add-external-app
 ```
 
-It asks five questions (path, name, one-line description, trigger keywords, and access: read-only or read-write) and then:
+It asks six questions (path, name, one-line description, trigger keywords, access: read-only or read-write, and an optional notes folder in the vault) and then:
 
 1. Creates the symlink `apps/<name>/` → the target path.
 2. Generates a pointer skill at `.claude/skills/<name>/SKILL.md` with a frontmatter `description` rich in trigger phrases: that description is what lets the orchestrator automatically recognize when a request is relevant to this app.
-3. Updates the "Available apps" table in `CLAUDE.md` (replacing the placeholder row on the first registration, appending afterwards).
+3. Updates the "Available apps" table in `private/preferences.md` (replacing the placeholder row on the first registration, appending afterwards).
 4. Logs a memory entry.
 
 The reason for the pointer skill: a symlink in `apps/` alone is invisible to the orchestrator. Skills are the trigger mechanism Claude Code uses at session start; a description like *"Use when the user mentions posts, drafts, publishing, SEO for the blog"* is what actually cues a match.
@@ -148,7 +148,7 @@ The skill body is almost empty on purpose. The whole value is in the `descriptio
 
 ### Removing a registered app
 
-There's no `/remove-external-app` skill yet. To do it by hand: remove the symlink from `apps/`, delete `.claude/skills/<name>/`, and drop the row from `CLAUDE.md`'s "Available apps" table. If this becomes a frequent need, promote it to a skill.
+There's no `/remove-external-app` skill yet. To do it by hand: remove the symlink from `apps/`, delete `.claude/skills/<name>/`, and drop the row from the "Available apps" table in `private/preferences.md`. If this becomes a frequent need, promote it to a skill.
 
 ## Symlinking third-party skills or agents
 

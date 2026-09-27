@@ -4,11 +4,9 @@ setup_completed: false
 
 # Preferences
 
-This file is the **single source of truth** for the orchestrator's identity and the owner's profile. It's loaded at **every session start**, so anything you want the orchestrator to know about you and your world should live here.
+The orchestrator's identity and the owner's profile, loaded at every session start. `/maestro:new-instance` fills in the essentials (identity, nick, role, context, file territories); team details, objectives, integrations, communication preferences and work rhythms are added over time, by you or on the orchestrator's proposal.
 
-The `new-instance` skill fills in the **essentials** at first launch (identity, nick, role, context, file territories). Everything else — team details, objectives, integrations, communication preferences, work rhythms — is meant to be **added and expanded over time**. The more context the orchestrator has, the better it can help you: be generous here, it pays off.
-
-**Do not commit this file** once filled — it lives in `private/` which is gitignored.
+This file lives in `private/`, which is gitignored: never commit it.
 
 ---
 
@@ -91,7 +89,7 @@ Sub-apps connected to this instance via the `add-external-app` skill. The `Acces
 |-------|------|---------|--------|
 | — | — | No app connected yet | — |
 
-Each sub-app may also declare a dedicated notes territory in its pointer skill (`apps/<name>/.claude/skills/<name>/SKILL.md`), which counts as an additional write territory scoped to that sub-app.
+Each sub-app may also declare a dedicated notes territory in its pointer skill (`.claude/skills/<name>/SKILL.md`, the `notes_dir` line), which counts as an additional write territory scoped to that sub-app.
 
 ---
 
@@ -109,7 +107,7 @@ Declare only what applies. Optional at setup time, add as you go.
 
 *Optional.* If you use an external task manager (Acme, Basecamp todos, Todoist, Linear, custom) as the source of truth for live tasks, declare it here. The orchestrator will run a **lazy garbage collector** at session start that archives done tasks from the warm layer into `memories.db` and updates a watermark. See `howto/07-warm-task-channel.md` for the full pattern.
 
-If you don't use an external task manager, **skip this section entirely** (or set `channel: none`) — the orchestrator will use `type='task'` in `memories.db` as documented in [04 — Memory and integrations](../howto/04-memory-and-integrations.md).
+If you don't use an external task manager, **skip this section entirely** (or set `channel: none`) — the orchestrator will use `type='task'` in `memories.db` as documented in `howto/04-memory-and-integrations.md`.
 
 ```yaml
 channel: <acme | basecamp | todoist | linear | none>
@@ -166,8 +164,6 @@ translation:
 avoid_words: []               # words you never want to see, e.g. [genuinely, leverage]
 ```
 
-The prohibitions: 1 meta-commentary, 2 sycophantic concessions, 3 negative parallelism, 4 em dash as a pause, 5 bold as emphasis, 6 rhythmic triads, 7 judgment as tone of voice. Tones: friendly (first name, contractions, a light personal line), professional (first name, contractions, no jokes), formal (surname and title, no contractions), neutral (no address).
-
 Keep the block fenced: a satellite session receives this section through the plugin's identity extract, and a bare line such as `--` in a sign-off would close the section early.
 
 ---
@@ -180,6 +176,4 @@ Free-form section for anything else the orchestrator should remember that doesn'
 
 ## How to expand this file
 
-When the orchestrator proposes to add new context (a team member, a new objective, a changed preference), it will ask you — don't expect it to edit silently. You can also add things yourself directly: just keep the structure above recognizable, and the orchestrator will pick up the new info at the next session start.
-
-If you want a section the template doesn't cover, add it. This file is yours.
+The orchestrator adds a durable fact on its own only as a new row (a person, an adopted tool) and announces it; it proposes every change to an existing line and asks before removing or restructuring anything. You can edit this file directly at any time: keep the structure above recognizable, and the next session start picks it up. A section the template doesn't cover can be added.

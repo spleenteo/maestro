@@ -4,7 +4,7 @@
 # answers. Read at every invocation: a change here takes effect without
 # re-installing the agent.
 #
-# Matrix default ships with only `memories_db` active. Everything else is
+# The template ships with only `memories_db` active. Everything else is
 # commented — a placeholder that shows the shape for common cases. See
 # `howto/06-configure-cal.md` for how to activate channels and what each
 # access shape (tool / skill / mcp / config_refs) means.
@@ -21,7 +21,7 @@ channels:
   memories_db:
     purpose: >
       The orchestrator's memory log — tasks, memories, and ideas recorded
-      proactively during conversations. Always present in every matrix
+      proactively during conversations. Always present in every
       instance. Read for every `question_type`.
     access:
       tool: bin/mem
@@ -97,7 +97,7 @@ channels:
 # Each declares which channels to query, how to group the output, and
 # whether to include routines from `private/routines.yaml`.
 #
-# The matrix ships all seven routed through `memories_db` only; as you
+# The template ships all seven routed through `memories_db` only; as you
 # activate more channels, add their names to the relevant lists.
 
 question_types:

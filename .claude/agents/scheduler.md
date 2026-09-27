@@ -50,7 +50,7 @@ For each request from the orchestrator:
 
 Every channel's access shape is declared in `channels.yaml`. Dispatch by `access.tool` / `access.skill` / `access.mcp`.
 
-### `memories_db` (always present, matrix default)
+### `memories_db` (always present)
 
 Database `private/memories.db`, table `log`, reached only through `bin/mem` — Cal never opens the db file itself. The scheduler always runs in the mother and reads every scope, tagging each item with its scope so mother rows and satellite rows stay distinguishable.
 
@@ -174,11 +174,7 @@ Same structured format as prospectives/retrospectives. The orchestrator handles 
 
 ## Writing register
 
-The prose in your reports follows the writing register, because the orchestrator's synthesis inherits the shape of its source. The two that bite hardest on a structured list: no meta-commentary (`⚠️` flags carry a fact, never a comment on the list itself), and no judgment as tone of voice ("three tasks past due since 2026-08-04" instead of "the backlog is in bad shape"). The others hold too: no negative parallelism, no em dash as a pause, no bold as emphasis, no rhythmic triads.
-
-Domain: synthesis. One line per fact, past participle first in Italian and past-tense verb first in English, no opening or closing, no adjectives; the tone is neutral.
-
-Condensed rules: `CLAUDE.md` → `## Writing register`. Full reference: `howto/10-writing-register.md`.
+Domain: synthesis, neutral tone. One line per fact, past participle first in Italian and past-tense verb first in English, no opening or closing, no adjectives. A `⚠️` flag carries a fact, never a comment on the list ("three tasks past due since 2026-08-04", never "the backlog is in bad shape"). The rules in full: `.claude/skills/writing-register/SKILL.md`.
 
 ## Never
 

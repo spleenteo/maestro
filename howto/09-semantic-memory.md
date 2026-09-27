@@ -20,7 +20,7 @@ bin/mem embed --rebuild           # vectorize the whole db (minutes)
 
 ## How it works
 
-- Vectors live in `log_vec`, a plain additive table inside `memories.db`, self-creating on first use. `log` itself carries a `scope` column since V1 (see Scope below), migrated in by `bin/mem_schema.py` and already present in `memories.db.template`.
+- Vectors live in `log_vec`, a plain additive table inside `memories.db`, self-creating on first use. `log` itself carries a `scope` column (see Scope below), migrated in by `bin/mem_schema.py` and already present in `memories.db.template`.
 - A row needs (re)embedding when its content hash no longer matches: inserts and updates are picked up automatically by the next `bin/mem embed`.
 - Embeddings are **derived data**: a pure function of (text, model). They travel inside the .db file, and can always be rebuilt from scratch with `bin/mem embed --rebuild`. Changing machine loses nothing: reinstall Ollama, re-pull the model, done.
 - Writes never wait for embeddings. Run `bin/mem embed` opportunistically (session start, alongside the warm-channel GC).
@@ -36,27 +36,21 @@ bin/mem dupes [--min-score 0.85]          # duplicate candidates for hygiene
 
 ## Vault index (chunked)
 
-Oltre a `memories.db`, il layer indicizza il vault markdown, spezzato per
-sezione (heading `##`/`###`). I vettori vivono in `vault_vec` (additiva,
-self-creating come `log_vec`); i `.md` restano l'unica fonte di verità: il db
-tiene solo vettore + `path#anchor` + snippet.
+Besides `memories.db`, the layer indexes the markdown vault, split by section (`##`/`###` headings). The vectors live in `vault_vec` (additive, self-creating like `log_vec`); the `.md` files stay the only source of truth: the db holds the vector, `path#anchor` and a snippet.
 
 ```bash
-# la radice arriva da --root (ripetibile) o env MEM_VAULT_ROOTS
-MEM_VAULT_ROOTS="$VAULT" bin/mem embed          # memorie + vault, incrementale
-bin/mem embed --root "$VAULT"                   # equivalente, esplicito
-bin/mem search "…" --semantic                   # classifica fusa memoria+vault
-bin/mem search "…" --semantic --only vault      # solo il vault
+# the root comes from --root (repeatable) or env MEM_VAULT_ROOTS
+MEM_VAULT_ROOTS="$VAULT" bin/mem embed          # memories + vault, incremental
+bin/mem embed --root "$VAULT"                   # the same, explicit
+bin/mem search "…" --semantic                   # one ranking, memories + vault
+bin/mem search "…" --semantic --only vault      # the vault only
 ```
 
-- **Esclusioni:** `<vault_root>/.mem-ignore`, stile `.gitignore` (un pattern per
-  riga; `Diario/`, `*.excalidraw`, `!eccezione`). Le dot-directory sono sempre
-  saltate. Il file è dell'istanza, non del template.
-- **Colonne di output:** `source` (`memory`/`vault`), `ref` (`#id` o
-  `path#sezione`), `title`/heading, `score`, `snippet`.
-- **Anti-sommersione:** `--vault-frac` (default 0.6) limita la quota di risultati
-  vault; `--min-score` taglia i vicini deboli.
-- **Degrade:** invariato (exit 3). Radice assente → `embed` fa solo le memorie.
+- **Exclusions:** `<vault_root>/.mem-ignore`, `.gitignore` style (one pattern per line; `Journal/`, `*.excalidraw`, `!exception`). Dot-folders are always skipped, and symlinks are never followed. The file belongs to the instance, never to the template.
+- **Several roots:** `--root` repeats; each chunk is keyed by its root, so two vaults holding a note at the same relative path don't collide.
+- **Output columns:** `source` (`memory`/`vault`), `ref` (`#id` or `path#section`), `title`/heading, `score`, `snippet`.
+- **Flood control:** `--vault-frac` (default 0.6) caps the share of vault hits; `--min-score` drops the weak neighbours.
+- **Degradation:** unchanged (exit 3). Without a root, `embed` vectorizes the memories only.
 
 ## Scope (satellites)
 
@@ -95,7 +89,7 @@ curl -s localhost:11434/api/version # one-shot health check
 
 ## Evolution markers
 
-Watch for these; full rationale in the design doc (instance vault, Progetti/Maestro):
+Watch for these:
 
 - **To vec0 KNN indexes** (scale): semantic search repeatedly >~500ms warm, or corpus >~30-50k rows, or full rebuild >~15 min.
 - **To FTS5 hybrid** (quality): systematic misses on exact terms (codes, serials, proper nouns) or recurring "exact word + concept" queries.

@@ -24,7 +24,7 @@ Cal reads `channels.yaml` on every invocation, so changes take effect without to
 
 ## The grammar: `question_types`
 
-Cal classifies every request into one of seven `question_types`. Each type declares which channels to query, how to group the output, and whether to include routines. The matrix ships all seven routed through `memories_db` only:
+Cal classifies every request into one of seven `question_types`. Each type declares which channels to query, how to group the output, and whether to include routines. The template ships all seven routed through `memories_db` only:
 
 | `question_type` | Covers | Grouping | Includes routines? |
 |---|---|---|:---:|
@@ -111,7 +111,7 @@ Timezone for these events is resolved at runtime from your `preferences.md` `tim
 
 ### Mix and match
 
-A matrix instance can have any combination of channels across the three access flavors. The owner-authoritative pattern is:
+An instance can have any combination of channels across the three access flavors. The owner-authoritative pattern is:
 
 1. Install the tool/skill/MCP.
 2. Declare the channel in `channels.yaml` pointing at it.

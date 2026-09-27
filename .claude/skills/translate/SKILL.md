@@ -13,18 +13,7 @@ Two versions of the owner's draft in the target language, and nothing else. The 
 
 Read `translation` in the `## Writing register` block: `private/preferences.md` in an instance, the `# Satellite session` context (under `## Identity (from the mother instance)`) in a satellite. A request about interface strings, code or the files of a software project is not a draft: answer it as ordinary chat without loading anything else here. If `enabled` is missing or false, say in one line that translation is off in this instance (`translation.enabled` in the `## Writing register` block turns it on) and answer the request as ordinary chat. Nothing below applies.
 
-Keys and defaults:
-
-```yaml
-translation:
-  enabled: false
-  pair: ""                    # e.g. "it -> en": source language -> target language
-  new_context_marker: ""      # e.g. "Ciao,": a draft opening with it starts a fresh translation
-  source_words_max: 1         # source-language words allowed per text, only when they add warmth
-  labels: [Translation, More polished version]
-communication:
-  sign_off: ""                # appended to both versions only when set
-```
+The keys you read: `translation.enabled`, `translation.pair` (source language `->` target language), `translation.new_context_marker` (a draft opening with it starts a fresh translation), `translation.source_words_max` (source-language words allowed per text, only when they add warmth), `translation.labels` (the two version labels) and `communication.sign_off` (appended to both versions only when set). Defaults and the whole block: `.claude/skills/writing-register/SKILL.md` → "Where the values come from".
 
 ## Rules
 

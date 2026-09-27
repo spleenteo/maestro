@@ -71,7 +71,7 @@ Pass A wins over pass B: a lapsed row gets closed, not grouped.
 
 ## Pass C: true duplicates versus recurring occurrences
 
-`bin/mem dupes` without filters returns mostly noise, because the warm channel's garbage collector archives every occurrence of a recurring task as a new row. In one instance, 35 of the top 50 pairs had both rows tagged with the instance's `archive_tag`: distinct occurrences of the same recurring task, archived on different days. A tag such as `recurring` doesn't isolate them, because few archive rows carry it.
+`bin/mem dupes` without filters returns mostly noise, because the warm channel's garbage collector archives every occurrence of a recurring task as a new row. Most of the top pairs are then two rows tagged with the instance's `archive_tag`: distinct occurrences of the same recurring task, archived on different days. A tag such as `recurring` doesn't isolate them, because few archive rows carry it.
 
 Criteria, in order:
 
@@ -201,11 +201,7 @@ Invoked by hand by the orchestrator, once a week, never on Monday. No marker and
 
 ## Writing register
 
-Declared domain: **synthesis**, not inherited. One line per fact, past-tense verb first, no opening or coda, no evaluative adjectives, neutral tone.
-
-The prohibitions that bite hardest on this output: no meta-commentary on the list (a `⚠️` carries a fact), no judgment as tone of voice ("12 rows open for more than 90 days" instead of "the backlog is in bad shape"). The others hold too: no negative parallelism, no em dash as a pause, no bold as emphasis, no rhythmic triads.
-
-Rules condensed in `CLAUDE.md` → `## Writing register`. Full reference: `howto/10-writing-register.md`.
+Domain: synthesis, neutral tone. One line per fact, past-tense verb first, no opening or coda, no evaluative adjectives. A `⚠️` carries a fact, never a comment on the list ("12 rows open for more than 90 days", never "the backlog is in bad shape"). The rules in full: `.claude/skills/writing-register/SKILL.md`.
 
 ## Never
 

@@ -19,7 +19,7 @@ Practical guides for extending and customizing your orchestrator after setup. Re
 | 06 | [Configure Cal](06-configure-cal.md) | Configure the `scheduler` agent (Cal): add data channels (task trackers, calendars), write routines, understand the seven `question_types` |
 | 07 | [Warm task channel](07-warm-task-channel.md) | Wire an external task manager (Acme, Basecamp todos, etc.) as the warm layer, with `memories.db` as cold layer and a lazy GC at session start |
 | 08 | [Markdown discipline](08-markdown-discipline.md) | Frontmatter, YAML safety, wikilinks and search-from-frontmatter rules for every markdown file |
-| 09 | [Semantic memory](09-memoria-semantica.md) | Optional semantic layer over `memories.db` and the vault: setup, commands, scope rules |
+| 09 | [Semantic memory](09-semantic-memory.md) | Optional semantic layer over `memories.db` and the vault: setup, commands, scope rules |
 | 10 | [Writing register](10-writing-register.md) | The seven prose prohibitions, the domains and their tones, the per-instance values, the post-pass and `bin/register-check` |
 | 11 | [maestro-net](11-maestro-net.md) | The channel between several instances: `recap`, `ask`, the machine registry |
 | 12 | [Satellites](12-satellites.md) | Attach a project repo to an instance: the `satellite` skill, session hooks, vault folder, removal |

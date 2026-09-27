@@ -138,15 +138,9 @@ The db is the starting point, not the text of the note. It needs *interpretation
 
 ## Writing register
 
-The note is prose for a human reader, so it follows the writing register: no meta-commentary on the text itself, no sycophantic concessions, no negative parallelism in any variant ("it's not X, it's Y", "non è X, è Y", and the tailing "Y, not X"), no em dash used as a pause, no bold as rhetorical emphasis (structural labels stay), no rhythmic triads, no judgment as tone of voice.
+Domain: documentation, with one override: the logbook keeps the owner's first-person narrative and the evocative title described above, so `tone_default.documentation` and the `voice` line don't apply here. Prohibition 7 is the one a logbook trips over most, because a daily note invites a closing verdict: "solid progress on the parser" goes, "the parser now handles empty input, the timeout is still missing" stays. A reflective closing section is welcome when it carries an observation.
 
-Domain: documentation. The logbook overrides the neutral default tone of that domain with the owner's first-person narrative and the evocative title described above; the `voice` line of preferences does not apply, and `tone_default.documentation` is ignored here.
-
-Prohibition 7 is the one a logbook trips over most, because a daily note invites a closing verdict. "Solid progress on the parser" goes; "the parser now handles empty input, the timeout is still missing" stays. A reflective closing section is welcome when it carries an observation, not when it carries encouragement.
-
-Condensed rules: `CLAUDE.md` → `## Writing register`. Full reference: `howto/10-writing-register.md`.
-
-Before writing the file, pass the finished text through the `writing-register` skill, then write it. Delivery is silent: confirm the path and the tags to the owner, without narrating what the pass changed.
+Before writing the file, pass the finished text through the `writing-register` skill, which holds the rules in full, then write it. Delivery is silent: confirm the path and the tags to the owner, without narrating what the pass changed.
 
 ## When to trigger
 

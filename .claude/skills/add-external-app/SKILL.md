@@ -138,7 +138,7 @@ The `<name>` project is symlinked at `apps/<name>/`. Its own `CLAUDE.md` (if pre
 
 Notes, drafts, and reference material *about* this app are written at `<notes_dir>`. This is separate from the app's own files (which live under `apps/<name>/`) and is governed by the owner's standard territory rules.
 
-Every markdown file created or meaningfully edited in that directory must carry the standard frontmatter — `tags: [a, b, c]` (multi-dimensional) and `description: one-line` — per the root `CLAUDE.md` → "Frontmatter and search discipline". Don't skip it, and don't assume inheritance: restate the discipline whenever a new write goes in.
+Every markdown file created or meaningfully edited in that directory must carry the standard frontmatter — `tags: [a, b, c]` (multi-dimensional) and `description: one-line` — per the root `CLAUDE.md` → "Markdown discipline". Don't skip it, and don't assume inheritance: restate the discipline whenever a new write goes in.
 
 ---
 
@@ -162,8 +162,6 @@ Target row format (the `Access` column lets the owner and the orchestrator see p
 ```
 | <name> | `apps/<name>` | <one-line description> | <read-only | read-write> |
 ```
-
-The template ships with a 4-column apps table (Alias, Path, Purpose, Access) and a placeholder row. On first registration, **replace** the placeholder; on subsequent registrations, **append**.
 
 Use the `Edit` tool, not shell, to make a precise string replacement inside `private/preferences.md`.
 
@@ -217,7 +215,7 @@ Announce:
 - **One question per turn**, always with the `N/6` progress indicator.
 - **Validate every input** before moving on (path exists, name is valid/unused, description isn't empty, triggers isn't empty, access is one of the two values, notes_dir is blank or a valid absolute path).
 - **`access` and `notes_dir` are independent axes** — don't gate Q6 on the answer to Q5. A read-only app can have a notes territory; a read-write app can have no notes territory. Ask both regardless.
-- **Announce every write** — symlink, file, CLAUDE.md edit, memory insert. One line each.
+- **Announce every write** — symlink, file, preferences edit, memory insert. One line each.
 - **Never run this skill without owner confirmation** at the summary step.
-- **If any action fails mid-flow, roll back** what's been done (rm symlink, rm skill folder, revert CLAUDE.md) and report clearly.
+- **If any action fails mid-flow, roll back** what's been done (rm symlink, rm skill folder, revert the preferences row) and report clearly.
 - **Never touch the owner's actual project** (the target of the symlink). This skill only adds references to it from the orchestrator side. The one write territory this skill produces in the owner's vault is the `notes_dir` — and that's only reached via the pointer skill at write time, not by this skill itself.
