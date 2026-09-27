@@ -341,6 +341,12 @@ class TestRecap(RegistryFixture):
         r = self.recap("home", "ciao")
         self.assertIn("home", r.stdout)
 
+    def test_a_title_starting_with_a_dash_is_not_read_as_a_flag(self):
+        r = self.recap("home", "--bulk is not a flag here")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        log = self.logged()
+        self.assertIn("ARG=--\nARG=--bulk is not a flag here", log)
+
 
 CLAUDE_RECORDER = """\
 #!/bin/sh
@@ -392,8 +398,8 @@ class TestAsk(RegistryFixture):
         self.ask("home", "domanda")
         log = self.logged().lower()
         self.assertTrue(
-            "non scrivere" in log or "sola lettura" in log,
-            f"il prompt non porta il vincolo di sola lettura:\n{self.logged()}",
+            "read-only" in log and "write no file" in log,
+            f"the prompt doesn't carry the read-only constraint:\n{self.logged()}",
         )
 
     def test_reply_is_reported_to_the_caller(self):
@@ -503,7 +509,7 @@ class TestScan(unittest.TestCase):
         self.assertEqual(r.returncode, OK, r.stderr)
         self.assertIn("senzanome:", r.stdout)
         self.assertIn("senzanome", r.stderr)
-        self.assertIn("confermare", r.stderr.lower())
+        self.assertIn("confirm", r.stderr.lower())
 
     def test_two_slugs_on_the_same_cwd_produce_one_entry(self):
         inst = fake_instance(self.root, "home")
@@ -523,7 +529,7 @@ class TestScan(unittest.TestCase):
         self.assertEqual(r.returncode, OK, r.stderr)
         self.assertIn("home:", r.stdout)
         self.assertIn("home-2:", r.stdout)
-        self.assertIn("omonim", r.stderr.lower())
+        self.assertIn("two instances named", r.stderr.lower())
 
     def test_scan_output_round_trips_through_the_parser(self):
         inst = fake_instance(self.root, "home")
@@ -587,7 +593,7 @@ class TestScan(unittest.TestCase):
     def test_no_instance_found_writes_nothing(self):
         r = self.scan("--write")
         self.assertFalse(self.registry.exists())
-        self.assertIn("nessuna istanza", r.stderr.lower())
+        self.assertIn("no maestro instance", r.stderr.lower())
 
 
 class TestRegister(unittest.TestCase):
@@ -896,6 +902,51 @@ class TestSatellites(RegistryFixture):
         r = run("list", env={"MAESTRO_INSTANCES": str(self.registry)})
         self.assertEqual(r.returncode, E_BAD_REGISTRY)
 
+    def test_satellite_scope_that_is_not_a_slug_is_malformed(self):
+        # The scope reaches a shell `export` line at session start: only a slug is accepted.
+        self.registry.write_text(self.registry.read_text()
+                                 + f"satellites:\n  acme; rm -rf x:\n    repo: {self.repo}\n    mother: home\n")
+        r = run("list", env={"MAESTRO_INSTANCES": str(self.registry)})
+        self.assertEqual(r.returncode, E_BAD_REGISTRY)
+        self.assertIn("slug", r.stderr)
+
+    def test_add_with_a_role_writes_it_into_the_mother_first(self):
+        recording_mem(self.home)
+        log = self.root / "mem.log"
+        r = run("satellite", "add", "acme", "--repo", str(self.repo), "--mother", "home",
+                "--type", "development", "--mandate", "Ship the acme app", "--vault", str(self.root / "v"),
+                env={"MAESTRO_INSTANCES": str(self.registry), "MEM_LOG": str(log), "MEM_SCOPE": "other"})
+        self.assertEqual(r.returncode, OK, r.stderr)
+        logged = log.read_text()
+        for line in ("ARG=satellite\nARG=add\nARG=acme", f"ARG=--repo\nARG={os.path.realpath(self.repo)}",
+                     "ARG=--type\nARG=development", "ARG=--mandate\nARG=Ship the acme app",
+                     f"ARG=--vault\nARG={self.root / 'v'}", "MEM_SCOPE=<unset>"):
+            self.assertIn(line, logged)
+        listed = json.loads(run("list", "--json", env={"MAESTRO_INSTANCES": str(self.registry)}).stdout)
+        self.assertEqual(listed["satellites"]["acme"]["mother"], "home")
+
+    def test_add_with_a_role_the_mother_refuses_leaves_the_registry_alone(self):
+        recording_mem(self.home)
+        before = self.registry.read_text()
+        r = run("satellite", "add", "acme", "--repo", str(self.repo), "--mother", "home", "--type", "ux",
+                env={"MAESTRO_INSTANCES": str(self.registry), "MEM_LOG": str(self.root / "mem.log"),
+                     "MEM_EXIT": "8"})
+        self.assertEqual(r.returncode, E_REMOTE_FAILED, r.stderr)
+        self.assertEqual(self.registry.read_text(), before)
+
+    def test_role_flags_without_type_are_a_usage_error(self):
+        r = self.sat("add", "acme", "--repo", str(self.repo), "--mother", "home", "--mandate", "x")
+        self.assertEqual(r.returncode, E_USAGE)
+
+    def test_remove_also_removes_the_role_from_the_mother(self):
+        self.assertEqual(self.sat("add", "acme", "--repo", str(self.repo), "--mother", "home").returncode, OK)
+        recording_mem(self.home)
+        log = self.root / "mem.log"
+        r = run("satellite", "remove", "acme", env={"MAESTRO_INSTANCES": str(self.registry), "MEM_LOG": str(log)})
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertIn("ARG=satellite\nARG=remove\nARG=acme", log.read_text())
+        self.assertNotIn("acme", self.registry.read_text())
+
 
 # The row travels as JSON built by python, so a role field may hold a newline
 # or a quote; an unset SAT_* variable is a null column, an empty one is "".
@@ -1023,7 +1074,7 @@ class TestRequest(SatelliteFixture):
         r = self.request("x", CLAUDE_CODE_MESSAGING_SOCKET="")
         self.assertEqual(r.returncode, OK, r.stderr)
         self.assertIn("reply_to: none", self.logged())
-        self.assertIn("memoria", r.stderr)
+        self.assertIn("memory", r.stderr)
 
     def test_dry_run_launches_nothing(self):
         r = self.request("x", "--dry-run")

@@ -180,17 +180,17 @@ satellites:
 ```
 
 ```bash
-maestro-net satellite add acme --repo /Users/you/Sites/acme --mother home
+maestro-net satellite add acme --repo /Users/you/Sites/acme --mother home --type development --mandate "Ship the acme app"
 maestro-net satellite remove acme
 ```
 
 - The scope is a lowercase slug, like an instance name (exit 2 otherwise). `--repo` must be an absolute path to an existing directory (exit 2, exit 7) and is stored as its real path.
 - `--mother` must be a registered instance (exit 5).
 - A scope already registered, or a repo equal to, inside or containing an instance path or another satellite's repo, exits 9. `register` applies the mirror check: an instance path inside or containing a satellite's repo exits 9.
-- `satellite remove` edits only the `satellites:` block; an unknown scope exits 5.
+- `satellite remove` drops the `satellites:` entry, then the role in the mother when it is reachable; an unknown scope exits 5.
 - A satellite is never a recipient: `recap` and `ask` resolve instance names only, and `request` only goes from a satellite to its mother. `list` shows satellites apart.
 
-The `satellite` skill of the plugin calls `satellite add` after `bin/mem satellite add` in the mother; used by hand, the two registrations have to agree.
+With `--type` (and the other role flags), `satellite add` writes the role into the mother through its `bin/mem satellite add` before touching the registry, and removes it again when the registry write fails. Without `--type` it edits the registry only, for a role registered earlier. The `satellite` skill of the plugin runs the one-command form.
 
 ## Degradation
 

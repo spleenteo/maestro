@@ -1,50 +1,54 @@
 #!/usr/bin/env python3
-"""maestro-net — canale di cross-talk fra istanze Maestro.
+"""maestro-net: the channel between the Maestro instances of one owner.
 
-Tre verbi, `recap`, `ask` e `request`, più i comandi di servizio sul registry.
+Three verbs, `recap`, `ask` and `request`, plus the service commands on the
+registry.
 
-    recap <istanza> "<testo>"      scrive una memoria nel db dell'istanza,
-                                   invocando il suo bin/mem con path assoluto.
-                                   Costo modello zero.
-    ask <istanza> "<domanda>"      esegue `claude -p` nella cwd dell'istanza
-                                   e riporta la risposta. Nessuna sessione
-                                   persistente aperta.
-    request "<richiesta>"          solo da un repo satellite: apre `claude --bg`
-                                   nella madre, che giudica la richiesta con le
-                                   proprie regole e risponde con un messaggio e
-                                   una memoria nello scope del satellite.
-    scan                           censisce le istanze Maestro sul disco e
-                                   propone il registry.
-    list                           elenca le istanze registrate.
-    register <nome> --path P       aggiunge un'istanza al registry senza
-                                   toccare le altre (a differenza di
+    recap <instance> "<text>"      writes a memory into the instance's db by
+                                   running its bin/mem with an absolute path.
+                                   No model involved.
+    ask <instance> "<question>"    runs `claude -p` in the instance's folder
+                                   and reports the answer. No persistent
+                                   session stays open.
+    request "<text>"               from a satellite repo only: opens
+                                   `claude --bg` in the mother, which judges
+                                   the request with its own rules and answers
+                                   with a message and a memory in the
+                                   satellite's scope.
+    scan                           finds the Maestro instances on disk and
+                                   proposes the registry.
+    list                           lists the registered instances.
+    register <name> --path P       adds one instance to the registry without
+                                   touching the others (unlike
                                    `scan --write --force`).
-    unregister <nome>              toglie un'istanza dal registry.
-    satellite add <scope> --repo R --mother M
-                                   registra un repo come satellite di
-                                   un'istanza madre (blocco `satellites:`).
-    satellite remove <scope>       toglie un satellite dal registry.
+    unregister <name>              removes one instance from the registry.
+    satellite add <scope> --repo R --mother M [--type T ...]
+                                   registers a repo as a satellite of a mother
+                                   instance; with --type it also writes the
+                                   role into the mother's satellites table.
+    satellite remove <scope>       removes a satellite from the registry and
+                                   its role from the mother.
 
-VINCOLO CARDINE: il canale trasporta memorie, domande e richieste, non
-permessi. Nessun verbo tocca file, MCP o task di un'altra istanza: con
-`request` il satellite chiede e la madre agisce con i propri strumenti e la
-propria modalità di permesso. Il campo `accepts` del registry rende il
-vincolo un dato, modificabile per istanza.
+CORE CONSTRAINT: the channel carries memories, questions and requests, never
+permissions. No verb touches files, MCPs or tasks of another instance: with
+`request` the satellite asks and the mother acts with its own tools and its
+own permission mode. The registry's `accepts` field makes the constraint a
+piece of data, editable per instance.
 
 Registry: ~/.claude/maestro-instances.yaml (override: --registry, env
-MAESTRO_INSTANCES). Non vive in ~/.maestro/, che è il mirror read-only del
-template e verrebbe sovrascritto da /maestro:maestro-sync.
+MAESTRO_INSTANCES). It doesn't live in ~/.maestro/, the read-only mirror of
+the template that /maestro:maestro-sync overwrites.
 
-Exit code — la degradazione è sempre esplicita, mai silenziosa:
-    0  fatto
-    2  errore d'uso
-    3  registry assente
-    4  registry malformato
-    5  istanza sconosciuta o nome ambiguo
-    6  verbo non ammesso dal destinatario
-    7  path del destinatario non più valido
-    8  il comando remoto è fallito
-    9  nome, path o repo già registrati o sovrapposti
+Exit codes, always explicit, never a silent degradation:
+    0  done
+    2  usage error
+    3  no registry
+    4  malformed registry
+    5  unknown or ambiguous instance
+    6  verb not accepted by the recipient
+    7  the recipient's path is no longer valid
+    8  the remote command failed
+    9  name, path or repo already registered or overlapping
 """
 
 from __future__ import annotations
@@ -53,246 +57,41 @@ import argparse
 import json
 import os
 import re
-import shlex
 import secrets
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-OK = 0
-E_USAGE = 2
-E_NO_REGISTRY = 3
-E_BAD_REGISTRY = 4
-E_UNKNOWN_INSTANCE = 5
-E_VERB_REFUSED = 6
-E_DEAD_PATH = 7
-E_REMOTE_FAILED = 8
-E_EXISTS = 9
+sys.dont_write_bytecode = True  # the plugin folder is a checkout: no __pycache__/
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from maestro_registry import (  # noqa: E402
+    DEFAULT_ACCEPTS, DEFAULT_REGISTRY, E_BAD_REGISTRY, E_DEAD_PATH, E_EXISTS, E_NO_REGISTRY,
+    E_REMOTE_FAILED, E_UNKNOWN_INSTANCE, E_USAGE, E_VERB_REFUSED, NAME_RE, OK, VERBS,
+    NetError, RegistryError, insert_entry, inside, is_instance_dir, load_or_empty, load_registry,
+    load_registry_text, missing_registry, overlaps, parse_registry, real, registry_path,
+    remove_entry, render_entry, render_registry, render_satellite, resolve_instance, write_registry,
+)
+from maestro_satellites import clean_env, match_satellite, satellite_row  # noqa: E402
 
-VERBS = ("recap", "ask", "request")
-# `request` apre una sessione nella madre: si concede istanza per istanza, mai di default.
-DEFAULT_ACCEPTS = ("recap", "ask")
-SUPPORTED_VERSIONS = (1,)
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-
-DEFAULT_REGISTRY = Path.home() / ".claude" / "maestro-instances.yaml"
 PROJECTS_ROOT = Path(os.environ.get("CLAUDE_PROJECTS_ROOT", Path.home() / ".claude" / "projects"))
 
 
-class RegistryError(Exception):
-    """Registry illeggibile o non conforme allo schema."""
-
-
-class NetError(Exception):
-    """Errore operativo con un exit code proprio."""
-
-    def __init__(self, code: int, message: str):
-        super().__init__(message)
-        self.code = code
-
-
 # --------------------------------------------------------------------------
-# Parser YAML minimo
-#
-# Lo schema del registry è chiuso e piatto, quindi un parser dedicato costa
-# meno di una dipendenza esterna e permette messaggi d'errore con il numero
-# di riga. Tutto ciò che non rientra nello schema è un errore, non un
-# silenzio: un registry che il parser non capisce non deve mai degradare in
-# un registry vuoto.
+# Recipient checks
 # --------------------------------------------------------------------------
-
-def _scalar(raw: str, lineno: int, source: str):
-    """Converte un valore: lista flow, intero, stringa (eventualmente quotata)."""
-    v = raw.strip()
-    if v.startswith("["):
-        if not v.endswith("]"):
-            raise RegistryError(f"{source}:{lineno}: lista non chiusa: {v}")
-        inner = v[1:-1].strip()
-        if not inner:
-            return []
-        return [_scalar(item, lineno, source) for item in inner.split(",")]
-    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
-        return v[1:-1]
-    if re.fullmatch(r"-?\d+", v):
-        return int(v)
-    return v
-
-
-def parse_registry(text: str, source: str) -> dict:
-    """Legge il registry. Solleva RegistryError su qualunque scostamento."""
-    data: Dict[str, object] = {}
-    blocks: Dict[str, Dict[str, dict]] = {"instances": {}, "satellites": {}}
-    current: Optional[str] = None
-    block: Optional[str] = None
-    seen_instances = False
-
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if "\t" in line[: len(line) - len(line.lstrip())]:
-            raise RegistryError(f"{source}:{lineno}: indentazione con tab, servono spazi")
-
-        indent = len(line) - len(line.lstrip(" "))
-        body = line.strip()
-        if ":" not in body:
-            raise RegistryError(f"{source}:{lineno}: riga senza `chiave: valore`: {body}")
-        key, _, raw = body.partition(":")
-        key = key.strip()
-        raw = raw.strip()
-
-        if indent == 0:
-            block = key if key in blocks else None
-            current = None
-            if block is not None:
-                if key == "instances":
-                    seen_instances = True
-                if raw:
-                    raise RegistryError(
-                        f"{source}:{lineno}: `{key}:` non prende un valore sulla stessa riga"
-                    )
-                continue
-            if key not in ("version",):
-                raise RegistryError(f"{source}:{lineno}: chiave di primo livello sconosciuta: {key}")
-            data[key] = _scalar(raw, lineno, source)
-        elif indent == 2:
-            if block is None:
-                raise RegistryError(
-                    f"{source}:{lineno}: blocco indentato fuori da `instances:` o `satellites:`"
-                )
-            if raw:
-                raise RegistryError(
-                    f"{source}:{lineno}: il nome `{key}` non prende un valore sulla stessa riga"
-                )
-            if key in blocks[block]:
-                raise RegistryError(f"{source}:{lineno}: voce duplicata in `{block}`: {key}")
-            current = key
-            blocks[block][key] = {}
-        elif indent == 4:
-            if current is None or block is None:
-                raise RegistryError(f"{source}:{lineno}: campo `{key}` fuori da un blocco")
-            blocks[block][current][key] = _scalar(raw, lineno, source)
-        else:
-            raise RegistryError(
-                f"{source}:{lineno}: indentazione di {indent} spazi, attesi 0, 2 o 4"
-            )
-
-    if not seen_instances:
-        raise RegistryError(f"{source}: manca la chiave `instances`")
-    data["instances"] = blocks["instances"]
-    data["satellites"] = blocks["satellites"]
-    _validate(data, source)
-    return data
-
-
-def _validate(data: dict, source: str) -> None:
-    if "version" not in data:
-        raise RegistryError(f"{source}: manca la chiave `version`")
-    if data["version"] not in SUPPORTED_VERSIONS:
-        raise RegistryError(
-            f"{source}: version {data['version']} non supportata "
-            f"(questa build legge: {', '.join(str(v) for v in SUPPORTED_VERSIONS)})"
-        )
-    if not isinstance(data.get("instances"), dict):
-        raise RegistryError(f"{source}: `instances` non è un blocco di istanze")
-
-    for name, entry in data["instances"].items():
-        path = entry.get("path")
-        if not path or not isinstance(path, str):
-            raise RegistryError(f"{source}: istanza `{name}` senza campo `path`")
-        accepts = entry.get("accepts")
-        if accepts is None:
-            continue
-        if not isinstance(accepts, list):
-            raise RegistryError(f"{source}: `accepts` di `{name}` non è una lista")
-        kept = []
-        for verb in accepts:
-            if verb not in VERBS:
-                print(
-                    f"maestro-net: `{name}` dichiara il verbo sconosciuto `{verb}` in "
-                    f"`accepts` (ammessi: {', '.join(VERBS)}) — ignorato.",
-                    file=sys.stderr,
-                )
-                continue
-            kept.append(verb)
-        entry["accepts"] = kept
-
-    for scope, entry in data.get("satellites", {}).items():
-        for field in ("repo", "mother"):
-            if not entry.get(field) or not isinstance(entry.get(field), str):
-                raise RegistryError(f"{source}: satellite `{scope}` senza campo `{field}`")
-
-
-def registry_path(arg: Optional[str]) -> Path:
-    if arg:
-        return Path(arg).expanduser()
-    env = os.environ.get("MAESTRO_INSTANCES")
-    if env:
-        return Path(env).expanduser()
-    return DEFAULT_REGISTRY
-
-
-def load_registry(arg: Optional[str]) -> Tuple[dict, Path]:
-    path = registry_path(arg)
-    if not path.is_file():
-        raise NetError(
-            E_NO_REGISTRY,
-            f"registry assente: {path}\n"
-            f"Popolalo con: maestro-net scan --write",
-        )
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise NetError(E_NO_REGISTRY, f"registry illeggibile: {path}: {exc}")
-    try:
-        return parse_registry(text, str(path)), path
-    except RegistryError as exc:
-        raise NetError(E_BAD_REGISTRY, f"registry malformato: {exc}")
-
-
-# --------------------------------------------------------------------------
-# Risoluzione del destinatario
-# --------------------------------------------------------------------------
-
-def resolve_instance(registry: dict, needle: str) -> Tuple[str, dict]:
-    instances: Dict[str, dict] = registry["instances"]
-    names = list(instances)
-    low = needle.lower()
-
-    exact = [n for n in names if n.lower() == low]
-    if exact:
-        return exact[0], instances[exact[0]]
-
-    prefix = [n for n in names if n.lower().startswith(low)]
-    if len(prefix) == 1:
-        return prefix[0], instances[prefix[0]]
-    if len(prefix) > 1:
-        raise NetError(
-            E_UNKNOWN_INSTANCE,
-            f"nome ambiguo `{needle}`: corrisponde a {', '.join(sorted(prefix))}. "
-            f"Usa il nome per esteso.",
-        )
-    known = ", ".join(sorted(names)) if names else "nessuna"
-    raise NetError(
-        E_UNKNOWN_INSTANCE,
-        f"istanza sconosciuta: `{needle}`. Nel registry: {known}.",
-    )
-
 
 def check_accepts(name: str, entry: dict, verb: str) -> None:
     accepts = entry.get("accepts")
     if accepts is None:
         raise NetError(
             E_VERB_REFUSED,
-            f"`{name}` non dichiara il campo `accepts`: nessun verbo è ammesso. "
-            f"Aggiungi `accepts: [{verb}]` al registry se il destinatario lo consente.",
-        )
+            f"`{name}` declares no `accepts` field: no verb is admitted. "
+            f"Add `accepts: [{verb}]` to the registry if the recipient allows it.")
     if verb not in accepts:
-        allowed = ", ".join(accepts) if accepts else "nessuno"
-        raise NetError(
-            E_VERB_REFUSED,
-            f"`{name}` non accetta il verbo `{verb}` (accetta: {allowed}).",
-        )
+        allowed = ", ".join(accepts) if accepts else "none"
+        raise NetError(E_VERB_REFUSED, f"`{name}` doesn't accept the verb `{verb}` (accepts: {allowed}).")
 
 
 def check_reachable(name: str, entry: dict) -> Path:
@@ -300,25 +99,47 @@ def check_reachable(name: str, entry: dict) -> Path:
     if not path.is_dir():
         raise NetError(
             E_DEAD_PATH,
-            f"il path di `{name}` non esiste più: {path}. "
-            f"Correggi il registry o rilancia `maestro-net scan`.",
-        )
-    mem = path / "bin" / "mem"
-    if not mem.is_file():
-        raise NetError(
-            E_DEAD_PATH,
-            f"`{name}` non ha bin/mem in {path}: non è (più) un'istanza Maestro.",
-        )
+            f"the path of `{name}` no longer exists: {path}. Fix the registry or run `maestro-net scan`.")
+    if not (path / "bin" / "mem").is_file():
+        raise NetError(E_DEAD_PATH, f"`{name}` has no bin/mem in {path}: it is no longer a Maestro instance.")
     return path
 
 
+def sender_name(registry: dict, explicit: Optional[str], cwd: str) -> Tuple[str, str]:
+    """Who signs the recap, and why that name. The sender is never implicit."""
+    if explicit:
+        return slugify_name(explicit) or explicit, "given with --from"
+    here = os.path.realpath(cwd)
+    for name, entry in registry["instances"].items():
+        try:
+            if os.path.realpath(Path(entry["path"]).expanduser()) == here:
+                return name, "the instance the command runs from"
+        except OSError:
+            continue
+    return slugify_name(Path(cwd).name) or "unknown", "the name of the current folder"
+
+
+def run_remote(name: str, verb: str, cmd: List[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, cwd=str(cwd), env=clean_env(), capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise NetError(E_REMOTE_FAILED, f"{verb} to `{name}`: no answer within {timeout}s.")
+    except OSError as exc:
+        raise NetError(E_REMOTE_FAILED, f"{verb} to `{name}`: can't run `{cmd[0]}` ({exc}).")
+
+
+def print_dry_run(path: Path, cmd: List[str]) -> None:
+    print(f"[dry-run] cwd {path}\n[dry-run] {' '.join(shlex.quote(c) for c in cmd)}")
+
+
 # --------------------------------------------------------------------------
-# Comandi
+# list
 # --------------------------------------------------------------------------
 
 def cmd_list(args) -> int:
     registry, path = load_registry(args.registry)
     instances: Dict[str, dict] = registry["instances"]
+    satellites = registry.get("satellites", {})
 
     if args.json:
         json.dump(
@@ -326,16 +147,13 @@ def cmd_list(args) -> int:
                 "version": registry["version"],
                 "registry": str(path),
                 "instances": {
-                    name: {
-                        "path": entry.get("path"),
-                        "domain": entry.get("domain"),
-                        "accepts": entry.get("accepts", []),
-                    }
+                    name: {"path": entry.get("path"), "domain": entry.get("domain"),
+                           "accepts": entry.get("accepts", [])}
                     for name, entry in instances.items()
                 },
                 "satellites": {
                     scope: {"repo": entry.get("repo"), "mother": entry.get("mother")}
-                    for scope, entry in registry.get("satellites", {}).items()
+                    for scope, entry in satellites.items()
                 },
             },
             sys.stdout, ensure_ascii=False, indent=2,
@@ -344,120 +162,29 @@ def cmd_list(args) -> int:
         return OK
 
     if not instances:
-        print(f"registry {path}: nessuna istanza registrata")
+        print(f"registry {path}: no instance registered")
         return OK
 
-    print(f"# {len(instances)} istanze — {path}\n")
+    print(f"# {len(instances)} instances, {path}\n")
     for name, entry in instances.items():
-        accepts = ", ".join(entry.get("accepts", [])) or "nessun verbo"
-        alive = "" if Path(entry["path"]).expanduser().is_dir() else "  [path assente]"
+        accepts = ", ".join(entry.get("accepts", [])) or "no verb"
+        alive = "" if Path(entry["path"]).expanduser().is_dir() else "  [path missing]"
         print(f"- {name}  ({accepts}){alive}")
         if entry.get("domain"):
-            print(f"    dominio: {entry['domain']}")
+            print(f"    domain: {entry['domain']}")
         print(f"    path: {entry['path']}")
-    satellites = registry.get("satellites", {})
     if satellites:
-        print(f"\n# {len(satellites)} satelliti\n")
+        print(f"\n# {len(satellites)} satellites\n")
         for scope, entry in satellites.items():
-            alive = "" if Path(entry["repo"]).expanduser().is_dir() else "  [repo assente]"
-            print(f"- {scope}  (madre: {entry['mother']}){alive}")
+            alive = "" if Path(entry["repo"]).expanduser().is_dir() else "  [repo missing]"
+            print(f"- {scope}  (mother: {entry['mother']}){alive}")
             print(f"    repo: {entry['repo']}")
     return OK
 
 
-def sender_name(registry: dict, explicit: Optional[str], cwd: str) -> Tuple[str, str]:
-    """Chi firma il recap, e perché quel nome. Il mittente non è mai implicito."""
-    if explicit:
-        return slugify_name(explicit) or explicit, "indicato con --from"
-    here = os.path.realpath(cwd)
-    for name, entry in registry["instances"].items():
-        try:
-            if os.path.realpath(Path(entry["path"]).expanduser()) == here:
-                return name, "istanza da cui parte il comando"
-        except OSError:
-            continue
-    return slugify_name(Path(cwd).name) or "ignoto", "nome della cartella corrente"
-
-
-def clean_env() -> Dict[str, str]:
-    """L'ambiente per il processo remoto.
-
-    MEM_DB via: se la sessione chiamante ne dichiara uno, `bin/mem` del
-    destinatario scriverebbe nel db del mittente. MEM_SCOPE via: un recap
-    o un ask partiti da un satellite atterrerebbero nello scope del
-    mittente invece che in quello nullo del destinatario. PWD via: resta
-    quello del chiamante e confonde chi lo legge. CLAUDE_PROJECT_DIR via:
-    la sessione remota deve riconoscersi dalla propria cartella, non da
-    quella del satellite che la chiama.
-    """
-    dropped = ("MEM_DB", "MEM_SCOPE", "PWD", "CLAUDE_PROJECT_DIR")
-    return {k: v for k, v in os.environ.items() if k not in dropped}
-
-
 # --------------------------------------------------------------------------
-# Satelliti: da una cartella al satellite che la contiene.
-# Lo usano `request` e l'hook SessionStart del plugin, che carica questo
-# modulo: una sola regola di riconoscimento per entrambi.
+# recap
 # --------------------------------------------------------------------------
-
-def _inside(path: str, root: str) -> bool:
-    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
-
-
-def main_checkout(folder: str) -> Optional[str]:
-    """Radice del checkout principale di una cartella in un worktree git; None fuori da git."""
-    try:
-        out = subprocess.run(
-            ["git", "-C", folder, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            capture_output=True, text=True, timeout=3)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode != 0:
-        return None
-    common = os.path.realpath(out.stdout.strip())
-    return os.path.dirname(common) if os.path.basename(common) == ".git" else None
-
-
-def match_satellite(registry: dict, folder: str) -> Tuple[Optional[str], Optional[dict]]:
-    """(scope, voce) del satellite il cui repo contiene folder, repo più lungo prima.
-
-    Una cartella dentro un'istanza registrata appartiene all'istanza, mai a un satellite."""
-    satellites = registry.get("satellites", {})
-    if not satellites:
-        return None, None
-    real = os.path.realpath(folder)
-    for entry in registry.get("instances", {}).values():
-        if _inside(real, os.path.realpath(os.path.expanduser(entry["path"]))):
-            return None, None
-    def repo_of(entry: dict) -> str:
-        return os.path.realpath(os.path.expanduser(entry["repo"]))
-
-    ranked = sorted(satellites.items(), key=lambda kv: len(repo_of(kv[1])), reverse=True)
-    for scope, entry in ranked:
-        if _inside(real, repo_of(entry)):
-            return scope, entry
-    root = main_checkout(real)
-    if root:
-        for scope, entry in ranked:
-            if repo_of(entry) == root:
-                return scope, entry
-    return None, None
-
-
-def run_remote(name: str, verb: str, cmd: List[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess:
-    try:
-        return subprocess.run(
-            cmd, cwd=str(cwd), env=clean_env(),
-            capture_output=True, text=True, timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        raise NetError(E_REMOTE_FAILED, f"{verb} a `{name}`: nessuna risposta entro {timeout}s.")
-    except OSError as exc:
-        raise NetError(
-            E_REMOTE_FAILED,
-            f"{verb} a `{name}`: non riesco a eseguire `{cmd[0]}` ({exc}).",
-        )
-
 
 def cmd_recap(args) -> int:
     registry, _ = load_registry(args.registry)
@@ -467,37 +194,42 @@ def cmd_recap(args) -> int:
     sender, why = sender_name(registry, args.sender, os.getcwd())
 
     tags = [f"from:{sender}"] + [t.strip() for t in (args.tags or "").split(",") if t.strip()]
-    cmd = [str(path / "bin" / "mem"), "save", args.text, "-t", ",".join(tags)]
+    # `--` keeps a title that starts with `-` from being read as a flag by the remote bin/mem.
+    cmd = [str(path / "bin" / "mem"), "save", "-t", ",".join(tags)]
     if args.description:
         cmd += ["-d", args.description]
+    cmd += ["--", args.text]
 
     if args.dry_run:
-        print(f"[dry-run] cwd {path}\n[dry-run] {' '.join(shlex.quote(c) for c in cmd)}")
+        print_dry_run(path, cmd)
         return OK
 
     proc = run_remote(name, "recap", cmd, path, args.timeout)
     if proc.returncode != 0:
         raise NetError(
             E_REMOTE_FAILED,
-            f"recap a `{name}` fallito (bin/mem exit {proc.returncode}):\n"
-            f"{proc.stderr.strip() or proc.stdout.strip()}",
-        )
+            f"recap to `{name}` failed (bin/mem exit {proc.returncode}):\n"
+            f"{proc.stderr.strip() or proc.stdout.strip()}")
 
-    print(f"→ {name}: memoria scritta, taggata `from:{sender}` ({why}).")
+    print(f"→ {name}: memory written, tagged `from:{sender}` ({why}).")
     out = proc.stdout.strip()
     if out:
         print(out)
     return OK
 
 
+# --------------------------------------------------------------------------
+# ask
+# --------------------------------------------------------------------------
+
 ASK_PREAMBLE = """\
-Domanda da `{sender}` via maestro-net.
+Question from `{sender}` via maestro-net.
 
 {question}
 
-Vincolo del canale: questa è una richiesta in sola lettura. Rispondi e basta.
-Non scrivere file, non toccare memories.db, non aprire o chiudere task, non
-usare MCP che modificano stato. Rispondi conciso e senza preamboli.\
+Channel constraint: this is a read-only request. Answer and nothing else.
+Write no file, don't touch memories.db, open or close no task, call no
+state-changing MCP. Answer concisely, without preamble.\
 """
 
 
@@ -528,12 +260,12 @@ call no state-changing MCP. Answer concisely, without preamble.
 {fence}\
 """
 
-# Il perimetro di ciò che la madre consegna a un satellite, identico per
-# `ask` e `request`. Con un mandato nella riga, la pertinenza al mandato
-# decide: la madre attinge a tutto il suo sapere, con due esclusioni fisse
-# (`private/` salvo la riga, memorie degli altri scope). Senza mandato il
-# giudizio non ha ancora e resta il perimetro per cartella: scope, riga,
-# cartella nel vault, e nemmeno l'elenco di ciò che resta fuori.
+# What the mother hands to a satellite, the same for `ask` and `request`.
+# With a mandate in the row, relevance to the mandate decides: the mother
+# draws on everything it knows, with two fixed exclusions (`private/` except
+# the row, memories of other scopes). Without a mandate the judgment has no
+# anchor and the folder perimeter holds: scope, row, vault folder, and not
+# even the list of what stays out.
 SATELLITE_BOUNDARIES = """\
 The mandate in the header is the anchor of your judgment. When the question
 serves it, answer from everything you know: your vault, your own memories
@@ -565,8 +297,7 @@ ROLE_FIELDS = ("project_type", "mandate", "method", "constraints")
 
 
 def role_field(row: dict, key: str) -> str:
-    """Un campo del ruolo come riga di header: `none` se manca, nullo o vuoto;
-    altrimenti su una riga sola, perché l'header è un campo per riga."""
+    """One role field as a header line: `none` when missing, null or empty; one line otherwise."""
     value = row.get(key)
     text = " ".join(str(value).split()) if value is not None else ""
     return text or "none"
@@ -581,33 +312,6 @@ def satellite_boundaries(mem: str, scope: str, row: dict) -> str:
     return text.format(mem=mem, scope=scope)
 
 
-def satellite_row(mother: str, path: Path, scope: str, sat: dict) -> dict:
-    """La riga del satellite nella madre, che deve puntare allo stesso repo del registry."""
-    mem = path / "bin" / "mem"
-    detail = ""
-    try:
-        show = subprocess.run([str(mem), "satellite", "show", scope, "--json"],
-                              capture_output=True, text=True, env=clean_env(), timeout=30,
-                              stdin=subprocess.DEVNULL)
-        detail = show.stderr.strip()
-        row = json.loads(show.stdout) if show.returncode == 0 else None
-    except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        detail, row = str(exc), None
-    if not isinstance(row, dict):
-        raise NetError(
-            E_REMOTE_FAILED,
-            f"`{mem} satellite show {scope}` non restituisce la riga del satellite: niente da inviare a `{mother}`."
-            + (f"\n{detail}" if detail else ""),
-        )
-    if os.path.realpath(row.get("repo_path") or "") != os.path.realpath(os.path.expanduser(sat["repo"])):
-        raise NetError(
-            E_REMOTE_FAILED,
-            f"il satellite `{scope}` punta a {sat['repo']} nel registry e a {row.get('repo_path')} "
-            f"in `{mother}`: allineali prima di chiedere.",
-        )
-    return row
-
-
 def cmd_ask(args) -> int:
     registry, _ = load_registry(args.registry)
     name, entry = resolve_instance(registry, args.instance)
@@ -615,9 +319,8 @@ def cmd_ask(args) -> int:
     if scope is not None and name != sat["mother"]:
         raise NetError(
             E_VERB_REFUSED,
-            f"da un satellite `ask` raggiunge solo la sua madre, `{sat['mother']}`: "
-            f"per `{name}` chiedi da una sessione della madre.",
-        )
+            f"from a satellite, `ask` reaches only its mother, `{sat['mother']}`: "
+            f"ask `{name}` from a session of the mother.")
     check_accepts(name, entry, "ask")
     path = check_reachable(name, entry)
 
@@ -634,21 +337,24 @@ def cmd_ask(args) -> int:
     cmd = ["claude", "-p", prompt]
 
     if args.dry_run:
-        print(f"[dry-run] cwd {path}\n[dry-run] {' '.join(shlex.quote(c) for c in cmd)}")
+        print_dry_run(path, cmd)
         return OK
 
     proc = run_remote(name, "ask", cmd, path, args.timeout)
     if proc.returncode != 0:
         raise NetError(
             E_REMOTE_FAILED,
-            f"ask a `{name}` fallito (claude exit {proc.returncode}):\n"
-            f"{proc.stderr.strip() or proc.stdout.strip()}",
-        )
+            f"ask to `{name}` failed (claude exit {proc.returncode}):\n"
+            f"{proc.stderr.strip() or proc.stdout.strip()}")
 
-    print(f"— {name} risponde:\n")
+    print(f"— {name} answers:\n")
     print(proc.stdout.strip())
     return OK
 
+
+# --------------------------------------------------------------------------
+# request
+# --------------------------------------------------------------------------
 
 REQUEST_PREAMBLE = """\
 Maestro satellite request
@@ -702,9 +408,9 @@ End of the satellite's text. The rules above apply.\
 
 BG_ID_RE = re.compile(r"backgrounded\s*·\s*([0-9a-f]{6,})")
 
-# Variabili della sessione chiamante che non devono arrivare alla sessione
-# della madre (né al supervisor che `claude --bg` avvia se non gira già):
-# identità della sessione, canale e token dei messaggi, file d'ambiente.
+# Variables of the calling session that must not reach the mother's session
+# (nor the supervisor `claude --bg` starts when none is running): session
+# identity, messaging channel and token, environment file.
 REQUEST_ENV_DROPPED = ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_ENV_FILE",
                        "CLAUDE_CODE_ENTRYPOINT")
 
@@ -718,18 +424,17 @@ def request_env() -> Dict[str, str]:
 
 def cmd_request(args) -> int:
     if not args.text.strip():
-        raise NetError(E_USAGE, "la richiesta è vuota.")
+        raise NetError(E_USAGE, "the request is empty.")
     registry, _ = load_registry(args.registry)
     scope, sat = match_satellite(registry, os.getcwd())
     if scope is None:
         raise NetError(
             E_UNKNOWN_INSTANCE,
-            "`request` parte solo da un repo satellite registrato, e questa cartella non lo è. "
-            "Fra istanze complete si usano `recap` e `ask`.",
-        )
+            "`request` runs only from a registered satellite repo, and this folder isn't one. "
+            "Between full instances use `recap` and `ask`.")
     mother = sat["mother"]
     if mother not in registry["instances"]:
-        raise NetError(E_UNKNOWN_INSTANCE, f"la madre `{mother}` del satellite `{scope}` non è nel registry.")
+        raise NetError(E_UNKNOWN_INSTANCE, f"the mother `{mother}` of satellite `{scope}` is not in the registry.")
     entry = registry["instances"][mother]
     check_accepts(mother, entry, "request")
     path = check_reachable(mother, entry)
@@ -745,15 +450,15 @@ def cmd_request(args) -> int:
         mem=shlex.quote(str(mem)), request=args.text, fence=f"=== satellite text {secrets.token_hex(4)} ===",
         boundaries=satellite_boundaries(shlex.quote(str(mem)), scope, row), **role_fields(row))
 
-    # `--add-dir` accetta più directory: nella forma `--add-dir DIR PROMPT`
-    # si mangerebbe il prompt. La forma con `=` lo lascia al suo posto.
+    # `--add-dir` takes several directories: as `--add-dir DIR PROMPT` it
+    # would swallow the prompt. The `=` form leaves the prompt in place.
     cmd = ["claude", "--bg", "--name", name]
     if vault:
         cmd.append(f"--add-dir={vault}")
     cmd.append(prompt)
 
     if args.dry_run:
-        print(f"[dry-run] cwd {path}\n[dry-run] {' '.join(shlex.quote(c) for c in cmd)}")
+        print_dry_run(path, cmd)
         return OK
 
     try:
@@ -762,327 +467,207 @@ def cmd_request(args) -> int:
     except subprocess.TimeoutExpired:
         raise NetError(
             E_REMOTE_FAILED,
-            f"request a `{mother}`: `claude --bg` non è tornato entro 60s. La sessione potrebbe essere "
-            f"partita comunque: controlla `claude agents` prima di ripetere la richiesta.",
-        )
+            f"request to `{mother}`: `claude --bg` didn't return within 60s. The session may have "
+            f"started anyway: check `claude agents` before repeating the request.")
     except OSError as exc:
-        raise NetError(E_REMOTE_FAILED, f"request a `{mother}`: non riesco a eseguire `claude` ({exc}).")
+        raise NetError(E_REMOTE_FAILED, f"request to `{mother}`: can't run `claude` ({exc}).")
     if proc.returncode != 0:
         raise NetError(
             E_REMOTE_FAILED,
-            f"request a `{mother}` fallita (claude exit {proc.returncode}):\n"
-            f"{proc.stderr.strip() or proc.stdout.strip()}",
-        )
+            f"request to `{mother}` failed (claude exit {proc.returncode}):\n"
+            f"{proc.stderr.strip() or proc.stdout.strip()}")
 
     if not socket:
-        print("maestro-net: nessun CLAUDE_CODE_MESSAGING_SOCKET, la risposta arriverà solo come memoria.",
+        print("maestro-net: no CLAUDE_CODE_MESSAGING_SOCKET, the answer will arrive only as a memory.",
               file=sys.stderr)
     m = BG_ID_RE.search(proc.stdout + proc.stderr)
     short = m.group(1) if m else None
-    print(f"maestro-net: richiesta aperta in `{mother}` come `{name}`"
+    print(f"maestro-net: request opened in `{mother}` as `{name}`"
           + (f" (id {short}, `claude attach {short}`)." if short else "."))
-    print(f"La risposta arriva come messaggio da `{name}`; se no: "
+    print(f"The answer arrives as a message from `{name}`; otherwise: "
           f"`MEM_SCOPE={scope} {shlex.quote(str(mem))} search \"request {name}\"`.")
     return OK
 
 
 # --------------------------------------------------------------------------
-# register / unregister — scrittura chirurgica del registry
-#
-# `scan --write --force` riscrive tutto il file e perde `domain` e `accepts`
-# che l'owner ha compilato a mano su ogni istanza già censita. register e
-# unregister toccano invece solo le righe della singola istanza aggiunta o
-# tolta: non passano da parse_registry + render_registry, che perderebbe i
-# commenti e riformatterebbe ogni istanza esistente. Lavorano riga per riga
-# sul testo originale — tutto il resto resta byte per byte identico.
+# register / unregister
 # --------------------------------------------------------------------------
-
-def is_instance_dir(path: Path) -> bool:
-    """La firma di un'istanza Maestro operativa: preferences.md + bin/mem.
-
-    Stessa firma che usa lo scanner (`scan_instances`), in una funzione a
-    parte perché V5 registrerà voci satellite senza passare da qui.
-    """
-    return (path / "private" / "preferences.md").is_file() and (path / "bin" / "mem").is_file()
-
-
-def _line_indent(line: str) -> Optional[int]:
-    """Indentazione di una riga di contenuto; None se è vuota o un commento.
-
-    Righe vuote e commenti sono trasparenti per chi cerca i confini di un
-    blocco: non lo aprono né lo chiudono, così un commento in mezzo alle
-    istanze non spezza né il blocco `instances:` né una singola istanza.
-    """
-    stripped = line.rstrip("\n")
-    if not stripped.strip() or stripped.lstrip().startswith("#"):
-        return None
-    return len(stripped) - len(stripped.lstrip(" "))
-
-
-def _block_end(lines: List[str], start: int, boundary_indent: int) -> int:
-    """Fine del blocco che inizia a start: una riga reale con indentazione
-    <= boundary_indent, oppure l'inizio della striscia di righe vuote o di
-    commento che la precede immediatamente.
-
-    Quella striscia appartiene a quello che segue, non al blocco che sta
-    per finire — è così che un commento fra due istanze sopravvive a chi
-    toglie la prima. Una striscia senza nulla dopo (fine del file) resta
-    invece dentro il blocco: non ha un "quello che segue" a cui appartenere,
-    e chi accoda una nuova istanza in coda al file deve poterci scrivere
-    dopo, non incunearsi prima. len(lines) in quel caso.
-    """
-    pending: Optional[int] = None  # inizio di una striscia vuota/commento non ancora assegnata
-    for i in range(start, len(lines)):
-        indent = _line_indent(lines[i])
-        if indent is None:
-            if pending is None:
-                pending = i
-            continue
-        if indent > boundary_indent:
-            pending = None  # era dentro il blocco: assorbita, non più in sospeso
-            continue
-        return pending if pending is not None else i
-    return len(lines)
-
-
-def _block_header_index(lines: List[str], block: str = "instances") -> Optional[int]:
-    """Riga `<block>:` di primo livello, o None se il blocco non c'è."""
-    for i, line in enumerate(lines):
-        indent = _line_indent(line)
-        if indent == 0 and line.strip().split(":", 1)[0].strip() == block:
-            return i
-    return None
-
-
-def render_entry(name: str, path: str, domain: str, accepts: List[str]) -> str:
-    """Un blocco istanza: stessa indentazione e stesso ordine campi di render_registry."""
-    if '"' in path:
-        raise NetError(E_USAGE, f"path con virgolette, non rappresentabile: {path}")
-    rendered_path = f'"{path}"' if re.search(r"[\s:#\[\]{}]", path) else path
-    lines = [
-        f"  {name}:",
-        f"    path: {rendered_path}",
-        f'    domain: "{domain}"',
-        f"    accepts: [{', '.join(accepts)}]",
-    ]
-    return "\n".join(lines) + "\n"
-
-
-def insert_entry(text: str, entry_text: str, block: str = "instances") -> str:
-    """Inserisce entry_text alla fine del blocco `<block>:`, creandolo in coda se manca."""
-    lines = text.splitlines(keepends=True)
-    header = _block_header_index(lines, block)
-    if header is None:
-        if lines and not lines[-1].endswith("\n"):
-            lines[-1] += "\n"
-        return "".join(lines) + f"{block}:\n" + entry_text
-    insert_at = _block_end(lines, header + 1, 0)
-    if insert_at == len(lines) and lines and not lines[-1].endswith("\n"):
-        lines[-1] += "\n"
-    return "".join(lines[:insert_at]) + entry_text + "".join(lines[insert_at:])
-
-
-def remove_entry(text: str, name: str, block: str = "instances") -> str:
-    """Toglie la voce `name` dal blocco `<block>:`. Il resto non cambia."""
-    lines = text.splitlines(keepends=True)
-    header = _block_header_index(lines, block)
-    if header is None:
-        raise RegistryError(f"blocco `{block}` non trovato nel testo")
-    block_end = _block_end(lines, header + 1, 0)
-    for i in range(header + 1, block_end):
-        line = lines[i]
-        if _line_indent(line) == 2 and line.strip().split(":", 1)[0].strip() == name:
-            end = _block_end(lines, i + 1, 2)
-            return "".join(lines[:i]) + "".join(lines[end:])
-    raise RegistryError(f"voce `{name}` non trovata in `{block}`")
-
-
-def _load_registry_text(dest: Path) -> Tuple[str, dict]:
-    """Testo grezzo + dati validati, o un registry vuoto in memoria se il file non c'è."""
-    if not dest.is_file():
-        return "version: 1\ninstances:\n", {"version": 1, "instances": {}, "satellites": {}}
-    try:
-        text = dest.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise NetError(E_NO_REGISTRY, f"registry illeggibile: {dest}: {exc}")
-    try:
-        data = parse_registry(text, str(dest))
-    except RegistryError as exc:
-        raise NetError(E_BAD_REGISTRY, f"registry malformato: {exc}")
-    return text, data
-
 
 def cmd_register(args) -> int:
     name = args.name
     if not NAME_RE.fullmatch(name):
         raise NetError(
             E_USAGE,
-            f"nome non valido: `{name}` (serve uno slug minuscolo: lettere, cifre, `-`, "
-            f"che inizia con lettera o cifra — non viene minuscolizzato per te).",
-        )
+            f"invalid name: `{name}` (a lowercase slug is required: letters, digits, `-`, "
+            f"starting with a letter or digit; it is not lowercased for you).")
 
     raw_path = Path(args.path)
     if not raw_path.is_absolute():
-        raise NetError(E_USAGE, f"--path deve essere assoluto: {args.path}")
+        raise NetError(E_USAGE, f"--path must be absolute: {args.path}")
 
     domain = args.domain
     if '"' in domain or "\n" in domain:
-        raise NetError(E_USAGE, f"--domain non può contenere virgolette o andare a capo: {domain!r}")
+        raise NetError(E_USAGE, f"--domain can't contain double quotes or newlines: {domain!r}")
 
-    accepts = [v.strip() for v in args.accepts.split(",") if v.strip()]
-    for verb in accepts:
-        if verb not in VERBS:
-            raise NetError(E_USAGE, f"verbo sconosciuto in --accepts: `{verb}` (ammessi: {', '.join(VERBS)})")
+    accepts = parse_accepts(args.accepts)
 
     if not raw_path.is_dir():
-        raise NetError(E_DEAD_PATH, f"non è una directory: {raw_path}")
+        raise NetError(E_DEAD_PATH, f"not a directory: {raw_path}")
     if not is_instance_dir(raw_path):
         raise NetError(
             E_DEAD_PATH,
-            f"`{raw_path}` non ha la firma di un'istanza Maestro "
-            f"(servono private/preferences.md e bin/mem).",
-        )
+            f"`{raw_path}` doesn't look like a Maestro instance (private/preferences.md and bin/mem are required).")
     real_path = os.path.realpath(raw_path)
 
     dest = registry_path(args.registry)
-    text, data = _load_registry_text(dest)
+    text, data = load_or_empty(dest)
 
     for existing_name, entry in data["instances"].items():
         if existing_name.lower() == name.lower():
-            raise NetError(
-                E_EXISTS,
-                f"nome già registrato: `{existing_name}` → {entry.get('path')}.",
-            )
-        try:
-            existing_real = os.path.realpath(Path(entry["path"]).expanduser())
-        except OSError:
-            existing_real = entry.get("path")
-        if existing_real == real_path:
-            raise NetError(
-                E_EXISTS,
-                f"path già registrato con il nome `{existing_name}`: {real_path}.",
-            )
+            raise NetError(E_EXISTS, f"name already registered: `{existing_name}` → {entry.get('path')}.")
+        if real(entry["path"]) == real_path:
+            raise NetError(E_EXISTS, f"path already registered under the name `{existing_name}`: {real_path}.")
     for scope, sat in data.get("satellites", {}).items():
-        if _overlaps(real_path, os.path.realpath(Path(sat["repo"]).expanduser())):
-            raise NetError(
-                E_EXISTS,
-                f"path sovrapposto al repo del satellite `{scope}`: {sat['repo']}.",
-            )
+        if overlaps(real_path, real(sat["repo"])):
+            raise NetError(E_EXISTS, f"path overlaps the repo of satellite `{scope}`: {sat['repo']}.")
 
-    entry_text = render_entry(name, real_path, domain, accepts)
-    new_text = insert_entry(text, entry_text)
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(new_text, encoding="utf-8")
-    print(f"maestro-net: `{name}` registrata — {real_path}.")
+    write_registry(dest, insert_entry(text, render_entry(name, real_path, domain, accepts)))
+    print(f"maestro-net: `{name}` registered, {real_path}.")
     return OK
 
 
 def cmd_unregister(args) -> int:
     dest = registry_path(args.registry)
-    if not dest.is_file():
-        raise NetError(
-            E_NO_REGISTRY,
-            f"registry assente: {dest}\n"
-            f"Popolalo con: maestro-net scan --write",
-        )
-    try:
-        text = dest.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise NetError(E_NO_REGISTRY, f"registry illeggibile: {dest}: {exc}")
-    try:
-        data = parse_registry(text, str(dest))
-    except RegistryError as exc:
-        raise NetError(E_BAD_REGISTRY, f"registry malformato: {exc}")
-
+    text, data = load_registry_text(dest)
     name, entry = resolve_instance(data, args.name)
-
-    new_text = remove_entry(text, name)
-    dest.write_text(new_text, encoding="utf-8")
-    print(f"maestro-net: `{name}` tolta dal registry — {entry.get('path')}.")
+    write_registry(dest, remove_entry(text, name))
+    print(f"maestro-net: `{name}` removed from the registry, {entry.get('path')}.")
     return OK
 
 
-def _real(p: str) -> str:
+def parse_accepts(raw: str) -> List[str]:
+    accepts = [v.strip() for v in raw.split(",") if v.strip()]
+    for verb in accepts:
+        if verb not in VERBS:
+            raise NetError(E_USAGE, f"unknown verb in --accepts: `{verb}` (known: {', '.join(VERBS)})")
+    return accepts
+
+
+# --------------------------------------------------------------------------
+# satellite add / remove
+#
+# One command for both stores: the role goes into the mother's satellites
+# table through its own bin/mem, the repo→mother mapping into the registry.
+# A failure on the second step undoes the first, so nothing stays half
+# registered.
+# --------------------------------------------------------------------------
+
+ROLE_FLAGS = ("type", "mandate", "method", "constraints", "language", "vault")
+
+
+def mother_mem(data: dict, mother: str) -> Path:
+    return check_reachable(mother, data["instances"][mother]) / "bin" / "mem"
+
+
+def run_mother_mem(mem: Path, argv: List[str], timeout: int = 30) -> subprocess.CompletedProcess:
     try:
-        return os.path.realpath(Path(p).expanduser())
-    except OSError:
-        return p
-
-
-def _overlaps(a: str, b: str) -> bool:
-    """Due path reali coincidono o uno contiene l'altro."""
-    a_ = a.rstrip(os.sep) + os.sep
-    b_ = b.rstrip(os.sep) + os.sep
-    return a_.startswith(b_) or b_.startswith(a_)
-
-
-def render_satellite(scope: str, repo: str, mother: str) -> str:
-    if '"' in repo:
-        raise NetError(E_USAGE, f"repo con virgolette, non rappresentabile: {repo}")
-    rendered = f'"{repo}"' if re.search(r"[\s:#\[\]{}]", repo) else repo
-    return f"  {scope}:\n    repo: {rendered}\n    mother: {mother}\n"
+        return subprocess.run([str(mem), *argv], capture_output=True, text=True, env=clean_env(),
+                              timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        raise NetError(E_REMOTE_FAILED, f"`{mem} {' '.join(argv)}`: no answer within {timeout}s.")
+    except OSError as exc:
+        raise NetError(E_REMOTE_FAILED, f"can't run `{mem}` ({exc}).")
 
 
 def cmd_satellite_add(args) -> int:
     scope = args.scope
     if not NAME_RE.fullmatch(scope):
-        raise NetError(E_USAGE, f"scope non valido: `{scope}` (serve uno slug minuscolo).")
+        raise NetError(E_USAGE, f"invalid scope: `{scope}` (a lowercase slug is required).")
     raw = Path(args.repo)
     if not raw.is_absolute():
-        raise NetError(E_USAGE, f"--repo deve essere assoluto: {args.repo}")
+        raise NetError(E_USAGE, f"--repo must be absolute: {args.repo}")
     if not raw.is_dir():
-        raise NetError(E_DEAD_PATH, f"non è una directory: {raw}")
+        raise NetError(E_DEAD_PATH, f"not a directory: {raw}")
     repo = os.path.realpath(raw)
+    role = {flag: getattr(args, flag) for flag in ROLE_FLAGS if getattr(args, flag) is not None}
+    if role and "type" not in role:
+        raise NetError(E_USAGE, "a role needs --type (ux, consulting or development) next to the other role flags.")
 
     dest = registry_path(args.registry)
-    text, data = _load_registry_text(dest)
+    text, data = load_or_empty(dest)
     mother, _ = resolve_instance(data, args.mother)
 
     for name, entry in data["instances"].items():
-        if _overlaps(repo, _real(entry["path"])):
-            raise NetError(
-                E_EXISTS,
-                f"il repo coincide con l'istanza `{name}` o la contiene: {repo}.",
-            )
+        if overlaps(repo, real(entry["path"])):
+            raise NetError(E_EXISTS, f"the repo coincides with instance `{name}` or contains it: {repo}.")
     for other, entry in data.get("satellites", {}).items():
         if other.lower() == scope.lower():
-            raise NetError(E_EXISTS, f"scope già registrato: `{other}` → {entry.get('repo')}.")
-        if _overlaps(repo, _real(entry["repo"])):
-            raise NetError(
-                E_EXISTS,
-                f"il repo si sovrappone al satellite `{other}`: {entry.get('repo')}.",
-            )
+            raise NetError(E_EXISTS, f"scope already registered: `{other}` → {entry.get('repo')}.")
+        if overlaps(repo, real(entry["repo"])):
+            raise NetError(E_EXISTS, f"the repo overlaps satellite `{other}`: {entry.get('repo')}.")
 
-    new_text = insert_entry(text, render_satellite(scope, repo, mother), block="satellites")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(new_text, encoding="utf-8")
-    print(f"maestro-net: satellite `{scope}` registrato — {repo} (madre: {mother}).")
+    if role:
+        mem = mother_mem(data, mother)
+        argv = ["satellite", "add", scope, "--repo", repo]
+        for flag, value in role.items():
+            argv += [f"--{flag}", value]
+        proc = run_mother_mem(mem, argv)
+        if proc.returncode != 0:
+            raise NetError(
+                E_REMOTE_FAILED,
+                f"`{mother}` refused the role (bin/mem exit {proc.returncode}):\n"
+                f"{proc.stderr.strip() or proc.stdout.strip()}")
+
+    try:
+        write_registry(dest, insert_entry(text, render_satellite(scope, repo, mother), block="satellites"))
+    except BaseException:
+        if role:
+            run_mother_mem(mem, ["satellite", "remove", scope])
+        raise
+    print(f"maestro-net: satellite `{scope}` registered, {repo} (mother: {mother})"
+          + (" with its role." if role else "."))
     return OK
 
 
 def cmd_satellite_remove(args) -> int:
     dest = registry_path(args.registry)
     if not dest.is_file():
-        raise NetError(E_NO_REGISTRY, f"registry assente: {dest}")
-    text, data = _load_registry_text(dest)
+        raise missing_registry(dest)
+    text, data = load_or_empty(dest)
     matches = [s for s in data.get("satellites", {}) if s.lower() == args.scope.lower()]
     if not matches:
-        raise NetError(E_UNKNOWN_INSTANCE, f"satellite sconosciuto: `{args.scope}`.")
+        raise NetError(E_UNKNOWN_INSTANCE, f"unknown satellite: `{args.scope}`.")
     scope = matches[0]
-    dest.write_text(remove_entry(text, scope, block="satellites"), encoding="utf-8")
-    print(f"maestro-net: satellite `{scope}` tolto dal registry.")
+    mother = data["satellites"][scope]["mother"]
+    write_registry(dest, remove_entry(text, scope, block="satellites"))
+    print(f"maestro-net: satellite `{scope}` removed from the registry.")
+
+    entry = data["instances"].get(mother)
+    mem = Path(entry["path"]).expanduser() / "bin" / "mem" if entry else None
+    if mem is None or not mem.is_file():
+        print(f"maestro-net: mother `{mother}` is unreachable, its satellites table is untouched.", file=sys.stderr)
+        return OK
+    try:
+        proc = run_mother_mem(mem, ["satellite", "remove", scope])
+    except NetError as exc:
+        print(f"maestro-net: {exc}", file=sys.stderr)
+        return OK
+    if proc.returncode == 0:
+        print(f"maestro-net: role of `{scope}` removed from `{mother}`.")
+    else:
+        print(f"maestro-net: `{mother}` kept no role for `{scope}` (bin/mem exit {proc.returncode}).",
+              file=sys.stderr)
     return OK
 
 
 # --------------------------------------------------------------------------
-# Scanner
+# scan
 #
-# I path delle istanze non stanno da nessuna parte in forma leggibile: le
-# directory di ~/.claude/projects/ sono slug ambigui (`-` sostituisce `/`,
-# `.` e gli spazi). Il cwd vero sta dentro i transcript, quindi lo scanner
-# legge quello e tiene le directory che hanno private/preferences.md più
-# bin/mem, cioè la firma di un'istanza Maestro operativa.
+# Instance paths are stored nowhere in a readable form: the directories under
+# ~/.claude/projects/ are ambiguous slugs (`-` stands for `/`, `.` and
+# spaces). The real cwd sits inside the transcripts, so the scanner reads
+# those and keeps the folders with private/preferences.md plus bin/mem, the
+# signature of a working Maestro instance.
 # --------------------------------------------------------------------------
 
 IDENTITY_HEADING = re.compile(r"^#{1,6}\s+identit", re.IGNORECASE)
@@ -1090,7 +675,7 @@ IDENTITY_NAME = re.compile(r"^\s*[-*]\s*\*{0,2}(?:name|nome)\*{0,2}\s*:\s*(.+?)\
 
 
 def first_cwd(transcript: Path) -> Optional[str]:
-    """Primo `cwd` dichiarato in un transcript jsonl."""
+    """The first `cwd` declared in a jsonl transcript."""
     try:
         with transcript.open(encoding="utf-8", errors="replace") as fh:
             for i, line in enumerate(fh):
@@ -1110,17 +695,17 @@ def first_cwd(transcript: Path) -> Optional[str]:
 
 
 def read_identity_name(prefs: Path) -> Optional[str]:
-    """Nome dell'orchestratore dal blocco Identity, tollerante al grassetto."""
+    """The orchestrator's name from the Identity block, bold tolerated."""
     try:
         lines = prefs.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return None
-    inside = False
+    inside_block = False
     for line in lines:
         if line.startswith("#"):
-            inside = bool(IDENTITY_HEADING.match(line))
+            inside_block = bool(IDENTITY_HEADING.match(line))
             continue
-        if not inside:
+        if not inside_block:
             continue
         m = IDENTITY_NAME.match(line)
         if m:
@@ -1129,23 +714,21 @@ def read_identity_name(prefs: Path) -> Optional[str]:
 
 
 def slugify_name(raw: str) -> str:
-    """`**Home** — l'istanza di casa` → `home`. Stringa vuota se non resta nulla.
+    """`**Home** — the home instance` → `home`. Empty when nothing is left.
 
-    Il trattino ASCII non è un separatore: fa parte di nomi legittimi, di
-    persona (`Jean-Luc`) e di cartella (`mio-progetto`).
+    The ASCII hyphen is not a separator: it belongs to legitimate names of
+    people (`Jean-Luc`) and folders (`my-project`).
     """
     head = re.split(r"[—–,:(]", raw.strip(), maxsplit=1)[0]
     return re.sub(r"[^a-z0-9]+", "-", head.strip().lower()).strip("-")
 
 
 def scan_instances(projects_root: Path) -> Tuple[List[dict], List[str]]:
-    """Censisce le istanze. Ritorna (istanze, note) — le note vanno all'owner."""
+    """Find the instances. Returns (instances, notes); the notes go to the owner."""
     if not projects_root.is_dir():
         raise NetError(
             E_USAGE,
-            f"la root dei progetti non esiste: {projects_root}. "
-            f"Indicane un'altra con CLAUDE_PROJECTS_ROOT.",
-        )
+            f"the projects root doesn't exist: {projects_root}. Point CLAUDE_PROJECTS_ROOT to another one.")
 
     seen: Dict[str, str] = {}
     for d in sorted(projects_root.iterdir()):
@@ -1155,8 +738,7 @@ def scan_instances(projects_root: Path) -> Tuple[List[dict], List[str]]:
             cwd = first_cwd(f)
             if not cwd:
                 continue
-            key = os.path.realpath(cwd)
-            seen.setdefault(key, cwd)
+            seen.setdefault(os.path.realpath(cwd), cwd)
             break
 
     notes: List[str] = []
@@ -1164,17 +746,15 @@ def scan_instances(projects_root: Path) -> Tuple[List[dict], List[str]]:
     for key in sorted(seen):
         cwd = seen[key]
         path = Path(cwd)
-        prefs = path / "private" / "preferences.md"
-        if not prefs.is_file() or not (path / "bin" / "mem").is_file():
+        if not is_instance_dir(path):
             continue
-        raw = read_identity_name(prefs)
+        raw = read_identity_name(path / "private" / "preferences.md")
         name = slugify_name(raw) if raw else ""
         if not name:
-            name = slugify_name(path.name) or "istanza"
+            name = slugify_name(path.name) or "instance"
             notes.append(
-                f"`{name}` ({cwd}): nome non leggibile dal blocco Identity, "
-                f"ho usato il nome della cartella — da confermare a mano."
-            )
+                f"`{name}` ({cwd}): no readable name in the Identity block, "
+                f"the folder name was used; confirm it by hand.")
         found.append({"name": name, "path": cwd})
 
     taken: Dict[str, int] = {}
@@ -1184,9 +764,8 @@ def scan_instances(projects_root: Path) -> Tuple[List[dict], List[str]]:
             taken[base] += 1
             entry["name"] = f"{base}-{taken[base]}"
             notes.append(
-                f"omonimia su `{base}`: la seconda istanza è entrata come "
-                f"`{entry['name']}` ({entry['path']}) — rinominala se preferisci."
-            )
+                f"two instances named `{base}`: the second one entered as "
+                f"`{entry['name']}` ({entry['path']}); rename it if you prefer.")
         else:
             taken[base] = 1
 
@@ -1194,36 +773,8 @@ def scan_instances(projects_root: Path) -> Tuple[List[dict], List[str]]:
     return found, notes
 
 
-def render_registry(instances: List[dict], accepts: List[str]) -> str:
-    lines = [
-        "# maestro-net — registry delle istanze Maestro.",
-        "# Generato da `maestro-net scan`. Due campi restano all'owner:",
-        "#   domain  — a cosa serve l'istanza, usato per il routing quando il",
-        "#             destinatario non è nominato esplicitamente.",
-        f"#   accepts — i verbi che l'istanza ammette, fra: {', '.join(VERBS)}.",
-        "version: 1",
-        "instances:",
-    ]
-    if not instances:
-        lines.append("  # nessuna istanza censita")
-    for entry in instances:
-        path = entry["path"]
-        if '"' in path:
-            raise NetError(E_USAGE, f"path con virgolette, non rappresentabile: {path}")
-        rendered = f'"{path}"' if re.search(r"[\s:#\[\]{}]", path) else path
-        lines.append(f"  {entry['name']}:")
-        lines.append(f"    path: {rendered}")
-        lines.append('    domain: ""')
-        lines.append(f"    accepts: [{', '.join(accepts)}]")
-    return "\n".join(lines) + "\n"
-
-
 def cmd_scan(args) -> int:
-    accepts = [v.strip() for v in args.accepts.split(",") if v.strip()]
-    for verb in accepts:
-        if verb not in VERBS:
-            raise NetError(E_USAGE, f"verbo sconosciuto in --accepts: `{verb}` (ammessi: {', '.join(VERBS)})")
-
+    accepts = parse_accepts(args.accepts)
     instances, notes = scan_instances(PROJECTS_ROOT)
     text = render_registry(instances, accepts)
 
@@ -1232,32 +783,29 @@ def cmd_scan(args) -> int:
 
     if not instances:
         print(
-            f"maestro-net: nessuna istanza Maestro trovata sotto {PROJECTS_ROOT} "
-            f"(cerco directory con private/preferences.md e bin/mem).",
-            file=sys.stderr,
-        )
+            f"maestro-net: no Maestro instance found under {PROJECTS_ROOT} "
+            f"(looking for folders with private/preferences.md and bin/mem).",
+            file=sys.stderr)
 
     if not args.write:
         sys.stdout.write(text)
         if instances:
             print(
-                f"maestro-net: {len(instances)} istanze censite. "
-                f"Compila `domain`, rivedi `accepts`, poi scrivi con --write.",
-                file=sys.stderr,
-            )
+                f"maestro-net: {len(instances)} instances found. "
+                f"Fill in `domain`, review `accepts`, then write with --write.",
+                file=sys.stderr)
         return OK
 
     if not instances:
-        print("maestro-net: non scrivo un registry vuoto.", file=sys.stderr)
+        print("maestro-net: not writing an empty registry.", file=sys.stderr)
         return OK
 
     dest = registry_path(args.registry)
     if dest.exists() and not args.force:
         print(
-            f"maestro-net: {dest} esiste già. Ripeti con --force per sovrascriverlo, "
-            f"oppure fondi a mano le righe nuove.",
-            file=sys.stderr,
-        )
+            f"maestro-net: {dest} already exists. Repeat with --force to overwrite it, "
+            f"or merge the new lines by hand.",
+            file=sys.stderr)
         return E_USAGE
 
     if dest.exists():
@@ -1268,17 +816,14 @@ def cmd_scan(args) -> int:
             if "satellites:" in old_text:
                 raise NetError(
                     E_BAD_REGISTRY,
-                    f"registry malformato, non lo sovrascrivo perdendo i satelliti: {exc}",
-                )
+                    f"malformed registry, not overwriting it and losing the satellites: {exc}")
             satellites = {}
         if satellites:
             text += "satellites:\n" + "".join(
-                render_satellite(scope, sat["repo"], sat["mother"])
-                for scope, sat in satellites.items())
+                render_satellite(scope, sat["repo"], sat["mother"]) for scope, sat in satellites.items())
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(text, encoding="utf-8")
-    print(f"maestro-net: registry scritto in {dest} — {len(instances)} istanze.")
+    write_registry(dest, text)
+    print(f"maestro-net: registry written to {dest}, {len(instances)} instances.")
     return OK
 
 
@@ -1289,74 +834,81 @@ def cmd_scan(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="maestro-net",
-        description="Cross-talk fra istanze Maestro: recap, ask e, da un satellite, request.",
+        description="The channel between Maestro instances: recap, ask and, from a satellite, request.",
         epilog=(
-            "Il canale trasporta memorie e richieste, non permessi: nessun verbo tocca "
-            "file, MCP o task di un'altra istanza; request chiede, e la madre agisce con "
-            "le proprie regole.\n"
-            "Exit code: 0 fatto, 2 uso, 3 registry assente, 4 registry malformato, "
-            "5 istanza sconosciuta o ambigua, 6 verbo non ammesso, 7 path non valido, "
-            "8 comando remoto fallito, 9 nome, path o repo già registrati o sovrapposti."
+            "The channel carries memories and requests, never permissions: no verb touches "
+            "files, MCPs or tasks of another instance; request asks, and the mother acts with "
+            "its own rules.\n"
+            "Exit codes: 0 done, 2 usage, 3 no registry, 4 malformed registry, "
+            "5 unknown or ambiguous instance, 6 verb not accepted, 7 invalid path, "
+            "8 remote command failed, 9 name, path or repo already registered or overlapping."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--registry", help="path del registry (default: ~/.claude/maestro-instances.yaml)")
+    p.add_argument("--registry", help=f"registry path (default: {DEFAULT_REGISTRY})")
     sub = p.add_subparsers(dest="verb")
 
-    sp = sub.add_parser("list", help="Elenca le istanze registrate")
+    sp = sub.add_parser("list", help="List the registered instances")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_list)
 
-    sp = sub.add_parser("recap", help="Scrive una memoria nel db di un'altra istanza")
+    sp = sub.add_parser("recap", help="Write a memory into another instance's db")
     sp.add_argument("instance")
-    sp.add_argument("text", help="il titolo della memoria")
-    sp.add_argument("-d", "--description", help="contesto lungo, opzionale")
-    sp.add_argument("-t", "--tags", help="tag aggiuntivi, separati da virgola (from:<mittente> è automatico)")
-    sp.add_argument("--from", dest="sender", help="nome del mittente (default: istanza corrente o cartella)")
-    sp.add_argument("--timeout", type=int, default=30, help="secondi di attesa (default: 30)")
+    sp.add_argument("text", help="the memory's title")
+    sp.add_argument("-d", "--description", help="longer context, optional")
+    sp.add_argument("-t", "--tags", help="extra tags, comma-separated (from:<sender> is automatic)")
+    sp.add_argument("--from", dest="sender", help="sender name (default: the current instance or folder)")
+    sp.add_argument("--timeout", type=int, default=30, help="seconds to wait (default: 30)")
     sp.add_argument("--dry-run", action="store_true")
     sp.set_defaults(func=cmd_recap)
 
-    sp = sub.add_parser("ask", help="Interroga un'altra istanza in headless")
+    sp = sub.add_parser("ask", help="Query another instance headless")
     sp.add_argument("instance")
     sp.add_argument("question")
-    sp.add_argument("--from", dest="sender", help="nome del mittente (default: istanza corrente o cartella)")
-    sp.add_argument("--timeout", type=int, default=180, help="secondi di attesa (default: 180)")
+    sp.add_argument("--from", dest="sender", help="sender name (default: the current instance or folder)")
+    sp.add_argument("--timeout", type=int, default=180, help="seconds to wait (default: 180)")
     sp.add_argument("--dry-run", action="store_true")
     sp.set_defaults(func=cmd_ask)
 
-    sp = sub.add_parser("request", help="Da un satellite: apre una sessione in background nella madre")
-    sp.add_argument("text", help="la richiesta, in una o due frasi")
+    sp = sub.add_parser("request", help="From a satellite: open a background session in the mother")
+    sp.add_argument("text", help="the request, one or two sentences")
     sp.add_argument("--dry-run", action="store_true")
     sp.set_defaults(func=cmd_request)
 
-    sp = sub.add_parser("scan", help="Censisce le istanze Maestro sul disco")
-    sp.add_argument("--write", action="store_true", help="scrive il registry invece di stamparlo")
-    sp.add_argument("--force", action="store_true", help="sovrascrive un registry esistente")
+    sp = sub.add_parser("scan", help="Find the Maestro instances on disk")
+    sp.add_argument("--write", action="store_true", help="write the registry instead of printing it")
+    sp.add_argument("--force", action="store_true", help="overwrite an existing registry")
     sp.add_argument("--accepts", default=",".join(DEFAULT_ACCEPTS),
-                    help=f"verbi proposti per ogni istanza (default: {','.join(DEFAULT_ACCEPTS)})")
+                    help=f"verbs proposed for every instance (default: {','.join(DEFAULT_ACCEPTS)})")
     sp.set_defaults(func=cmd_scan)
 
-    sp = sub.add_parser("register", help="Aggiunge un'istanza al registry senza toccare le altre")
-    sp.add_argument("name", help="slug minuscolo, es. home")
-    sp.add_argument("--path", required=True, help="path assoluto della root dell'istanza")
-    sp.add_argument("--domain", default="", help="a cosa serve l'istanza (facoltativo)")
+    sp = sub.add_parser("register", help="Add one instance to the registry without touching the others")
+    sp.add_argument("name", help="lowercase slug, e.g. home")
+    sp.add_argument("--path", required=True, help="absolute path of the instance root")
+    sp.add_argument("--domain", default="", help="what the instance is for (optional)")
     sp.add_argument("--accepts", default=",".join(DEFAULT_ACCEPTS),
-                    help=f"verbi ammessi per questa istanza (default: {','.join(DEFAULT_ACCEPTS)})")
+                    help=f"verbs this instance accepts (default: {','.join(DEFAULT_ACCEPTS)})")
     sp.set_defaults(func=cmd_register)
 
-    sp = sub.add_parser("unregister", help="Toglie un'istanza dal registry")
+    sp = sub.add_parser("unregister", help="Remove one instance from the registry")
     sp.add_argument("name")
     sp.set_defaults(func=cmd_unregister)
 
-    sp = sub.add_parser("satellite", help="Registra o toglie un repo satellite")
+    sp = sub.add_parser("satellite", help="Register or remove a satellite repo")
     ssub = sp.add_subparsers(dest="satellite_verb")
-    sa = ssub.add_parser("add", help="Registra un repo come satellite di un'istanza madre")
-    sa.add_argument("scope", help="slug minuscolo, lo scope delle righe del satellite")
-    sa.add_argument("--repo", required=True, help="path assoluto del repo")
-    sa.add_argument("--mother", required=True, help="nome dell'istanza madre nel registry")
+    sa = ssub.add_parser("add", help="Register a repo as a satellite of a mother instance")
+    sa.add_argument("scope", help="lowercase slug, the scope of the satellite's rows")
+    sa.add_argument("--repo", required=True, help="absolute path of the repo")
+    sa.add_argument("--mother", required=True, help="name of the mother instance in the registry")
+    sa.add_argument("--type", choices=["ux", "consulting", "development"],
+                    help="with it, the role is written into the mother's satellites table too")
+    sa.add_argument("--mandate", help="what the satellite is here to do")
+    sa.add_argument("--method", help="how work is done there")
+    sa.add_argument("--constraints", help="what must not happen")
+    sa.add_argument("--language", help="language of documents and replies in the repo")
+    sa.add_argument("--vault", help="absolute folder in the mother's vault for the project's documents")
     sa.set_defaults(func=cmd_satellite_add)
-    sr = ssub.add_parser("remove", help="Toglie un satellite dal registry")
+    sr = ssub.add_parser("remove", help="Remove a satellite from the registry and its role from the mother")
     sr.add_argument("scope")
     sr.set_defaults(func=cmd_satellite_remove)
 
@@ -1368,11 +920,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if not args.verb:
         parser.print_usage(sys.stderr)
-        print("maestro-net: serve un verbo (list, recap, ask, request, scan, register, unregister, satellite)", file=sys.stderr)
+        print("maestro-net: a verb is required (list, recap, ask, request, scan, register, unregister, satellite)",
+              file=sys.stderr)
         return E_USAGE
     if not hasattr(args, "func"):
         parser.print_usage(sys.stderr)
-        print("maestro-net: `satellite` vuole `add` o `remove`", file=sys.stderr)
+        print("maestro-net: `satellite` takes `add` or `remove`", file=sys.stderr)
         return E_USAGE
     try:
         return args.func(args)
@@ -1380,7 +933,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"maestro-net: {exc}", file=sys.stderr)
         return exc.code
     except RegistryError as exc:
-        print(f"maestro-net: registry malformato: {exc}", file=sys.stderr)
+        print(f"maestro-net: malformed registry: {exc}", file=sys.stderr)
         return E_BAD_REGISTRY
 
 

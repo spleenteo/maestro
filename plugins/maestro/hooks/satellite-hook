@@ -20,15 +20,18 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
+import shlex
 import sys
-from importlib.machinery import SourceFileLoader
-from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PLUGIN_ROOT = HERE.parent
-MIN_SCHEMA_API = 2
+
+sys.dont_write_bytecode = True  # the plugin folder is a checkout: no __pycache__/
+sys.path.insert(0, str(PLUGIN_ROOT / "bin"))
+from maestro_registry import NetError, inside, parse_registry, registry_path  # noqa: E402
+from maestro_satellites import MIN_SCHEMA_API, match_satellite, schema_api  # noqa: E402
+from maestro_satellites import satellite_row as mother_row  # noqa: E402
 
 # Sections of the mother's preferences a satellite may see: the exact name,
 # optionally followed by a parenthetical ("Identity (the orchestrator)").
@@ -37,23 +40,6 @@ IDENTITY_RE = re.compile(
 HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 UNDERLINE_RE = re.compile(r"^ {0,3}(?:-+|=+)[ \t]*$")
-
-
-def registry_path() -> Path:
-    env = os.environ.get("MAESTRO_INSTANCES")
-    return Path(env).expanduser() if env else Path.home() / ".claude" / "maestro-instances.yaml"
-
-
-def load_net():
-    loader = SourceFileLoader("maestro_net", str(PLUGIN_ROOT / "bin" / "maestro-net"))
-    spec = spec_from_loader("maestro_net", loader)
-    module = module_from_spec(spec)
-    loader.exec_module(module)
-    return module
-
-
-def inside(path: str, root: str) -> bool:
-    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
 
 
 def marker_path(project_dir: str) -> Path | None:
@@ -70,32 +56,6 @@ def drop_marker(marker: Path | None) -> None:
             marker.unlink()
     except OSError:
         pass
-
-
-def schema_api(mother: Path) -> int:
-    try:
-        text = (mother / "bin" / "mem_schema.py").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return 0
-    m = re.search(r"^SCHEMA_API\s*=\s*(\d+)", text, re.MULTILINE)
-    return int(m.group(1)) if m else 0
-
-
-def satellite_row(mother: Path, scope: str) -> dict | None:
-    env = {k: v for k, v in os.environ.items() if k not in ("MEM_DB", "MEM_SCOPE")}
-    try:
-        out = subprocess.run(
-            [str(mother / "bin" / "mem"), "satellite", "show", scope, "--json"],
-            capture_output=True, text=True, env=env, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode != 0:
-        return None
-    try:
-        row = json.loads(out.stdout)
-    except ValueError:
-        return None
-    return row if isinstance(row, dict) else None
 
 
 def identity_extract(mother: Path) -> str:
@@ -248,7 +208,7 @@ def export_scope(scope: str) -> bool:
         return False
     try:
         with open(env_file, "a", encoding="utf-8") as f:
-            f.write(f"export MEM_SCOPE={scope}\n")
+            f.write(f"export MEM_SCOPE={shlex.quote(scope)}\n")
     except OSError:
         return False
     return True
@@ -278,15 +238,11 @@ def start_satellite(scope: str, entry: dict, registry: dict, marker: Path | None
                      f"instance's bin/mem is too old for satellites (needs SCHEMA_API {MIN_SCHEMA_API}). "
                      "Satellite mode is off until the mother is updated.")
         return
-    row = satellite_row(mother, scope)
-    if row is None:
-        emit_context(f"Maestro: this repo is satellite `{scope}` in the registry, but `{mother_name}` "
-                     f"has no satellites row for it (`{mother / 'bin' / 'mem'} satellite add`). "
+    try:
+        row = mother_row(mother_name, mother, scope, entry, timeout=10)
+    except NetError as exc:
+        emit_context(f"Maestro: this repo is satellite `{scope}` of `{mother_name}`, but {exc}. "
                      "Satellite mode is off.")
-        return
-    if os.path.realpath(row.get("repo_path") or "") != os.path.realpath(os.path.expanduser(entry["repo"])):
-        emit_context(f"Maestro: satellite `{scope}` points to {entry['repo']} in the registry and to "
-                     f"{row.get('repo_path')} in `{mother_name}`. Satellite mode is off until they agree.")
         return
     identity = identity_extract(mother)
     vault_open = write_marker(marker, scope, row.get("vault_folder"))
@@ -315,11 +271,10 @@ def session_start() -> int:
     if "satellites:" not in raw:
         return 0
     try:
-        net = load_net()
-        registry = net.parse_registry(raw, str(reg_file))
+        registry = parse_registry(raw, str(reg_file))
     except Exception:
         return 0
-    scope, entry = net.match_satellite(registry, folder)
+    scope, entry = match_satellite(registry, folder)
     if scope is None:
         return 0
     try:

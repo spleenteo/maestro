@@ -81,30 +81,24 @@ The role describes a mandate and a method. The voice and the identity stay the m
 
 ## 4. Register
 
-First the role in the mother, then the repo in the machine registry. When the second command fails, the block removes the first row, so nothing stays half registered.
+One command writes both stores: the role into the mother's `satellites` table (through the mother's own `bin/mem`) and the repo into the machine registry. When the registry write fails, the command removes the role it just wrote, so nothing stays half registered.
 
 ```bash
 set -o pipefail
 MAESTRO_NET=maestro-net
 command -v maestro-net >/dev/null 2>&1 || MAESTRO_NET="${CLAUDE_PLUGIN_ROOT}/bin/maestro-net"
-MEM="<mother-path>/bin/mem"
-env -u MEM_DB -u MEM_SCOPE "$MEM" satellite add "<scope>" --repo "<repo>" --type "<type>" \
+"$MAESTRO_NET" satellite add "<scope>" --repo "<repo>" --mother "<mother>" --type "<type>" \
   --mandate "<mandate>" --method "<method>" --constraints "<constraints>" \
-  --language "<language>" --vault "<vault-folder>" || exit $?
-"$MAESTRO_NET" satellite add "<scope>" --repo "<repo>" --mother "<mother>" || {
-  rc=$?
-  env -u MEM_DB -u MEM_SCOPE "$MEM" satellite remove "<scope>"
-  exit $rc
-}
+  --language "<language>" --vault "<vault-folder>"
 ```
 
 Drop each optional flag the owner left empty (`--method`, `--constraints`, `--language`, `--vault`) instead of passing an empty string. On a failure, read the exit code:
 
-- `6` (`bin/mem`): the slug was refused. Normalise it and run the block again.
-- `2` (`maestro-net`): a usage error, the slug or the repo path among them. Read stderr, fix that value, run the block again.
-- `7` (`bin/mem`): the repo or the vault folder isn't an absolute path, or the repo doesn't exist.
-- `8` (`bin/mem`) or `9` (`maestro-net`): the scope or the repo is already registered, or the repo contains or sits inside the mother or another satellite. Show the message; `bin/mem satellite list` and `maestro-net list` show what is there. A wrong earlier registration is removed with `satellite remove` in both, by the owner's decision.
-- `5` (`maestro-net`): the mother isn't in the registry.
+- `2`: a usage error, the slug or the repo path among them. Read stderr, fix that value, run the command again.
+- `5`: the mother isn't in the registry.
+- `7`: the mother's path no longer exists, or the repo isn't a directory.
+- `8`: the mother refused the role; stderr carries its `bin/mem` message (a rejected slug, a relative vault folder, a repo already registered there). Fix the value and run the command again.
+- `9`: the scope or the repo is already in the registry, or the repo contains or sits inside the mother or another satellite. Show the message; `maestro-net list` and `bin/mem satellite list` in the mother show what is there. A wrong earlier registration is removed with `maestro-net satellite remove <scope>`, by the owner's decision.
 
 ## 5. Chain check
 
@@ -154,7 +148,7 @@ echo "vault: note written, register-checked, read back and deleted in $VAULT"
 
 Tell the owner, in two or three lines: the satellite is registered; the role and the scope apply from the next session opened in the repo, because the hook runs at session start; the command to open it, `cd "<repo>" && claude`. There they can check `printenv MEM_SCOPE` through a Bash call. The Maestro plugin must stay enabled at user scope: its hooks are what make the repo a satellite.
 
-To undo: `bin/mem satellite remove <scope>` in the mother and `maestro-net satellite remove <scope>`. The scope's memories stay in the mother's db.
+To undo: `maestro-net satellite remove <scope>`, which drops the registry entry and the role in the mother. The scope's memories stay in the mother's db.
 
 ## Writing register
 

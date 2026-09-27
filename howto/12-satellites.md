@@ -35,7 +35,7 @@ Open a session in the repo and ask: "make this repo a satellite of home". The pl
 1. resolves the repo to its main checkout, so a worktree or a subfolder registers the repo itself;
 2. picks the mother from the registry and checks its `SCHEMA_API`;
 3. asks the scope (the folder name normalised), the role fields and the vault folder;
-4. registers the role in the mother (`bin/mem satellite add`) and the repo in the machine registry (`maestro-net satellite add`), undoing the first when the second fails;
+4. registers the satellite with one command, `maestro-net satellite add`, which writes the role into the mother (through its `bin/mem satellite add`) and the repo into the machine registry, undoing the first when the second fails;
 5. runs a chain check: a memory saved and found in the satellite's scope and absent from the mother's default search, a note written in the vault folder, passed to `bin/register-check`, read back and deleted, `git status` in the repo unchanged;
 6. tells you to open a new session in the repo.
 
@@ -71,8 +71,7 @@ bin/mem today --all-scopes
 ## Remove one
 
 ```bash
-bin/mem satellite remove acme            # in the mother
-maestro-net satellite remove acme
+maestro-net satellite remove acme        # registry entry and role in the mother
 ```
 
 The scope's memories stay in the mother's db. The next session in the repo drops the marker: after the first command it prints the one-line notice, after both it starts as an ordinary session.

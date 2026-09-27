@@ -114,7 +114,7 @@ maestro-net register home --path /Users/you/Sites/home-instance \
 
 ### Satellites
 
-A top-level `satellites:` block maps a project repo to its mother instance (`<scope>: {repo, mother}`); the plugin's session hook reads it. `maestro-net satellite add SCOPE --repo ABS --mother NAME` and `maestro-net satellite remove SCOPE` edit that block only. The `satellite` skill runs them; run them by hand only when the owner asks. A satellite is never a recipient of `recap` or `ask`, and `register` refuses an instance path that overlaps a satellite's repo.
+A top-level `satellites:` block maps a project repo to its mother instance (`<scope>: {repo, mother}`); the plugin's session hook reads it. `maestro-net satellite add SCOPE --repo ABS --mother NAME [--type T --mandate ... --vault ...]` writes the role into the mother (with `--type`) and the entry into that block; `maestro-net satellite remove SCOPE` drops both. The `satellite` skill runs them; run them by hand only when the owner asks. A satellite is never a recipient of `recap` or `ask`, and `register` refuses an instance path that overlaps a satellite's repo.
 
 ## When something fails
 
