@@ -1889,6 +1889,67 @@ class TestApplyRegister(SyncFixture):
 
 
 # ---------------------------------------------------------------------------
+# apply — register's own invalid-value guard, once the set is open
+# ---------------------------------------------------------------------------
+
+class TestApplyRegisterGuardAfterTheSetOpens(SyncFixture):
+    """Regression for the REGISTER_INVALID_EXIT check inside apply_register.
+    With the real maestro-register-keys, validate_register_answers's own
+    `render` call already screens every answer before the set opens, so
+    `write` can never return that exit code by the time apply_register runs
+    it (rendering with an empty existing block validates every answered key
+    unconditionally, `write` only the ones missing from the preferences: a
+    key `render` accepted can't make `write` fail). A recorder that accepts
+    on `render` and refuses on `write` reaches the guard directly, standing
+    in for the day the two commands disagree."""
+
+    def recorder_script(self, write_exit: int = 2) -> Path:
+        """`maestro-sync`, `maestro_registry.py` and `maestro_versions.py`
+        copied next to a recorder `maestro-register-keys`: `report` lists
+        one missing key, `render` always accepts, `write` refuses with
+        `write_exit`."""
+        copy = self.root / "guard copy"
+        for name in ("maestro-sync", "maestro_registry.py", "maestro_versions.py"):
+            shutil.copy2(PLUGIN_ROOT / "bin" / name, write(copy / "bin" / name, ""))
+        script = copy / "bin" / "maestro-register-keys"
+        script.write_text(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "  report) printf '%s' "
+            "'{\"block\": \"absent\", \"present\": [], \"missing\": [\"voice\"], \"hints\": {}}' ;;\n"
+            "  render) exit 0 ;;\n"
+            f"  write) echo 'refused after the set opened' >&2; exit {write_exit} ;;\n"
+            "  *) exit 1 ;;\n"
+            "esac\n"
+        )
+        script.chmod(0o755)
+        return copy / "bin" / "maestro-sync"
+
+    def test_a_write_refusal_after_render_accepted_leaves_the_item_pending(self):
+        script = self.recorder_script()
+        plan = json.loads(run_sync(
+            "plan", "--instance", str(self.instance), "--plugin-root", str(self.plugin), "--json",
+            env=self.env, cwd=self.root, script=script,
+        ).stdout)
+        item = next(it for it in plan["items"] if it["kind"] == "register")
+        prefs = self.instance / "private" / "preferences.md"
+        before = prefs.read_bytes()
+        r = run_sync(
+            "apply", "--instance", str(self.instance), "--kind", "register",
+            "--register", "voice=Short and dry",
+            env=self.env, cwd=self.root, script=script,
+        )
+        self.assertEqual(r.returncode, E_USAGE, r.stderr)
+        self.assertIn("refused after the set opened", r.stderr)
+        self.assertEqual(prefs.read_bytes(), before)
+        manifest = json.loads((self.sets()[0] / "manifest.json").read_text())
+        entry = next(e for e in manifest["items"] if e["id"] == item["id"])
+        self.assertIn(entry["outcome"], ("failed", "pending"))
+        self.assertEqual(entry["backups"], [])
+        self.assertFalse((self.sets()[0] / "files" / "private" / "preferences.md").exists())
+
+
+# ---------------------------------------------------------------------------
 # retention of the backup sets
 # ---------------------------------------------------------------------------
 
@@ -2221,6 +2282,75 @@ class TestBackups(SyncFixture):
     def test_a_plain_folder_is_refused(self):
         r = run_sync("backups", env=self.env, cwd=self.root)
         self.assertEqual(r.returncode, E_NOT_INSTANCE)
+
+
+# ---------------------------------------------------------------------------
+# T6 — the slice's Done, end to end (slices.md, V1)
+# ---------------------------------------------------------------------------
+
+class TestSliceDone(SyncFixture):
+    """The V1 Done of slices.md, literally: an instance at an older version,
+    with an instance-specific `tools:` line on one skill file; `plan`
+    reports the changelog slice and one line per item; `apply --kind update`
+    leaves every marked file equal to the mirror's copy with that `tools:`
+    line kept; exactly one backup set with a manifest exists; `rollback`
+    restores every touched file byte for byte, the db included. One method:
+    apply and rollback share the same plan and set, so splitting the three
+    steps into separate tests would only repeat the mirror clone and the
+    apply, not add coverage."""
+
+    SKILL = ".claude/skills/logbook/SKILL.md"
+    TOOLS = "Read, mcp__acme__*"
+
+    def setUp(self):
+        super().setUp()
+        write(self.instance / self.SKILL,
+              marked_md(OLD_VERSION, description=self.SKILL, tools=self.TOOLS))
+
+    def expected(self, rel: str) -> str:
+        tools = self.TOOLS if rel == self.SKILL else None
+        return marked_md(NEW_VERSION, description=rel, body="New body.\n", tools=tools)
+
+    def test_plan_apply_and_rollback_follow_the_slice_done(self):
+        before = {rel: (self.instance / rel).read_bytes() for rel in MARKED_PATHS}
+        db = self.instance / "private" / "memories.db"
+        db_dump = sqlite_dump(db)
+
+        # plan: exit 0, the changelog slice and one line per item on stdout.
+        summary = self.plan()
+        self.assertEqual(summary.returncode, OK, summary.stderr)
+        self.assertIn(f"## {NEW_VERSION}", summary.stdout)
+        for rel in MARKED_PATHS:
+            self.assertRegex(summary.stdout, rf"(?m)^u\d+ +update +{re.escape(rel)} ")
+        plan = json.loads((self.instance / PLAN_FILE).read_text())
+
+        # apply --kind update: every marked file equal to the mirror's copy,
+        # the instance's own tools: line on the skill file kept; exactly one
+        # backup set with a manifest.
+        r = self.apply("--kind", "update")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        for rel in MARKED_PATHS:
+            self.assertEqual((self.instance / rel).read_text(), self.expected(rel))
+        sets = self.sets()
+        self.assertEqual(len(sets), 1, [s.name for s in sets])
+        self.assertTrue((sets[0] / "manifest.json").is_file())
+
+        # further db activity after the apply, so rollback is proven to
+        # restore the set's own copy, not to find the db already right.
+        conn = sqlite3.connect(str(db))
+        with conn:
+            conn.execute("CREATE TABLE scratch (x)")
+            conn.execute("INSERT INTO scratch VALUES (1)")
+        conn.close()
+        self.assertNotEqual(sqlite_dump(db), db_dump)
+
+        # rollback <stamp>: every touched file and the db back byte for byte.
+        rb = run_sync("rollback", plan["stamp"], "--instance", str(self.instance),
+                      env=self.env, cwd=self.root)
+        self.assertEqual(rb.returncode, OK, rb.stderr)
+        for rel in MARKED_PATHS:
+            self.assertEqual((self.instance / rel).read_bytes(), before[rel])
+        self.assertEqual(sqlite_dump(db), db_dump)
 
 
 if __name__ == "__main__":

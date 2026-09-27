@@ -831,12 +831,6 @@ def listen_unit(root: Path) -> Tuple[str, Optional[str], List[dict]]:
     return "listed", None, members
 
 
-def listen_state(root: Path) -> str:
-    """The listen unit's state alone. Apply calls it again at its own time:
-    the plan's state is never trusted."""
-    return listen_unit(root)[0]
-
-
 def retired_items(root: Path) -> List[dict]:
     """The retired paths still in the instance and marked, plus the listen
     unit as one item when at least one of its members is marked."""
@@ -1540,6 +1534,11 @@ def apply_register(root: Path, set_dir: Path, item: dict, entry: dict, answers: 
                            env=register_env(answers), cwd=str(root))
     except OSError as exc:
         raise SyncError(E_PARTIAL, f"cannot run {exe}: {exc}")
+    # Defense in depth: validate_register_answers's `render` call already
+    # screens every answer with the real maestro-register-keys before the
+    # set opens, so `write` cannot return this exit code here today. The
+    # check stays for the day the two commands disagree (see
+    # TestApplyRegisterGuardAfterTheSetOpens, a recorder that reaches it).
     if r.returncode == REGISTER_INVALID_EXIT:
         raise SyncError(E_USAGE, f"{REGISTER_KEYS_CMD} write refused a value, nothing written: {_proc_detail(r)}")
     if r.returncode != 0:
