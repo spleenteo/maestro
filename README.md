@@ -1,131 +1,127 @@
 ---
-tags: [maestro, template, orchestrator, bootstrap, claude-code]
-description: Bootstrap template for a personal Claude Code orchestrator, a single interface to a team of agents and skills, configured via interactive first-launch setup.
+tags: [maestro, template, orchestrator, claude-code, plugin, satellites, memory]
+description: "What Maestro is and every feature it ships: the orchestrator instance, its memory and vault, the agents and skills, the Claude Code plugin with new-instance, maestro-sync, maestro-net, satellites and listen. Read first, then the howto guides."
 ---
 
 # Maestro
 
-A bootstrap template to scaffold your own personal orchestrator: a Claude Code project that acts as a single interface to a team of agents and skills.
+Maestro is a template for a personal orchestrator built on Claude Code: one assistant, with a name and a character you choose, that keeps a memory of what you do, writes into your notes, and coordinates a small team of agents and skills instead of doing everything itself. You create an instance per context of your life (home, a client, a job) and each instance keeps its own identity, memory and notes. A Claude Code plugin ties the instances together and makes project repositories borrow an instance without adding files to them.
 
-Like a conductor, *maestro* doesn't play the instruments. It coordinates the ones that do. The template is a reusable, owner-agnostic pattern. It is written in English and configured through an interactive first-launch setup.
+## The pieces
 
-## What you get
+- **Instance**: a folder with `CLAUDE.md` (the orchestrator's rules), `private/preferences.md` (its identity and your profile, gitignored), `private/memories.db` (its memory), `bin/` (the CLI tools), and the shipped agents and skills. Created by `/maestro:new-instance`.
+- **Vault**: the folder where the orchestrator writes markdown: a daily logbook, "today I learned" notes, longer documents. Any folder on disk, an Obsidian vault included, declared once in preferences.
+- **Memory**: a SQLite log of memories, tasks and ideas, written proactively during conversations and read back for reports. Every access goes through `bin/mem`.
+- **Plugin**: the `maestro` Claude Code plugin, installed once per machine. It carries the commands that must work in any folder: creating an instance, updating it, talking to other instances, attaching a repo as a satellite, listening to a call.
+- **Satellite**: a project repository attached to an instance, its mother. The repo gets the mother's identity, its own memory scope and a folder in the mother's vault, with no file added to the repo.
+- **Registry**: `~/.claude/maestro-instances.yaml`, the machine's list of instances and satellites, maintained by the plugin.
 
-After running `/maestro:new-instance`, you have an orchestrator that:
+## Requirements
 
-- Introduces itself with the name and personality you chose
-- Reads your profile (role, nick, default language) at every session
-- Writes into a vault you declare (`vault_path`) with three note territories as subfolders by default: daily logbook, TIL notes, longer documents. Any filesystem path; Obsidian vault folders welcome but not required.
-- Keeps a memory database of what was done, what's to do, and ideas that emerged, as a log of your collaboration
-- Can hire craft agents through an HR agent that searches the filesystem, marketplaces, and GitHub for matches
-- Applies a frontmatter discipline so the files it writes are searchable by description and tags before anyone reads their body
-
-## What it doesn't do
-
-- No personal data and no hardcoded names
-- No domain-specific skills (finance, music, CRM, etc.). You add those over time
-- No task-manager, calendar, or email integrations. You configure what you need via preferences
+Claude Code, git and Python 3 (standard library only). Optional: [Ollama](https://ollama.com) and [uv](https://docs.astral.sh/uv/) for the semantic layer; macOS 26 with [yap](https://github.com/finnvoor/yap) (`brew install yap`) for live call capture, and the Swift toolchain for input-device rotation during a call.
 
 ## Install
-
-You need a working installation of [Claude Code](https://claude.com/claude-code) and the `maestro` plugin, which ships `new-instance` (creates an instance), `maestro-net` (cross-talk between instances, see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)) and `listen` (live capture of a call, from any session):
 
 ```bash
 claude plugin marketplace add spleenteo/maestro
 claude plugin install maestro@maestro
 ```
 
-User scope, auto-update off.
-
-`/listen` calls the `maestro-listen` command on every question you ask during a call. To keep permission prompts out of the conversation, allow it once in `~/.claude/settings.json`:
-
-```json
-{ "permissions": { "allow": ["Bash(maestro-listen *)"] } }
-```
-
-From any folder, run:
+The plugin installs at user scope with auto-update off. Then, from any folder:
 
 ```
 /maestro:new-instance
 ```
 
-`new-instance` asks for a new or empty destination folder, takes the template at the plugin's commit, and interviews you with a short set of questions, starting with your preferred language. From that point on the whole interview runs in that language. In order:
-
-1. **Default language**: how the orchestrator talks to you by default (asked in English)
-2. **Project name**: the top-level scope this orchestrator is for (e.g. "Personal life", "Acme startup", "Novel draft"); a slug of it becomes the default vault folder name later
-3. **Project context and expectations**: a few lines about what this context looks like day to day and what you expect from an AI assistant
-4. **Name of your orchestrator**: what it should call itself
-5. **Inspiration**: a character or archetype (real or fictional) that captures the personality you want; the skill proposes 3–5 adjectives based on it, which you accept or tweak
-6. **Your nick**: how the orchestrator should refer to you
-7. **Your full name**: for context
-8. **Your role**: what you do
-9. **People you work with** (optional): team, collaborators, family, clients, whoever's relevant
-10. **File territories**: where markdown notes should live. `new-instance` writes four keys to preferences: `vault_path` (the root) plus `logbook_path`, `til_path`, `documents_path` as subfolders by default. Three options: internal (vault is `./<project-slug>/` inside the repo, with the slug derived from Q2, gitignored), external (you give an absolute path to a vault on disk, e.g. an Obsidian vault: subfolders default to `<vault_path>/{logbook,til,documents}`), or skip (no territories for now)
-
-An optional block follows, skippable with one word: six short questions on how the orchestrator writes for you (tone of emails, tone of documents, your voice, an email sign-off, whether you translate drafts, words to avoid), written to the `## Writing register` section of preferences with defaults for whatever you skip. Existing instances are asked the same questions once by `/maestro:maestro-sync`.
-
-After the questions and a quick summary, `finalize.sh` (shipped inside the plugin) handles the mechanical work in one atomic step: writes `private/preferences.md`, copies `memories.db.template` into `private/memories.db`, copies `routines.example.yaml` into `private/routines.yaml`, inserts the first memory log row, and removes the three root templates. The first logbook entry and the first TIL are written just before that: creative content the orchestrator composes in your language. `new-instance` then registers the instance in `~/.claude/maestro-instances.yaml`, so `maestro-net` can reach it.
-
-`cd` into the new folder and start working with your orchestrator:
+The skill asks for a new or empty destination folder, then interviews you: your language, the project this instance is for, its context, the orchestrator's name and the character that inspires it, your nick, name and role, the people you work with, where the notes live (a folder inside the instance, a folder of your own such as an Obsidian vault, or none for now), and an optional block on how it writes for you (tones, voice, sign-off, translation). It writes `private/preferences.md`, seeds the memory with a first row, writes the first logbook entry and the first TIL, and registers the instance in the registry. Then:
 
 ```bash
 cd "<destination>" && claude
 ```
 
-Any time you feel lost later, type `/guide`, and the orchestrator will read its own docs and answer. (`/help` is a Claude Code built-in command and won't reach this skill.)
+Type `/guide` whenever you're lost: the orchestrator reads its own docs and answers.
 
-## The orchestrator pattern
+## A day with your orchestrator
 
-Every instance built from this template has:
+- "Goodmorning": it greets you in character, runs the task manager's garbage collector when you have one, and reads the plan for the day from tasks and memories.
+- "Segna che ho chiamato Anna" / "Remember that the deploy went out": a memory, announced in one line right after the write.
+- "Remind me to send the deck by Friday": a task, in your task manager when preferences declare one, in the memory otherwise. An undated, unurgent "I should…" stays an idea until you decide.
+- "What do I need to do this week?": the `scheduler` agent (Cal) aggregates tasks, events and routines from the channels you wired.
+- "Write a reply to the client": the reply is drafted under the writing register, in the tone preferences set for emails, with your sign-off.
+- "Recap of today": the `logbook` skill writes the daily note into your vault, reading the memory and the day's parallel sessions.
+- "Add `~/Code/blog` as a sub-app": the `add-external-app` skill links the project so the orchestrator can work in it.
+- `/maestro:maestro-sync`: pulls the latest template into the instance, file by file, with your confirmation.
 
-- **`CLAUDE.md`**: defines the orchestrator role, routing, delegation, memory behavior, frontmatter discipline. Generic, with no owner-specific content.
-- **`private/preferences.md`**: identity + owner profile + customizations, loaded at every session start. Gitignored.
-- **`private/memories.db`**: SQLite log of memories, tasks, ideas. Gitignored.
-- **`memories.db.template`**: empty SQLite seed with the schema, copied into `private/` by `new-instance`.
-- **`.claude/roster.yaml`**: registry of active craft agents (ships with `librarian`, `scheduler` and `steward` enrolled).
-- **`.claude/agents/`**: the shipped craft agents `hr` (recruiter and manager of the roster), `librarian` (vault research and frontmatter hygiene), `scheduler` (cold data layer for prospective/retrospective questions), `steward` (weekly backlog review that proposes closures, groupings and moves, never writes).
-- **`.claude/skills/`**: the hub skills `logbook` (daily note in your configured `logbook_path`), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (the prose register in full: loaded before writing an email, a message or a document, and run as the post-pass on the finished text), `translate` (two versions of a draft in the owner's target language, only where preferences enable translation).
-- **`bin/mem`**: CLI wrapper for `memories.db` (escape-safe writes, relative dates, reports), backed by `bin/mem-vec` for the optional semantic layer.
-- **`bin/session-digest`**: pulls the owner's messages from the day's parallel sessions, for the `logbook` skill.
-- **`bin/register-check`**: mechanical check of the writing register prohibitions that carry a syntactic signature.
-- **`.claude-plugin/marketplace.json`** and **`plugins/`**: the `maestro` Claude Code plugin, installed separately (see Install above) rather than through `/maestro:maestro-sync`, because it's meant to be visible from every session on the machine, not carried per instance. Currently `plugins/maestro/skills/new-instance` (creates a new instance), `plugins/maestro/skills/maestro-sync` (pulls template updates into an instance), `plugins/maestro/skills/maestro-net` (the cross-talk channel between several Maestro instances, see [`howto/11-maestro-net.md`](howto/11-maestro-net.md)), `plugins/maestro/skills/satellite` with the plugin's hooks (a project repo borrows an instance's identity and memory without files of its own, see [`howto/12-satellites.md`](howto/12-satellites.md)), and `plugins/maestro/skills/listen` with the `maestro-listen` command (live capture of a call in any session: at close it proposes where to file the note, from the vault of an instance or a satellite, and writes only where you confirm).
-- **`.gitignore`**: covers `private/`, workspace artifacts, and local settings.
+## What ships in an instance
 
-Everything else you add as you use the orchestrator:
+- `CLAUDE.md`: role, session start, routing, delegation, memory behaviour, markdown discipline, writing register. Generic, no owner data.
+- `private/preferences.md`: identity, owner profile, file territories, available apps, integrations, warm task channel, communication preferences, writing register values. `preferences.example.md` documents every section.
+- `private/memories.db`, seeded from `memories.db.template`; `private/routines.yaml`, seeded from `routines.example.yaml`.
+- Agents in `.claude/agents/`, registered in `.claude/roster.yaml`: `librarian` (Olivier: vault research and frontmatter hygiene), `scheduler` (Cal: tasks, events and routines from the channels in `.claude/agents/data/channels.yaml`), `steward` (Della: a weekly backlog review that proposes closures, groupings and moves, never writes), and `hr` (hires and retires the others).
+- Skills in `.claude/skills/`: `logbook`, `add-external-app`, `guide`, `writing-register`, `translate`.
+- `bin/mem` and `bin/mem-vec` (the memory CLI and its semantic layer, with `bin/mem_schema.py`), `bin/session-digest` (the owner's messages from the day's sessions), `bin/register-check` (the mechanical check of the writing register).
+- `howto/`: twelve guides, listed below.
 
-- To add a sub-app, invoke the `add-external-app` skill. It creates the symlink in `apps/<name>/`, generates a pointer skill, and updates the "Available apps" section in `private/preferences.md`.
-- For a recurring task handled by a specialist, ask your orchestrator. It invokes HR, which proposes an agent and, once you approve, installs it into `.claude/agents/` and the roster.
-- A skill your instance needs goes straight into `.claude/skills/`. No ceremony.
+## Features
 
-## Philosophy
+**Memory.** Three row types: `memory` (a fact), `task` (with status, due date, priority), `idea` (an open question). The orchestrator writes without being asked when work completes, when you tell it something happened, when you list things to do, when an idea emerges; every write is announced in one line. A task is created only on a direct request, a date, or evident urgency; everything else stays an idea. Writes between midnight and 06:00 belong to the previous day. `bin/mem` covers saves, updates, reports (`today`, `todo`, `overdue`, `stats`), search with filters, markers and bulk writes.
 
-Three principles guide the pattern:
+**Vault and markdown discipline.** Every file the orchestrator writes carries `tags` and a one-line `description` in its frontmatter, so it can be found by `rg` before anyone reads its body. Three territories (`logbook_path`, `til_path`, `documents_path`) under one `vault_path`; nothing is written outside them without your yes.
 
-1. **Single interface**: the owner talks only to the orchestrator. No agent speaks directly to the owner. Output from agents is always filtered or synthesized by the orchestrator.
-2. **Delegate when it fits, not always**: the orchestrator answers directly to conversational requests. Delegation is reserved for clear matches with registered agents.
-3. **Proactive on recurring patterns**: if the same domain of request keeps coming up without a dedicated agent, the orchestrator suggests hiring one. The owner decides.
+**Logbook.** The daily note, written on "recap of today" from the memory, the conversation and the transcripts of the other sessions of the day, in your language and first person.
 
-These live in `CLAUDE.md` under "Role: orchestrator" and carry through every instance.
+**Writing register.** Seven prohibitions on every text written for a person (no meta-commentary, no sycophantic concessions, no negative parallelism, no em dash as a pause, no bold as emphasis, no rhythmic triads, no judgment as tone of voice), three domains with a default tone each (communication, documentation, synthesis), your voice and sign-off, and a post-pass on every document, post or README before it goes out. `translate` returns two versions of a draft in your target language when preferences enable it.
+
+**Agents and HR.** Craft agents live in `.claude/agents/` and in the roster; you talk to them through the orchestrator, by alias. HR searches the filesystem, the marketplace and GitHub, proposes, and installs or retires on your approval.
+
+**Scheduler channels and routines.** Cal reads `channels.yaml` (the memory always; task tools, calendars and CRMs when you declare them) and `private/routines.yaml` (recurring commitments) to answer "what do I need to do" and "what did I do".
+
+**Sub-apps.** An external project registered as `apps/<name>` (a symlink) with a pointer skill and an `access` level: `read-only` or `read-write`. The orchestrator works there for small edits and hands you the command for a dedicated session when the work is foundational.
+
+**Warm task channel.** An external task manager as the live layer of tasks (`memories.db` stays the cold one), declared in preferences with the skill that drives it; a lazy garbage collector at session start archives the tasks closed there.
+
+**Semantic layer.** With Ollama and uv, `bin/mem search --semantic` recalls by meaning over the memory and the vault (chunked by section), `similar` and `dupes` find neighbours and duplicates, `embed` keeps the vectors current. Without them, everything degrades to keyword search.
+
+**maestro-net.** `maestro-net recap <instance> "…"` writes a memory into another instance; `maestro-net ask <instance> "…"` asks it a question headless; from a satellite, `maestro-net request "…"` opens a background session in the mother. The registry's `accepts` field says which verbs each instance admits; the channel carries memories and questions, never permissions.
+
+**Satellites.** In a project repo, "make this repo a satellite of home" runs the plugin's `satellite` skill: it registers the repo with its role (type, mandate, method, constraints, vault folder) in the mother and in the registry. From then on, every session opened in the repo gets the mother's identity, its own memory scope (`MEM_SCOPE`) and write access to its vault folder, through the plugin's hooks. The mother answers the satellite's questions by relevance to its mandate.
+
+**Listen.** `/listen` captures a call in progress (system audio plus microphone) through `yap`, keeps a transcript growing on disk, answers questions about what has been said so far, and files a note plus the raw transcript where you confirm at close. Works in an instance, in a satellite and in any folder.
+
+**Updates.** Files distributed by Maestro carry `origin: maestro` and a version. `/maestro:maestro-sync` mirrors the template, shows the changelog delta, and applies the diffs file by file with your confirmation; the only field you may customize on a distributed file is `tools:`.
+
+## The plugin
+
+`plugins/maestro/` holds the plugin, published through `.claude-plugin/marketplace.json`:
+
+- skills: `new-instance`, `maestro-sync`, `maestro-net`, `satellite`, `listen`
+- commands on the Bash tool's PATH: `maestro-net`, `maestro-listen`, `maestro-register-keys`
+- hooks: a `SessionStart` hook that recognises a satellite repo, and a `PreToolUse` guard that opens its vault folder to the file tools
+
+`/listen` calls `maestro-listen` on every question you ask during a call. To keep permission prompts out of the conversation, allow it once in `~/.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["Bash(maestro-listen *)"] } }
+```
 
 ## Going deeper
 
-After setup, the `howto/` folder has eleven guides:
-
 - [`howto/01-skills.md`](howto/01-skills.md): add, invoke, write, retire skills
 - [`howto/02-agents-and-hr.md`](howto/02-agents-and-hr.md): hire, use, retire agents via HR
-- [`howto/03-customization.md`](howto/03-customization.md): customize identity, owner profile, context, communication style
-- [`howto/04-memory-and-integrations.md`](howto/04-memory-and-integrations.md): memory db internals and how to integrate external tools (Basecamp, Google Calendar, reminders)
-- [`howto/05-backup-and-sync.md`](howto/05-backup-and-sync.md): privacy, `.gitignore`, cloud-drive sync, symlinks to external apps/skills/agents
-- [`howto/06-configure-cal.md`](howto/06-configure-cal.md): configure the `scheduler` agent (data channels, routines, question types)
-- [`howto/07-warm-task-channel.md`](howto/07-warm-task-channel.md): wire an external task manager as the warm layer, with `memories.db` as the cold layer
-- [`howto/08-markdown-discipline.md`](howto/08-markdown-discipline.md): frontmatter, tags, descriptions, YAML safety, wikilinks
-- [`howto/09-memoria-semantica.md`](howto/09-memoria-semantica.md): the optional semantic layer over `memories.db` and the vault
-- [`howto/10-writing-register.md`](howto/10-writing-register.md): the seven prose prohibitions, the three domains and their tones, the per-instance values, the post-pass, and `bin/register-check`
-- [`howto/11-maestro-net.md`](howto/11-maestro-net.md): cross-talk between several Maestro instances (`recap`, `ask`, a satellite's `request`, the instance registry)
+- [`howto/03-customization.md`](howto/03-customization.md): identity, owner profile, context, communication style
+- [`howto/04-memory-and-integrations.md`](howto/04-memory-and-integrations.md): memory db internals, `bin/mem`, external tools
+- [`howto/05-backup-and-sync.md`](howto/05-backup-and-sync.md): privacy, `.gitignore`, cloud-drive sync, sub-apps
+- [`howto/06-configure-cal.md`](howto/06-configure-cal.md): the `scheduler` agent, data channels, routines
+- [`howto/07-warm-task-channel.md`](howto/07-warm-task-channel.md): an external task manager as the warm layer
+- [`howto/08-markdown-discipline.md`](howto/08-markdown-discipline.md): frontmatter, tags, YAML safety, wikilinks
+- [`howto/09-semantic-memory.md`](howto/09-semantic-memory.md): the semantic layer over the memory and the vault
+- [`howto/10-writing-register.md`](howto/10-writing-register.md): the prose register, domains, tones, `bin/register-check`
+- [`howto/11-maestro-net.md`](howto/11-maestro-net.md): the channel between instances and the registry
+- [`howto/12-satellites.md`](howto/12-satellites.md): project repos attached to an instance
 
-## Status
+## Development
 
-Actively evolving. Versions follow the date-based `vYYYY.MM.DD.N` scheme. See [`CHANGELOG.md`](CHANGELOG.md) for the full history and migration notes. Instances pull updates with `/maestro:maestro-sync`, from the plugin.
+The repository is the origin of the template: it has no `private/` and works as a plain developer session. Tests run with `python3 -m unittest discover -s tests -t .` (standard library only, no real instance touched); `docs/development-guidelines.md` holds the rules for code, prose and commits; `docs/decisions-log/` records the architectural decisions; `CHANGELOG.md` records every version, in the date-based `vYYYY.MM.DD.N` scheme, with migration notes for instances syncing in.
 
 ## License
 
@@ -133,4 +129,4 @@ TBD.
 
 ## Contributing
 
-If you build your own orchestrator from this template and find improvements worth backporting, open a PR or issue.
+If you build your own orchestrator from this template and find improvements worth backporting, open a PR or an issue.

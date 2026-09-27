@@ -1,10 +1,39 @@
 # CHANGELOG
 
-Versioned record of intentional changes to the Maestro template — patterns, skills, agents, conventions distributed to instances.
+Versioned record of intentional changes to the Maestro template: patterns, skills, agents, conventions distributed to instances.
 
-Versions follow the **`vYYYY.MM.DD.N`** scheme (date-based, incremental within the day). Each entry documents what changed, why it matters, and any migration note for instances syncing in.
+Versions follow the `vYYYY.MM.DD.N` scheme (date-based, incremental within the day). Each entry documents what changed, why it matters, and any migration note for instances syncing in.
 
 The skill `maestro-sync` reads this file from the latest pull of the read-only mirror (`~/.maestro/`) and shows the delta between an instance's current `maestro_version` and `HEAD` before applying file-level diffs.
+
+## Versions at a glance
+
+One line per version; the full entry below carries the reasons and the migration notes.
+
+| Version | Theme |
+|---|---|
+| v2026.09.27.1 | The mother answers a satellite's `ask` and `request` by relevance to its mandate, with `private/` and other scopes always excluded |
+| v2026.09.24.1 | Task creation thresholds in `CLAUDE.md` and in every channel skill; the `steward` agent reviews the backlog weekly |
+| v2026.09.17.1 | The writing register gains domains (communication, documentation, synthesis), tones, per-instance values and the `translate` skill |
+| v2026.09.16.1 | `/listen` moves into the plugin as the `maestro-listen` command, usable from any session |
+| v2026.09.15.1 | Satellites and the Maestro plugin: `new-instance`, `maestro-sync` and `maestro-net` ship as plugin skills; a project repo borrows an instance's identity and memory |
+| v2026.09.10.1 | The `listen` skill: live capture of a call with `yap`, questions during the call, a note at close |
+| v2026.09.05.1 | Idea versus task: undated work goes to the task manager, ideas carry `workbench` or `dormant` |
+| v2026.08.26.2 | `maestro-net`: `recap` and `ask` between an owner's instances, with the machine registry |
+| v2026.08.26.1 | The logbook reads the day's parallel sessions through `bin/session-digest` |
+| v2026.08.14.1 | The writing register: seven prohibitions, the `writing-register` post-pass skill, `bin/register-check` |
+| v2026.07.16.2 | The semantic layer extends to the markdown vault, chunked by section, with one fused recall |
+| v2026.07.16.1 | Optional semantic layer over `memories.db`: `search --semantic`, `similar`, `dupes`, `embed` |
+| v2026.07.15.2 | `CLAUDE.md` slimmed from 489 to about 260 lines; reference material moves to canonical sources |
+| v2026.07.15.1 | `maestro-sync` delivers files created upstream after an instance was cloned |
+| v2026.05.28.1 | The librarian gains tag parsimony and a symlink safety rail |
+| v2026.05.23.2 | The warm task channel: an external task manager as the warm layer, `memories.db` as the cold one, a lazy garbage collector |
+| v2026.05.23.1 | `bin/mem`, the CLI over `memories.db` |
+| v2026.04.30.4 | The `tools:` frontmatter field may be customized per instance on distributed files |
+| v2026.04.30.3 | The `maestro-sync` skill, the sync engine |
+| v2026.04.30.2 | Three patterns promoted from a personal instance into the template |
+| v2026.04.30.1 | Available apps moves from `CLAUDE.md` into `preferences.md`; the distribution rule |
+| v2026.04.29.1 | Initial snapshot for changelog tracking |
 
 ---
 
