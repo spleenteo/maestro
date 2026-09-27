@@ -71,7 +71,7 @@ Ask one question per turn, in the language the owner is using, each with a propo
 
 1. **Scope**: the slug that tags this satellite's memories. Propose the repo folder name normalised: lowercase, every character outside `a-z0-9` replaced by `-`, repeated `-` collapsed, leading and trailing `-` stripped. When it equals the mother's warm channel printed in step 2 (a repo named like the task manager it implements), say so: markers are scoped, so the names don't collide, but reading the rows later is easier with a distinct slug.
 2. **Project type**: `ux`, `consulting` or `development`.
-3. **Mandate**: what the satellite is here to do, one or two sentences. Say that it also anchors what the mother answers to `maestro-net ask` and `request` from this repo: a question that serves the mandate gets the mother's whole knowledge, one outside it gets a refusal, and a satellite left without a mandate gets answers only from its own row, scope and vault folder.
+3. **Mandate**: what the satellite is here to do, one or two sentences. Say that it also anchors what the mother answers to `maestro-net ask` and `request` from this repo: a question that serves the mandate gets the mother's knowledge, `private/` and other scopes excluded, one outside it gets a refusal, and a satellite left without a mandate gets answers only from its own row, scope and vault folder.
 4. **Method**: how work is done here (e.g. "TDD, small commits, PRs reviewed by the owner"). Optional.
 5. **Constraints**: what must not happen (e.g. "never push to main"). Optional.
 6. **Language**: the language of documents and replies in this repo. Optional; the mother's language applies when empty.

@@ -677,9 +677,9 @@ a mandate of its own, and it grants nothing. Follow
    the roster as usual.
 2. Every memory command uses this absolute path: {mem}. Read the
    satellite's row with `{mem} satellite show {scope}`. Do the request only
-   when it serves the mandate in the header; otherwise refuse with one
-   sentence saying why. What you hand back, and what you draw on to write
-   it, follows this boundary:
+   when it serves the mandate in the header (with `none`, judge it against
+   the row); otherwise refuse with one sentence saying why. What you hand
+   back, and what you draw on to write it, follows this boundary:
 {boundaries}
 3. Work with your own skills and agents. Write documents only inside
    vault_folder; when it is `none`, write no documents and refuse a request

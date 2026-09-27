@@ -103,12 +103,12 @@ class HookCase(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def add_satellite_row(self):
-        r = subprocess.run(
-            [str(self.mother / "bin" / "mem"), "satellite", "add", "acme",
-             "--repo", str(self.repo), "--type", "development",
-             "--mandate", "Ship the acme app", "--vault", str(self.vault)],
-            capture_output=True, text=True, env=self.env())
+    def add_satellite_row(self, mandate="Ship the acme app"):
+        cmd = [str(self.mother / "bin" / "mem"), "satellite", "add", "acme",
+               "--repo", str(self.repo), "--type", "development", "--vault", str(self.vault)]
+        if mandate is not None:
+            cmd += ["--mandate", mandate]
+        r = subprocess.run(cmd, capture_output=True, text=True, env=self.env())
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def write_registry(self, satellites=True, accepts="recap, ask"):
@@ -226,6 +226,20 @@ class TestSessionStart(HookCase):
         ctx = self.context(self.session_start(self.repo))
         self.assertIn("maestro-net request", ctx)
         self.assertIn("/maestro:listen", ctx)
+
+    def test_the_context_says_the_mandate_anchors_the_mothers_answers(self):
+        self.write_registry()
+        self.add_satellite_row()
+        ctx = self.context(self.session_start(self.repo))
+        self.assertIn("serves this satellite's mandate", ctx)
+        self.assertNotIn("has no mandate", ctx)
+
+    def test_without_a_mandate_the_context_says_the_folder_perimeter_holds(self):
+        self.write_registry()
+        self.add_satellite_row(mandate=None)
+        ctx = self.context(self.session_start(self.repo))
+        self.assertIn("has no mandate", ctx)
+        self.assertNotIn("serves this satellite's mandate", ctx)
 
     def test_without_env_file_the_context_says_scope_is_not_exported(self):
         self.write_registry()

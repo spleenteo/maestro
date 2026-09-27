@@ -24,12 +24,16 @@ E_EXISTS = 9
 
 
 def run(*args, env=None, cwd=None, stdin=None):
+    """A value of None in `env` unsets that variable for the child."""
     base = dict(os.environ)
     base.pop("MEM_DB", None)
     base.pop("MEM_SCOPE", None)
     base.pop("MAESTRO_INSTANCES", None)
     if env:
         base.update(env)
+        for key, value in env.items():
+            if value is None:
+                base.pop(key, None)
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         capture_output=True, text=True, env=base, cwd=cwd, input=stdin,
@@ -1036,6 +1040,11 @@ class TestRequest(SatelliteFixture):
             self.assertEqual(len(hits), 1, field)
             self.assertLess(hits[0], fence, field)
             self.assertEqual(lines[hits[0]], f"{field}: {value}")
+
+    def test_with_a_mandate_the_boundary_is_anchored_to_it(self):
+        r = self.request("x")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        log = self.logged()
         self.assertIn(MANDATE_BOUNDARY, log)
         self.assertNotIn(FOLDER_BOUNDARY, log)
 
@@ -1086,8 +1095,8 @@ class TestAskFromSatellite(SatelliteFixture):
         self.assertIn(FOLDER_BOUNDARY, log)
         self.assertNotIn(MANDATE_BOUNDARY, log)
 
-    def test_a_row_without_role_columns_reads_as_none(self):
-        env = {k: "" for k in SAT_ROLE}
+    def test_a_row_with_null_role_columns_reads_as_none(self):
+        env = {k: None for k in SAT_ROLE}
         env["SAT_MANDATE"] = "keep the site alive"
         r = self.ask("home", "x", **env)
         self.assertEqual(r.returncode, OK, r.stderr)
