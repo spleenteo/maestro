@@ -55,8 +55,28 @@ command never asks anything.
                     `(skipped by owner)`, `ABORTED by owner after N files`
                     (no item needed), a retired path or the register keys
                     `(kept by owner)`.
-    rollback        not implemented yet
-    backups         not implemented yet
+    rollback STAMP [--instance DIR]
+                    restores the set private/backups/<STAMP>-sync/ from its
+                    manifest, the items in reverse order: every file the set
+                    holds for an item copied back from files/<path> (a
+                    replaced file, a removed retired path, bin/ scripts,
+                    private/preferences.md), a new file removed, a bin/ script
+                    the apply added removed; then the memory db copied back
+                    from db/memories.db after memories.db-wal and -shm are
+                    removed (nothing when the set holds no db). An item that
+                    never ran (pending, postponed) or touched nothing has
+                    nothing to restore: it is skipped, and the output says so.
+                    Holds the lock like apply; appends `rollback <stamp> (<N>
+                    items restored)` to the log. E_ITEM on an unknown stamp, a
+                    set lacking a file it should hold, or a manifest path
+                    outside the instance, with nothing touched.
+    backups [--instance DIR]
+                    lists the sets newest first, one line each:
+                    `<stamp>  <from> → <to>  <N> items  <applied>/<failed>/<pending>`
+                    (a postponed item counts as pending: nothing of it was
+                    applied); then, when loose private/*.bak.* backups of
+                    earlier syncs exist, one line saying they are not sets
+                    and stay untouched.
 
 `plan` writes only the mirror (clone on first run, fetch, reset) and the
 plan file: the instance's other files are read. Without --plugin-root the
@@ -65,25 +85,28 @@ that the loaded plugin is the installed one is skipped, with a warning.
 The plan is printed as a readable summary, or as the plan file's JSON
 with --json.
 
-`apply` holds private/maestro-sync.lock while it runs (E_LOCKED when
-another apply holds it) and refuses a stale plan (E_STALE) when the mirror's
-HEAD moved or a file no longer matches the checksum the plan recorded (for
-a new file: when its path now exists). A failed item stops the run: the
-items before it stay applied, the ones after it stay pending in the
-manifest, and the exit code is E_PARTIAL. A postponed listen unit doesn't
-stop the run; the exit code is POSTPONED when everything else applied.
+`apply` and `rollback` hold private/maestro-sync.lock while they run
+(E_LOCKED when another holds it). `apply` refuses a stale plan (E_STALE)
+when the mirror's HEAD moved or a file no longer matches the checksum the
+plan recorded (for a new file: when its path now exists). A failed item
+stops the run: the items before it stay applied, the ones after it stay
+pending in the manifest, and the exit code is E_PARTIAL. A postponed listen
+unit doesn't stop the run; the exit code is POSTPONED when everything else
+applied. When the set, the lock, the log or the plan can't be written under
+private/ before anything is applied, the exit code is E_BACKUP.
 
 Exit codes, always explicit, never a silent degradation:
      0  OK              done
-     2  E_USAGE         usage error, or a verb not implemented yet
+     2  E_USAGE         usage error
      3  E_NOT_INSTANCE  not an instance root, or the template repository
      4  E_MIRROR        the mirror, the working tree or a git call failed
      5  E_PLUGIN        the installed plugin can't be checked or is behind
      6  E_STALE         the plan is older than the mirror or than a file
-     7  E_ITEM          unknown item, or a bad plan
+     7  E_ITEM          unknown item or set, or a bad plan or manifest
      8  E_PARTIAL       a write failed after others succeeded
-     9  E_LOCKED        another apply holds private/maestro-sync.lock
+     9  E_LOCKED        another apply or rollback holds private/maestro-sync.lock
     10  POSTPONED       the listen unit, while a capture runs
+    11  E_BACKUP        the set, the lock, the log or the plan can't be written; nothing applied
 """
 
 from __future__ import annotations
@@ -120,18 +143,20 @@ E_ITEM = 7
 E_PARTIAL = 8
 E_LOCKED = 9
 POSTPONED = 10
+E_BACKUP = 11
 
 EXIT_CODES = (
     (OK, "OK", "done"),
-    (E_USAGE, "E_USAGE", "usage error, or a verb not implemented yet"),
+    (E_USAGE, "E_USAGE", "usage error"),
     (E_NOT_INSTANCE, "E_NOT_INSTANCE", "not an instance root, or the template repository"),
     (E_MIRROR, "E_MIRROR", "the mirror, the working tree or a git call failed"),
     (E_PLUGIN, "E_PLUGIN", "the installed plugin can't be checked or is behind"),
     (E_STALE, "E_STALE", "the plan is older than the mirror or than a file"),
-    (E_ITEM, "E_ITEM", "unknown item, or a bad plan"),
+    (E_ITEM, "E_ITEM", "unknown item or set, or a bad plan or manifest"),
     (E_PARTIAL, "E_PARTIAL", "a write failed after others succeeded"),
-    (E_LOCKED, "E_LOCKED", "another apply holds private/maestro-sync.lock"),
+    (E_LOCKED, "E_LOCKED", "another apply or rollback holds private/maestro-sync.lock"),
     (POSTPONED, "POSTPONED", "the listen unit, while a capture runs"),
+    (E_BACKUP, "E_BACKUP", "the set, the lock, the log or the plan can't be written; nothing applied"),
 )
 
 PLUGIN_ID = "maestro@maestro"
@@ -1043,7 +1068,7 @@ def cmd_plan(args) -> int:
     try:
         write_json_atomic(plan_file, plan)
     except OSError as exc:
-        raise SyncError(E_NOT_INSTANCE, f"cannot write the plan {plan_file}: {exc}")
+        raise SyncError(E_BACKUP, f"cannot write the plan {plan_file}: {exc}")
     if args.json:
         print(json.dumps(plan, indent=2, ensure_ascii=False))
     else:
@@ -1071,7 +1096,7 @@ def append_log(root: Path, line: str) -> None:
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
     except OSError as exc:
-        raise SyncError(E_NOT_INSTANCE, f"cannot append to {path}: {exc}")
+        raise SyncError(E_BACKUP, f"cannot append to {path}: {exc}")
 
 
 def item_log_line(item: dict, marker: str, upstream: Optional[str]) -> str:
@@ -1111,15 +1136,16 @@ def plan_item(plan: dict, item_id: str) -> dict:
 
 def acquire_lock(root: Path) -> Path:
     """private/maestro-sync.lock, created with O_CREAT | O_EXCL so two applies
-    never run at once. The caller removes it in a `finally`."""
+    (or an apply and a rollback) never run at once. The caller removes it in
+    a `finally`."""
     lock = root / LOCK_FILE
     try:
         fd = os.open(str(lock), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     except FileExistsError:
-        raise SyncError(E_LOCKED, f"another apply holds {lock}: wait for it to finish, or remove "
-                                  "the file if no maestro-sync is running")
+        raise SyncError(E_LOCKED, f"another apply or rollback holds {lock}: wait for it to finish, or "
+                                  "remove the file if no maestro-sync is running")
     except OSError as exc:
-        raise SyncError(E_NOT_INSTANCE, f"cannot create {lock}: {exc}")
+        raise SyncError(E_BACKUP, f"cannot create {lock}: {exc}")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(f"{os.getpid()}\n")
     return lock
@@ -1140,8 +1166,10 @@ def set_dir_for(root: Path, plan: dict) -> Path:
     return root / BACKUPS_DIR / f"{plan['stamp']}{SET_SUFFIX}"
 
 
-def write_manifest(set_dir: Path, manifest: dict, code: int = E_NOT_INSTANCE) -> None:
-    """The manifest, replaced atomically (tempfile + os.replace)."""
+def write_manifest(set_dir: Path, manifest: dict, code: int = E_BACKUP) -> None:
+    """The manifest, replaced atomically (tempfile + os.replace). The first
+    write of a run fails as E_BACKUP (nothing applied yet); the rewrites
+    after an item pass E_PARTIAL."""
     try:
         write_json_atomic(set_dir / MANIFEST_NAME, manifest)
     except OSError as exc:
@@ -1169,9 +1197,9 @@ def backup_db(src: Path, dest: Path) -> None:
             source.close()
         size = dest.stat().st_size
     except (sqlite3.Error, OSError) as exc:
-        raise SyncError(E_NOT_INSTANCE, f"cannot back up {src} to {dest}: {exc}")
+        raise SyncError(E_BACKUP, f"cannot back up {src} to {dest}: {exc}")
     if verdict != "ok" or pages[0] != pages[1] or size == 0:
-        raise SyncError(E_NOT_INSTANCE,
+        raise SyncError(E_BACKUP,
                         f"the backup {dest} failed its check (integrity {verdict}, pages "
                         f"{pages[0]} vs {pages[1]}, {size} bytes): nothing applied")
 
@@ -1214,7 +1242,7 @@ def open_set(root: Path, plan: dict, selected: List[dict]) -> Tuple[Path, dict]:
     try:
         set_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise SyncError(E_NOT_INSTANCE, f"cannot create the backup set {set_dir}: {exc}")
+        raise SyncError(E_BACKUP, f"cannot create the backup set {set_dir}: {exc}")
     write_manifest(set_dir, manifest)
     if fresh and manifest["db"]:
         dest = set_dir / SET_DB_PATH
@@ -1242,17 +1270,24 @@ def back_up_file(root: Path, set_dir: Path, rel: str) -> None:
 # apply: the items
 # --------------------------------------------------------------------------
 
-def _safe_rel(root: Path, rel: object) -> bool:
-    """A relative path this command may touch at all: non-empty, not `.`,
-    not absolute, no `..`, not under private/, and its real path inside the
-    instance."""
+def _inside_root(root: Path, rel: object) -> bool:
+    """A relative path that stays inside `root`: a non-empty string, not
+    `.`, not absolute, no `..`, its real path below the root's real path."""
     if not isinstance(rel, str) or rel in ("", ".") or os.path.isabs(rel):
         return False
     parts = Path(rel).parts
-    if not parts or ".." in parts or parts[0] == "private":
+    if not parts or ".." in parts:
         return False
+    base = real(root)
     target = real(root / rel)
-    return target != root and str(target).startswith(str(root) + os.sep)
+    return target != base and str(target).startswith(str(base) + os.sep)
+
+
+def _safe_rel(root: Path, rel: object) -> bool:
+    """A relative path apply may touch at all: inside the instance and not
+    under private/ (rollback restores private/preferences.md through
+    `_inside_root`, from a manifest the set itself carries)."""
+    return _inside_root(root, rel) and Path(rel).parts[0] != "private"
 
 
 def check_retired_allowlist(root: Path, item: dict) -> None:
@@ -1382,17 +1417,22 @@ def _proc_detail(r: subprocess.CompletedProcess) -> str:
 
 def apply_bin(root: Path, mirror: Path, set_dir: Path, manifest: dict, item: dict, entry: dict) -> None:
     """The drifted scripts copied from the mirror with shutil.copy2 (mode
-    kept), each replaced one first copied into files/bin/<name>; then
+    kept), each replaced one first copied into files/bin/<name> and the ones
+    the instance lacked listed as `added` (rollback removes them); then
     bin/mem stats with MEM_DB and MEM_SCOPE unset, so a schema migration the
     new bin/mem carries runs while the db copy is minutes old. A failing
     stats is E_PARTIAL naming the set."""
     replaced: List[str] = []
+    added: List[str] = []
     for entry_file in item["files"]:
         rel = entry_file["path"]
         if (root / rel).is_file():
             back_up_file(root, set_dir, rel)
             replaced.append(rel)
+        else:
+            added.append(rel)
     entry["backups"] = replaced
+    entry["added"] = added
     write_manifest(set_dir, manifest, E_PARTIAL)
     for entry_file in item["files"]:
         rel = entry_file["path"]
@@ -1713,9 +1753,197 @@ def cmd_note(args) -> int:
     return OK
 
 
-def cmd_not_implemented(args) -> int:
-    print(f"maestro-sync: `{args.verb}` is not implemented yet", file=sys.stderr)
-    return E_USAGE
+# --------------------------------------------------------------------------
+# rollback: a set restored from its manifest
+# --------------------------------------------------------------------------
+
+def set_stamp(folder: Path) -> str:
+    return folder.name[:-len(SET_SUFFIX)]
+
+
+def list_sets(root: Path) -> List[Path]:
+    """The backup sets under private/backups/, newest first by folder stamp."""
+    found = [folder for folder in (root / BACKUPS_DIR).glob(f"*{SET_SUFFIX}")
+             if set_stamp_time(folder) is not None]
+    return sorted(found, key=lambda p: p.name, reverse=True)
+
+
+def find_set(root: Path, stamp: str) -> Path:
+    """The set folder a stamp names (`YYYYMMDD-HHMMSS`, the `-sync` suffix
+    optional). E_ITEM when no such set exists, naming the ones that do."""
+    name = stamp if stamp.endswith(SET_SUFFIX) else stamp + SET_SUFFIX
+    folder = root / BACKUPS_DIR / name
+    if not SET_STAMP_RE.match(name) or set_stamp_time(folder) is None:
+        known = ", ".join(set_stamp(f) for f in list_sets(root)) or "none"
+        raise SyncError(E_ITEM, f"no backup set {stamp} under {root / BACKUPS_DIR}: the sets are {known}")
+    return folder
+
+
+def read_manifest(set_dir: Path) -> dict:
+    """The set's manifest, checked for its shape. E_ITEM otherwise."""
+    manifest_file = set_dir / MANIFEST_NAME
+    try:
+        data = json.loads(manifest_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SyncError(E_ITEM, f"cannot read {manifest_file}: {exc}")
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list) \
+            or not all(isinstance(entry, dict) for entry in data["items"]):
+        raise SyncError(E_ITEM, f"bad manifest {manifest_file}: no items list")
+    return data
+
+
+def rollback_actions(root: Path, entry: dict) -> Tuple[List[Tuple[str, str]], Optional[str]]:
+    """What restoring one manifest entry takes: ("copy", rel) for every
+    file the set holds for it, ("remove", rel) for a new file, or a bin/
+    script the apply added, still present. (No actions, reason) for an
+    entry with nothing to restore: it never ran (pending, postponed) or it
+    touched nothing (a failure before its first write, register with every
+    key already present)."""
+    outcome = entry.get("outcome")
+    if outcome == "pending":
+        return [], "pending, never applied"
+    if outcome == "postponed":
+        return [], "postponed, nothing was touched"
+    actions: List[Tuple[str, str]] = [("copy", rel) for rel in entry.get("backups") or []]
+    removable = list(entry.get("added") or [])
+    if entry.get("kind") == "new":
+        removable.append(entry.get("path"))
+    for rel in removable:
+        if isinstance(rel, str) and os.path.lexists(root / rel):
+            actions.append(("remove", rel))
+    if not actions:
+        return [], f"{outcome}, nothing to restore"
+    return actions, None
+
+
+RollbackStep = Tuple[dict, List[Tuple[str, str]], Optional[str]]
+
+
+def check_restorable(root: Path, set_dir: Path, manifest: dict, steps: List[RollbackStep]) -> None:
+    """E_ITEM, before anything is touched, when a manifest path escapes the
+    instance or the set lacks a file it should hold (files/<rel>, the db)."""
+    for entry, actions, _reason in steps:
+        for verb, rel in actions:
+            if not _inside_root(root, rel):
+                raise SyncError(E_ITEM, f"refusing to restore {rel!r} ({entry.get('id')}): outside the instance")
+            if verb == "copy" and not (set_dir / SET_FILES_DIR / rel).is_file():
+                raise SyncError(E_ITEM, f"the set {set_dir} lacks {SET_FILES_DIR}/{rel} ({entry.get('id')}): "
+                                        "nothing restored")
+    db = manifest.get("db")
+    if db is not None and (not _inside_root(set_dir, db) or not (set_dir / db).is_file()):
+        raise SyncError(E_ITEM, f"the set {set_dir} lacks its db copy {db!r}: nothing restored")
+
+
+def restore_file(root: Path, set_dir: Path, verb: str, rel: str) -> None:
+    if verb == "copy":
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(set_dir / SET_FILES_DIR / rel, target)
+    else:
+        (root / rel).unlink()
+
+
+def restore_db(root: Path, set_dir: Path, db_rel: str) -> None:
+    """memories.db-wal and memories.db-shm removed, then the set's copy put
+    back over private/memories.db (mode and times of the copy kept)."""
+    target = root / DB_FILE
+    for suffix in ("-wal", "-shm"):
+        try:
+            target.with_name(target.name + suffix).unlink()
+        except FileNotFoundError:
+            pass
+    shutil.copy2(set_dir / db_rel, target)
+
+
+def run_rollback(root: Path, set_dir: Path, manifest: dict) -> int:
+    """The manifest's items in reverse order, then the db; one line per item
+    (`restored` or `skipped` with the reason). An OSError midway is
+    E_PARTIAL naming what was restored; the set is never modified."""
+    steps: List[RollbackStep] = [(entry, *rollback_actions(root, entry)) for entry in reversed(manifest["items"])]
+    check_restorable(root, set_dir, manifest, steps)
+    print(f"SET {set_dir}")
+    restored = skipped = 0
+    for entry, actions, reason in steps:
+        label = f"{str(entry.get('id')):<4} {str(entry.get('kind')):<8} {entry.get('path')}"
+        if reason:
+            skipped += 1
+            print(f"skipped  {label} ({reason})")
+            continue
+        for verb, rel in actions:
+            try:
+                restore_file(root, set_dir, verb, rel)
+            except OSError as exc:
+                raise SyncError(E_PARTIAL, f"cannot restore {rel} ({entry.get('id')}): {exc}; {restored} items "
+                                           f"were restored before it, the set {set_dir} is intact")
+        restored += 1
+        print(f"restored {label}")
+    db = manifest.get("db")
+    if db:
+        try:
+            restore_db(root, set_dir, db)
+        except OSError as exc:
+            raise SyncError(E_PARTIAL, f"cannot restore {DB_FILE} from {set_dir / db}: {exc}; {restored} items "
+                                       f"were restored, the set {set_dir} is intact")
+        print(f"DB restored {DB_FILE} from {set_dir / db}")
+    else:
+        print("DB none in this set")
+    stamp = str(manifest.get("stamp") or set_stamp(set_dir))
+    append_log(root, f"{log_stamp()}  rollback {stamp} ({restored} items restored)")
+    print(f"RESULT restored={restored} skipped={skipped}")
+    return OK
+
+
+def cmd_rollback(args) -> int:
+    root = instance_root(args.instance or os.getcwd())
+    set_dir = find_set(root, args.stamp)
+    manifest = read_manifest(set_dir)
+    lock = acquire_lock(root)
+    try:
+        return run_rollback(root, set_dir, manifest)
+    finally:
+        release_lock(lock)
+
+
+# --------------------------------------------------------------------------
+# backups: the sets listed
+# --------------------------------------------------------------------------
+
+def set_line(folder: Path) -> str:
+    """`<stamp>  <from> → <to>  <N> items  <applied>/<failed>/<pending>`;
+    a postponed item counts as pending, since nothing of it was applied."""
+    stamp = set_stamp(folder)
+    try:
+        manifest = read_manifest(folder)
+    except SyncError as exc:
+        return f"{stamp}  (unreadable manifest: {exc})"
+    items = manifest["items"]
+    applied = sum(1 for entry in items if entry.get("outcome") == "applied")
+    failed = sum(1 for entry in items if entry.get("outcome") == "failed")
+    pending = len(items) - applied - failed
+    frm = manifest.get("from") or NO_VERSION
+    to = manifest.get("to") or NO_VERSION
+    return f"{stamp}  {frm} → {to}  {len(items)} items  {applied}/{failed}/{pending}"
+
+
+def loose_backups(root: Path) -> List[Path]:
+    """The `private/*.bak.*` files and folders the skill's bash blocks wrote
+    before the sets existed (memories.db, preferences.md, bin, retired)."""
+    return sorted((root / "private").glob("*.bak.*"))
+
+
+def cmd_backups(args) -> int:
+    root = instance_root(args.instance or os.getcwd())
+    sets = list_sets(root)
+    if not sets:
+        print(f"no backup sets under {root / BACKUPS_DIR}")
+    for folder in sets:
+        print(set_line(folder))
+    loose = loose_backups(root)
+    if loose:
+        names = ", ".join(p.name for p in loose)
+        print(f"{len(loose)} loose private/*.bak.* backups of earlier syncs are not sets and stay "
+              f"untouched: {names}")
+    return OK
 
 
 # --------------------------------------------------------------------------
@@ -1761,11 +1989,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--instance", help="instance root (default: the current directory)")
     sp.set_defaults(func=cmd_note)
 
-    for verb, text in (("rollback", "Restore a backup set"),
-                       ("backups", "List the backup sets")):
-        sp = sub.add_parser(verb, help=f"{text} (not implemented yet)")
-        sp.add_argument("rest", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
-        sp.set_defaults(func=cmd_not_implemented)
+    sp = sub.add_parser("rollback", help="Restore a backup set: its items in reverse order, then the db")
+    sp.add_argument("stamp", metavar="STAMP", help="the set's stamp, YYYYMMDD-HHMMSS, as `backups` lists it")
+    sp.add_argument("--instance", help="instance root (default: the current directory)")
+    sp.set_defaults(func=cmd_rollback)
+
+    sp = sub.add_parser("backups", help="List the backup sets, newest first")
+    sp.add_argument("--instance", help="instance root (default: the current directory)")
+    sp.set_defaults(func=cmd_backups)
     return p
 
 

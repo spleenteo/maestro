@@ -47,6 +47,7 @@ E_ITEM = 7
 E_PARTIAL = 8
 E_LOCKED = 9
 POSTPONED = 10
+E_BACKUP = 11
 
 LISTEN_MEMBERS = (".claude/skills/listen", "bin/listen", "bin/listen-updates",
                   "bin/audiowatch.swift")
@@ -384,7 +385,8 @@ class TestCommandShape(SyncFixture):
             self.assertIn(verb, r.stdout)
         for name, code in (("E_USAGE", 2), ("E_NOT_INSTANCE", 3), ("E_MIRROR", 4),
                            ("E_PLUGIN", 5), ("E_STALE", 6), ("E_ITEM", 7),
-                           ("E_PARTIAL", 8), ("E_LOCKED", 9), ("POSTPONED", 10)):
+                           ("E_PARTIAL", 8), ("E_LOCKED", 9), ("POSTPONED", 10),
+                           ("E_BACKUP", 11)):
             self.assertRegex(r.stdout, rf"{code}\s+{name}")
 
     def test_no_verb_is_a_usage_error(self):
@@ -392,12 +394,10 @@ class TestCommandShape(SyncFixture):
         self.assertEqual(r.returncode, E_USAGE)
         self.assertIn("plan", r.stderr)
 
-    def test_later_verbs_are_registered_but_not_implemented_yet(self):
-        for verb in ("rollback", "backups"):
-            with self.subTest(verb=verb):
-                r = run_sync(verb, env=self.env, cwd=self.instance)
-                self.assertEqual(r.returncode, E_USAGE)
-                self.assertIn("not implemented yet", r.stderr)
+    def test_rollback_without_a_stamp_is_a_usage_error(self):
+        r = run_sync("rollback", env=self.env, cwd=self.instance)
+        self.assertEqual(r.returncode, E_USAGE)
+        self.assertIn("STAMP", r.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -1946,6 +1946,281 @@ class TestRetention(SyncFixture):
         r = self.apply("--items", "u1")
         self.assertEqual(r.returncode, OK, r.stderr)
         self.assertTrue(stray.is_file())
+
+
+# ---------------------------------------------------------------------------
+# apply — an unwritable set is E_BACKUP, nothing applied
+# ---------------------------------------------------------------------------
+
+class TestBackupFailure(SyncFixture):
+    def test_an_unwritable_backups_folder_is_e_backup_with_nothing_applied(self):
+        self.plan_json()
+        write(self.instance / BACKUPS_DIR, "a file where the sets folder should be\n")
+        r = self.apply("--kind", "update")
+        self.assertEqual(r.returncode, E_BACKUP, r.stderr)
+        self.assertIn("backup", r.stderr)
+        for rel in MARKED_PATHS:
+            self.assertEqual((self.instance / rel).read_text(), marked_md(OLD_VERSION, description=rel))
+        self.assertFalse((self.instance / LOCK_FILE).exists())
+        self.assertEqual(self.log_lines(), [])
+
+
+# ---------------------------------------------------------------------------
+# rollback
+# ---------------------------------------------------------------------------
+
+def sqlite_dump(path: Path) -> list[str]:
+    conn = sqlite3.connect(str(path))
+    try:
+        return list(conn.iterdump())
+    finally:
+        conn.close()
+
+
+class TestRollback(SyncFixture):
+    NEW = "howto/08-markdown-discipline.md"
+    SETUP = ".claude/skills/setup"
+    FIRST = sorted(MARKED_PATHS)[0]  # the path of u1
+
+    def rollback(self, *args: str) -> subprocess.CompletedProcess:
+        return run_sync("rollback", *args, "--instance", str(self.instance), env=self.env, cwd=self.root)
+
+    def snapshot(self) -> dict[str, bytes]:
+        return {rel: (self.instance / rel).read_bytes() for rel in MARKED_PATHS}
+
+    def db(self) -> Path:
+        return self.instance / "private" / "memories.db"
+
+    def new_text(self, rel: str) -> str:
+        return marked_md(NEW_VERSION, description=rel, body="New body.\n")
+
+    def test_after_apply_update_every_file_and_the_db_are_back_byte_for_byte(self):
+        before, dump = self.snapshot(), sqlite_dump(self.db())
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--kind", "update").returncode, OK)
+        conn = sqlite3.connect(str(self.db()))
+        with conn:
+            conn.execute("CREATE TABLE scratch (x)")
+            conn.execute("INSERT INTO scratch VALUES (1)")
+        conn.close()
+        self.assertNotEqual(self.snapshot(), before)
+        self.assertNotEqual(sqlite_dump(self.db()), dump)
+        r = self.rollback(plan["stamp"])
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(sqlite_dump(self.db()), dump)
+        for it in plan["items"]:
+            if it["kind"] == "update":
+                self.assertRegex(r.stdout, rf"(?m)^restored +{it['id']} +update +{re.escape(it['path'])}$")
+        self.assertIn("DB restored", r.stdout)
+        self.assertRegex(self.log_lines()[-1], LOG_LINE + re.escape(
+            f"rollback {plan['stamp']} ({len(MARKED_PATHS)} items restored)") + "$")
+
+    def test_items_are_restored_in_reverse_manifest_order(self):
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--items", "u1,u2").returncode, OK)
+        r = self.rollback(plan["stamp"])
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertLess(r.stdout.index("restored u2 "), r.stdout.index("restored u1 "))
+
+    def test_a_pending_and_an_untouched_failed_item_are_skipped_and_said_so(self):
+        self.push_main({
+            "howto/aa/blocked.md": marked_md(NEW_VERSION, description="blocked"),
+            "howto/zz-later.md": marked_md(NEW_VERSION, description="later"),
+        })
+        write(self.instance / "howto" / "aa", "a file where a folder is needed\n")
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--items", "u1,n1,n2").returncode, E_PARTIAL)
+        self.assertEqual([e["outcome"] for e in self.manifest()["items"]], ["applied", "failed", "pending"])
+        r = self.rollback(plan["stamp"])
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertRegex(r.stdout, r"(?m)^restored +u1 ")
+        self.assertRegex(r.stdout, r"(?m)^skipped +n1 +new +howto/aa/blocked\.md \(failed, nothing to restore\)$")
+        self.assertRegex(r.stdout, r"(?m)^skipped +n2 +new +howto/zz-later\.md \(pending, never applied\)$")
+        self.assertEqual((self.instance / self.FIRST).read_text(), marked_md(OLD_VERSION, description=self.FIRST))
+        self.assertEqual((self.instance / "howto" / "aa").read_text(), "a file where a folder is needed\n")
+        self.assertIn(f"rollback {plan['stamp']} (1 items restored)", self.log_lines()[-1])
+
+    def test_a_removed_retired_path_comes_back_and_a_new_file_disappears(self):
+        recorder_procs(self.bindir)
+        self.push_main({self.NEW: marked_md(NEW_VERSION, description="new", body="Rules.\n")})
+        write(self.instance / self.SETUP / "SKILL.md", marked_md(OLD_VERSION, description="setup"))
+        write(self.instance / self.SETUP / "finalize.sh", "#!/bin/sh\n", mode=0o755)
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--items", "n1,r1").returncode, OK)
+        self.assertFalse((self.instance / self.SETUP).exists())
+        self.assertTrue((self.instance / self.NEW).is_file())
+        r = self.rollback(plan["stamp"])
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual((self.instance / self.SETUP / "SKILL.md").read_text(),
+                         marked_md(OLD_VERSION, description="setup"))
+        self.assertEqual((self.instance / self.SETUP / "finalize.sh").read_text(), "#!/bin/sh\n")
+        self.assertTrue(os.access(self.instance / self.SETUP / "finalize.sh", os.X_OK))
+        self.assertFalse((self.instance / self.NEW).exists())
+        self.assertLess(r.stdout.index("restored r1 "), r.stdout.index("restored n1 "))
+
+    def test_bin_scripts_and_the_preferences_are_restored(self):
+        write(self.mirror_src.work / "bin" / "mem", "#!/bin/sh\nexit 0\n", mode=0o755)
+        sha = commit(self.mirror_src.work, ["bin/mem"], "new mem")
+        subprocess.run(["git", "push", "-q", str(self.mirror_src.origin), "main"],
+                       cwd=self.mirror_src.work, check=True)
+        recorder_claude(self.bindir, sha, self.plugin)
+        write(self.instance / "bin" / "mem", OLD_MEM, mode=0o755)
+        (self.instance / "bin" / "mem_schema.py").unlink()
+        prefs = self.instance / "private" / "preferences.md"
+        prefs_before = prefs.read_bytes()
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--kind", "bin").returncode, OK)
+        self.assertEqual(self.apply("--kind", "register", "--register",
+                                    "tone_default.communication=friendly").returncode, OK)
+        self.assertTrue((self.instance / "bin" / "mem_schema.py").is_file())
+        self.assertNotEqual(prefs.read_bytes(), prefs_before)
+        r = self.rollback(plan["stamp"])
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual((self.instance / "bin" / "mem").read_text(), OLD_MEM)
+        self.assertTrue(os.access(self.instance / "bin" / "mem", os.X_OK))
+        self.assertFalse((self.instance / "bin" / "mem_schema.py").exists())
+        self.assertEqual(prefs.read_bytes(), prefs_before)
+        self.assertIn(f"rollback {plan['stamp']} (2 items restored)", self.log_lines()[-1])
+
+    def test_without_a_db_in_the_set_the_db_step_is_skipped(self):
+        self.db().unlink()
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--items", "u1").returncode, OK)
+        r = self.rollback(plan["stamp"])
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertFalse(self.db().exists())
+        self.assertIn("DB none", r.stdout)
+
+    def test_wal_and_shm_files_are_removed_before_the_db_copy(self):
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--items", "u1").returncode, OK)
+        wal = write(self.instance / "private" / "memories.db-wal", "stale\n")
+        shm = write(self.instance / "private" / "memories.db-shm", "stale\n")
+        r = self.rollback(plan["stamp"])
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertFalse(wal.exists())
+        self.assertFalse(shm.exists())
+        conn = sqlite3.connect(str(self.db()))
+        try:
+            self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        finally:
+            conn.close()
+
+    def test_an_unknown_stamp_is_an_item_error(self):
+        self.plan_json()
+        self.assertEqual(self.apply("--items", "u1").returncode, OK)
+        r = self.rollback("20000101-000000")
+        self.assertEqual(r.returncode, E_ITEM)
+        self.assertIn("20000101-000000", r.stderr)
+        self.assertEqual((self.instance / self.FIRST).read_text(), self.new_text(self.FIRST))
+        self.assertEqual(len(self.log_lines()), 1)
+
+    def test_a_stamp_escaping_the_backups_folder_is_an_item_error(self):
+        self.plan_json()
+        r = self.rollback("../../howto")
+        self.assertEqual(r.returncode, E_ITEM)
+
+    def test_the_stamp_may_carry_the_set_suffix(self):
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--items", "u1").returncode, OK)
+        r = self.rollback(f"{plan['stamp']}-sync")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual((self.instance / self.FIRST).read_text(), marked_md(OLD_VERSION, description=self.FIRST))
+
+    def test_an_existing_lock_refuses_the_rollback_and_is_released_after(self):
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--items", "u1").returncode, OK)
+        lock = write(self.instance / LOCK_FILE, "4242\n")
+        r = self.rollback(plan["stamp"])
+        self.assertEqual(r.returncode, E_LOCKED)
+        self.assertEqual((self.instance / self.FIRST).read_text(), self.new_text(self.FIRST))
+        self.assertEqual(lock.read_text(), "4242\n")
+        lock.unlink()
+        self.assertEqual(self.rollback(plan["stamp"]).returncode, OK)
+        self.assertFalse(lock.exists())
+
+    def test_a_set_missing_a_backup_file_is_refused_before_touching_anything(self):
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--kind", "update").returncode, OK)
+        (self.sets()[0] / "files" / self.FIRST).unlink()
+        r = self.rollback(plan["stamp"])
+        self.assertEqual(r.returncode, E_ITEM)
+        self.assertIn(self.FIRST, r.stderr)
+        for rel in MARKED_PATHS:
+            self.assertEqual((self.instance / rel).read_text(), self.new_text(rel))
+        self.assertTrue(self.db().is_file())
+        self.assertEqual(len(self.log_lines()), len(MARKED_PATHS))
+
+    def test_a_tampered_manifest_path_outside_the_instance_is_refused(self):
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--items", "u1").returncode, OK)
+        manifest_file = self.sets()[0] / "manifest.json"
+        manifest = json.loads(manifest_file.read_text())
+        manifest["items"][0]["backups"] = ["../outside.md"]
+        write(manifest_file, json.dumps(manifest))
+        r = self.rollback(plan["stamp"])
+        self.assertEqual(r.returncode, E_ITEM)
+        self.assertIn("refusing", r.stderr.lower())
+        self.assertFalse((self.root / "outside.md").exists())
+
+
+# ---------------------------------------------------------------------------
+# backups
+# ---------------------------------------------------------------------------
+
+class TestBackups(SyncFixture):
+    OLD_STAMP = "20250101-000000"
+
+    def backups(self) -> subprocess.CompletedProcess:
+        return run_sync("backups", "--instance", str(self.instance), env=self.env, cwd=self.root)
+
+    def fake_set(self, stamp: str, outcomes: list[str]) -> Path:
+        folder = self.instance / BACKUPS_DIR / f"{stamp}-sync"
+        write(folder / "manifest.json", json.dumps({
+            "stamp": stamp, "instance": str(self.instance), "from": OLD_VERSION, "to": NEW_VERSION,
+            "mirror_head": self.mirror_src.main, "db": None,
+            "items": [{"id": f"i{n}", "kind": "update", "path": f"f{n}.md", "outcome": outcome,
+                       "backups": []} for n, outcome in enumerate(outcomes)]}))
+        return folder
+
+    def test_sets_are_listed_newest_first_with_their_counts(self):
+        self.fake_set(self.OLD_STAMP, ["applied", "failed", "pending", "postponed"])
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--kind", "update").returncode, OK)
+        r = self.backups()
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), [
+            f"{plan['stamp']}  {OLD_VERSION} → {NEW_VERSION}  {len(MARKED_PATHS)} items  {len(MARKED_PATHS)}/0/0",
+            f"{self.OLD_STAMP}  {OLD_VERSION} → {NEW_VERSION}  4 items  1/1/2",
+        ])
+
+    def test_the_legacy_line_appears_only_with_loose_bak_files(self):
+        self.fake_set(self.OLD_STAMP, ["applied"])
+        self.assertNotIn("not sets", self.backups().stdout)
+        legacy = write(self.instance / "private" / "memories.db.bak.x-pre-sync", "old db\n")
+        r = self.backups()
+        self.assertEqual(r.returncode, OK, r.stderr)
+        last = r.stdout.splitlines()[-1]
+        for text in ("memories.db.bak.x-pre-sync", "not sets", "untouched"):
+            self.assertIn(text, last)
+        self.assertTrue(legacy.is_file())
+
+    def test_without_sets_the_listing_says_so(self):
+        r = self.backups()
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertIn("no backup sets", r.stdout)
+
+    def test_a_set_with_an_unreadable_manifest_is_listed_as_such(self):
+        write(self.instance / BACKUPS_DIR / f"{self.OLD_STAMP}-sync" / "manifest.json", "{not json")
+        r = self.backups()
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertIn(self.OLD_STAMP, r.stdout)
+        self.assertIn("unreadable", r.stdout)
+
+    def test_a_plain_folder_is_refused(self):
+        r = run_sync("backups", env=self.env, cwd=self.root)
+        self.assertEqual(r.returncode, E_NOT_INSTANCE)
 
 
 if __name__ == "__main__":
