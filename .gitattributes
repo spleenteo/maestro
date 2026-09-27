@@ -24,7 +24,6 @@ plugins/ export-ignore
 # they reference don't exist in an archived instance.
 tests/test_plugin_layout.py export-ignore
 tests/test_maestro_net.py export-ignore
-tests/test_maestro_sync.py export-ignore
 
 # This test clones the template's own .git to build the archive it
 # checks: an archived instance never has that .git to clone.
@@ -59,4 +58,4 @@ tests/test_maestro_versions.py export-ignore
 # This test runs the plugin's maestro-sync out of plugins/ against temporary
 # instances and mirrors: meaningless without plugins/, absent from an
 # archived instance.
-tests/test_maestro_sync_cmd.py export-ignore
+tests/test_maestro_sync.py export-ignore

@@ -1160,10 +1160,11 @@ def set_dir_for(root: Path, plan: dict) -> Path:
     return root / BACKUPS_DIR / f"{plan['stamp']}{SET_SUFFIX}"
 
 
-def write_manifest(set_dir: Path, manifest: dict, code: int = E_BACKUP) -> None:
-    """The manifest, replaced atomically (tempfile + os.replace). The first
-    write of a run fails as E_BACKUP (nothing applied yet); the rewrites
-    after an item pass E_PARTIAL."""
+def write_manifest(set_dir: Path, manifest: dict, code: int) -> None:
+    """The manifest, replaced atomically (tempfile + os.replace). `code` is
+    the exit code of a failed write, chosen by the caller: E_BACKUP while
+    nothing is applied yet (the writes of `open_set`), E_PARTIAL for the
+    rewrites after an item."""
     try:
         write_json_atomic(set_dir / MANIFEST_NAME, manifest)
     except OSError as exc:
@@ -1237,7 +1238,7 @@ def open_set(root: Path, plan: dict, selected: List[dict]) -> Tuple[Path, dict]:
         set_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise SyncError(E_BACKUP, f"cannot create the backup set {set_dir}: {exc}")
-    write_manifest(set_dir, manifest)
+    write_manifest(set_dir, manifest, E_BACKUP)
     if fresh and manifest["db"]:
         dest = set_dir / SET_DB_PATH
         try:
@@ -1248,7 +1249,7 @@ def open_set(root: Path, plan: dict, selected: List[dict]) -> Tuple[Path, dict]:
             except OSError:
                 pass
             manifest["db"] = None
-            write_manifest(set_dir, manifest)
+            write_manifest(set_dir, manifest, E_BACKUP)
             raise
     return set_dir, manifest
 
@@ -1819,8 +1820,11 @@ RollbackStep = Tuple[dict, List[Tuple[str, str]], Optional[str]]
 
 
 def check_restorable(root: Path, set_dir: Path, manifest: dict, steps: List[RollbackStep]) -> None:
-    """E_ITEM, before anything is touched, when a manifest path escapes the
-    instance or the set lacks a file it should hold (files/<rel>, the db)."""
+    """E_ITEM, before anything is touched, when the set was made for another
+    instance, a manifest path escapes the instance or the set lacks a file it
+    should hold (files/<rel>, the db)."""
+    if manifest.get("instance") != str(root):
+        raise SyncError(E_ITEM, f"this set belongs to another instance: {manifest.get('instance')}")
     for entry, actions, _reason in steps:
         for verb, rel in actions:
             if not _inside_root(root, rel):
