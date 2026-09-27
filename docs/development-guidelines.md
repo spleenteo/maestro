@@ -41,7 +41,7 @@ Rules the plans and the code must follow. Devflow passes this file to every plan
 ## Commits
 
 - English, imperative mood, conventional prefix with scope: `feat(mem): …`, `docs(howto/12): …`, `test(mem): …`.
-- A release commit is `vYYYY.MM.DD.N: <theme>`, and bumps `maestro_version` on the touched files plus the `CHANGELOG.md` entry.
+- A release commit is `vYYYY.MM.DD.N: <theme>`, and bumps `maestro_version` on the touched files plus the `CHANGELOG.md` entry; it also sets `.version` at the repo root to the new top heading of `CHANGELOG.md`, the file the session-start update check fetches (`tests/test_plugin_layout.py` asserts the two agree).
 - Explicit `git add` on touched files. Never `private/`, never `.claude/settings.local.json`, never a real `memories.db`.
 
 ## Prose

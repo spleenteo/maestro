@@ -51,7 +51,7 @@ Announce: `📝 saved: "Maestro sync: <from> → <to> (<N> files updated, <M> ad
 
 ## Never in scope
 
-`private/`, except the backup sets under `private/backups/`, `private/maestro-sync.lock`, `private/maestro-sync.log`, `private/maestro-sync.plan.json`, and the writing register keys on the owner's yes. `apps/`. Files without the `origin: maestro` marker. `.claude/roster.yaml`. The old local `.claude/skills/maestro-sync/` is a retired path the plan lists, never the skill to run.
+`private/`, except the backup sets under `private/backups/`, `private/maestro-sync.lock`, `private/maestro-sync.log`, `private/maestro-sync.plan.json`, and the writing register keys on the owner's yes; outside the instance only the update cache `~/.claude/maestro-update-check.json` (`MAESTRO_UPDATE_CACHE`), which `plan` and a successful `apply` refresh. `apps/`. Files without the `origin: maestro` marker. `.claude/roster.yaml`. The old local `.claude/skills/maestro-sync/` is a retired path the plan lists, never the skill to run.
 
 ## What it does not do
 

@@ -2,7 +2,7 @@
 origin: maestro
 maestro_version: v2026.09.17.1
 tags: [howto, backup, sync, privacy, gitignore, symlinks, cloud-drive, orchestrator, maestro-sync, rollback]
-description: "How to back up and synchronize your orchestrator safely: what to keep out of git, how to sync across machines via cloud drives, how to symlink external apps, skills and agents, and how template updates reach an instance through the maestro-sync command (mirror and worktree keys, the five verbs, backup sets and rollback)."
+description: "How to back up and synchronize your orchestrator safely: what to keep out of git, how to sync across machines via cloud drives, how to symlink external apps, skills and agents, and how template updates reach an instance through the maestro-sync command (mirror and worktree keys, the five verbs, backup sets and rollback) and how the session-start update notice works (cache, interval, env overrides)."
 ---
 
 # How to handle backups and sync
@@ -89,6 +89,14 @@ The first `apply` on a plan creates `private/backups/<stamp>-sync/`, and every l
 ### Loose backups from earlier syncs
 
 Before the command existed, the sync wrote loose copies next to the files it replaced: `private/*.bak.<stamp>` files and `private/retired.bak.<stamp>-listen/` folders. They are not sets: `rollback` does not read them, nothing removes them, and `maestro-sync backups` names them in one line. Delete them by hand once you no longer need them.
+
+### The update notice
+
+The plugin's `SessionStart` hook tells you when the instance is behind the template. In an instance root (never in a satellite, a plain folder or the template repository itself) it compares the `maestro_version` of `CLAUDE.md` with the upstream version cached at `~/.claude/maestro-update-check.json`, a JSON file with `upstream` and `checked_at`, and when upstream is newer it adds one line to the session's context: `Maestro <upstream> is available (this instance is on <local>): run /maestro:maestro-sync.` The line is context, so it comes back after `/clear` and stays until the instance is synced.
+
+The hook never fetches anything itself. When the cache is missing, unreadable or older than 12 hours, it stamps `checked_at` (so two sessions starting together fetch once) and spawns a detached fetcher that reads `https://raw.githubusercontent.com/spleenteo/maestro/main/.version` with a 3-second timeout and a 5-second alarm, then rewrites the cache; on any error the cache stays as it was. The session never waits on the network, and the notice comes from the cache as it stood when the session opened: the first session after a long silence may say nothing, the next one does. The raw GitHub host serves the file from a cache of a few minutes, so a release can take that long to show up.
+
+`maestro-sync plan` and a successful `maestro-sync apply` rewrite the cache with the mirror's top `CHANGELOG.md` version, so an instance you have just synced shows no notice. Three environment variables override the defaults, for tests or a fork: `MAESTRO_VERSION_URL` (the URL the fetcher reads), `MAESTRO_UPDATE_CACHE` (the cache file) and `MAESTRO_UPDATE_INTERVAL` (seconds between fetches, default 43200).
 
 ## Backing up `private/`
 
