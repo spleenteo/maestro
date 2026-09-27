@@ -1,27 +1,28 @@
 #!/usr/bin/env python3
 # origin: maestro
 # maestro_version: v2026.08.26.1
-"""session-digest — recupera i messaggi umani delle sessioni Claude Code di un dato giorno.
+"""session-digest: the owner's messages from the Claude Code sessions of one day.
 
-Serve alla skill `logbook`: quando l'owner lavora su più sessioni in parallelo
-(agent view), le memorie finiscono tutte in memories.db, ma il filo del discorso
-di ogni sessione resta nel suo transcript. Questo script lo estrae.
+Written for the `logbook` skill: when the owner works in several parallel
+sessions (agent view), every memory lands in memories.db, but the thread of
+each session stays in its transcript. This script pulls it out.
 
-Legge i transcript in ~/.claude/projects/<slug>/*.jsonl e restituisce, per ogni
-sessione che ha attività nel giorno target, il nome della sessione e i messaggi
-digitati dall'owner (origin.kind == "human"), in ordine cronologico.
+It reads the transcripts under ~/.claude/projects/<slug>/*.jsonl and returns,
+for every session with activity on the target day, the session's name and the
+messages the owner typed (origin.kind == "human"), in chronological order.
 
-Non legge le risposte dell'assistente: sono megabyte e il costo non vale.
+It never reads the assistant's replies: megabytes that aren't worth the cost.
 
-Uso:
-    bin/session-digest                       # oggi, progetto corrente
+Usage:
+    bin/session-digest                       # today (early-morning rule), current project
     bin/session-digest --date 2026-08-25
     bin/session-digest --date yesterday
-    bin/session-digest --date 3d              # tre giorni fa
-    bin/session-digest --date 3d              # tre giorni fa
+    bin/session-digest --date=-3d            # three days ago, same forms as bin/mem
     bin/session-digest --json
     bin/session-digest --exclude-session <id>
     bin/session-digest --cwd /path/to/project
+
+Exit codes: 0 done, 1 unreadable date, 2 no transcripts for the project.
 """
 
 from __future__ import annotations
@@ -31,12 +32,14 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 
 PROJECTS_ROOT = Path(os.environ.get("CLAUDE_PROJECTS_ROOT", Path.home() / ".claude" / "projects"))
 
-# Rumore che entra nel canale "user" senza essere farina dell'owner.
+# Noise that enters the "user" channel without being the owner's words.
 NOISE = re.compile(
     r"<local-command-caveat>|<command-name>|<command-message>|<command-args>|"
     r"<system-reminder>|<local-command-stdout>|named this session|"
@@ -45,13 +48,38 @@ NOISE = re.compile(
 )
 
 
+def mem_cli():
+    """bin/mem next to this script, loaded as a module for its date parsing:
+    one DSL and one early-morning rule for the log and the transcripts."""
+    path = Path(__file__).resolve().parent / "mem"
+    sys.dont_write_bytecode = True
+    loader = SourceFileLoader("mem_cli", str(path))
+    spec = spec_from_loader("mem_cli", loader)
+    module = module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def resolve_date(spec: str | None) -> str:
+    """The target day. Omitted: today under the early-morning rule. Given:
+    bin/mem's forms (YYYY-MM-DD, today, yesterday, +Nd, -Nd, +Nw, +Nm), plus
+    a bare `Nd` for N days ago."""
+    mem = mem_cli()
+    if spec is None:
+        return mem.effective_today()
+    spec = spec.strip()
+    if re.fullmatch(r"\d+d", spec):
+        spec = f"-{spec}"
+    return mem.parse_date(spec)
+
+
 def slugify_cwd(path: str) -> str:
-    """Riproduce lo slug che Claude Code usa per nominare la cartella di progetto."""
+    """The slug Claude Code uses to name a project's transcript folder."""
     return re.sub(r"[^A-Za-z0-9]+", "-", path)
 
 
 def find_project_dir(cwd: str) -> Path | None:
-    """Trova la cartella dei transcript per cwd. Prima per slug, poi per scansione."""
+    """The transcript folder of cwd: by slug first, then by scanning the `cwd` field."""
     guess = PROJECTS_ROOT / slugify_cwd(cwd)
     if guess.is_dir() and any(guess.glob("*.jsonl")):
         return guess
@@ -75,20 +103,6 @@ def find_project_dir(cwd: str) -> Path | None:
             except (OSError, json.JSONDecodeError):
                 continue
     return None
-
-
-def resolve_date(spec: str) -> str:
-    today = datetime.now().date()
-    if spec in ("today", "oggi"):
-        return today.isoformat()
-    if spec in ("yesterday", "ieri"):
-        return (today - timedelta(days=1)).isoformat()
-    m = re.fullmatch(r"-?(\d+)d", spec)
-    if m:
-        return (today - timedelta(days=int(m.group(1)))).isoformat()
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", spec):
-        return spec
-    raise SystemExit(f"data non riconosciuta: {spec}")
 
 
 def local_stamp(ts: str) -> datetime | None:
@@ -160,11 +174,11 @@ def read_session(path: Path, day: str, max_chars: int) -> dict | None:
 
 
 def drop_shadow_sessions(sessions: list) -> list:
-    """Scarta le sessioni i cui messaggi sono già tutti dentro un'altra sessione.
+    """Drop the sessions whose messages all sit inside another session.
 
-    Una conversazione mandata in background, o forkata, lascia due transcript:
-    il parent conserva i primi messaggi, il figlio li ha tutti. Tenere entrambi
-    farebbe leggere due volte lo stesso filo.
+    A conversation sent to the background, or forked, leaves two transcripts:
+    the parent keeps the first messages, the child has them all. Keeping both
+    would read the same thread twice.
     """
     keyed = [(s, {(m["time"], m["text"]) for m in s["messages"]}) for s in sessions]
     keep = []
@@ -179,22 +193,23 @@ def drop_shadow_sessions(sessions: list) -> list:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Messaggi umani delle sessioni Claude Code di un giorno.")
-    ap.add_argument("--date", default="today",
-                    help="YYYY-MM-DD, today/oggi, yesterday/ieri, Nd (N giorni fa; con il segno serve --date=-Nd)")
-    ap.add_argument("--cwd", default=os.getcwd(), help="directory di progetto (default: cwd)")
-    ap.add_argument("--json", action="store_true", help="output JSON")
+    ap = argparse.ArgumentParser(description="The owner's messages from the Claude Code sessions of one day.")
+    ap.add_argument("--date", default=None,
+                    help="YYYY-MM-DD, today, yesterday, Nd (N days ago), or bin/mem's forms "
+                         "(a negative offset needs --date=-Nd); omitted: today under the early-morning rule")
+    ap.add_argument("--cwd", default=os.getcwd(), help="project directory (default: cwd)")
+    ap.add_argument("--json", action="store_true", help="JSON output")
     ap.add_argument("--exclude-session", action="append", default=[], metavar="ID",
-                    help="id (anche parziale) di sessione da escludere, ripetibile")
-    ap.add_argument("--session", metavar="NAME_OR_ID", help="una sola sessione, per nome o id")
-    ap.add_argument("--max-chars", type=int, default=1500, help="tetto per singolo messaggio (default 1500)")
-    ap.add_argument("--no-dedup", action="store_true", help="non scartare i transcript ombra di background/fork")
+                    help="session id (a prefix is enough) to leave out, repeatable")
+    ap.add_argument("--session", metavar="NAME_OR_ID", help="one session only, by name or id")
+    ap.add_argument("--max-chars", type=int, default=1500, help="cap per message (default 1500)")
+    ap.add_argument("--no-dedup", action="store_true", help="keep the shadow transcripts of background/fork sessions")
     args = ap.parse_args()
 
     day = resolve_date(args.date)
     project_dir = find_project_dir(args.cwd)
     if project_dir is None:
-        print(f"nessun transcript per {args.cwd} sotto {PROJECTS_ROOT}", file=sys.stderr)
+        print(f"no transcripts for {args.cwd} under {PROJECTS_ROOT}", file=sys.stderr)
         return 2
 
     sessions = []
@@ -224,14 +239,14 @@ def main() -> int:
         return 0
 
     if not sessions:
-        print(f"nessuna sessione con messaggi il {day}")
+        print(f"no session with messages on {day}")
         return 0
 
     total = sum(s["count"] for s in sessions)
-    plural = "sessione" if len(sessions) == 1 else "sessioni"
-    print(f"# Sessioni del {day} — {len(sessions)} {plural}, {total} messaggi\n")
+    plural = "session" if len(sessions) == 1 else "sessions"
+    print(f"# Sessions of {day}: {len(sessions)} {plural}, {total} messages\n")
     for s in sessions:
-        label = s["name"] or s["ai_title"] or "senza nome"
+        label = s["name"] or s["ai_title"] or "unnamed"
         print(f"## {label}  ({s['session_id'][:8]}, {s['first']}→{s['last']}, {s['count']} msg)\n")
         for m in s["messages"]:
             body = m["text"].replace("\n", "\n  ")

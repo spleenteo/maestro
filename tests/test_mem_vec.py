@@ -110,6 +110,35 @@ class TestCore(TempDbCase):
         self.assertNotEqual(h1, mem_vec.content_hash("m2", "ciao"))
         self.assertNotEqual(h1, mem_vec.content_hash("m1", "ciào"))
 
+    def test_two_vault_roots_sharing_a_relative_path_get_distinct_chunk_ids(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            a = Path(tmp) / "a"
+            b = Path(tmp) / "b"
+            for root in (a, b):
+                root.mkdir()
+                (root / "note.md").write_text("---\ntags: [x]\ndescription: d\n---\n\n## Same\n\ntext\n")
+            ids_a = {c["chunk_id"] for c in mem_vec.chunk_file(a / "note.md", a)}
+            ids_b = {c["chunk_id"] for c in mem_vec.chunk_file(b / "note.md", b)}
+            self.assertTrue(ids_a and ids_b)
+            self.assertEqual(ids_a & ids_b, set())
+            self.assertEqual({c["root"] for c in mem_vec.chunk_file(a / "note.md", a)},
+                             {mem_vec.root_key(a)})
+
+    def test_walk_vault_does_not_follow_symlinks(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "vault"
+            outside = Path(tmp) / "outside"
+            (root / "in").mkdir(parents=True)
+            outside.mkdir()
+            (root / "in" / "here.md").write_text("here\n")
+            (outside / "secret.md").write_text("secret\n")
+            (root / "linked").symlink_to(outside, target_is_directory=True)
+            (root / "alias.md").symlink_to(outside / "secret.md")
+            rels = sorted(str(p.relative_to(r)) for p, r in mem_vec.walk_vault([root]))
+            self.assertEqual(rels, ["in/here.md"])
+
     def test_pack_unpack_roundtrip(self):
         v = [0.25, -1.5, 3.0]
         out = mem_vec.unpack(mem_vec.pack(v))

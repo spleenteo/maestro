@@ -5,12 +5,12 @@
 # ///
 # origin: maestro
 # maestro_version: v2026.07.16.2
-"""mem-vec — strato semantico di memories.db (data layer).
+"""mem-vec: the semantic layer of memories.db (data layer).
 
-Usato da bin/mem (che fa da UX layer): questo script emette SEMPRE JSON
-su stdout. Richiede uv (dipendenze PEP 723) e Ollama locale per gli
-embedding. Exit code 3 = strato semantico non disponibile.
-Path db: env MEM_DB > <repo>/private/memories.db.
+Used by bin/mem, which is the UX layer: this script ALWAYS emits JSON on
+stdout. It needs uv (PEP 723 dependencies) and a local Ollama for the
+embeddings. Exit code 3 = semantic layer unavailable.
+Db path: env MEM_DB, else <repo>/private/memories.db.
 """
 from __future__ import annotations
 
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS log_vec (
 SCHEMA_VAULT = """
 CREATE TABLE IF NOT EXISTS vault_vec (
   chunk_id TEXT PRIMARY KEY,
+  root TEXT NOT NULL DEFAULT '',
   rel_path TEXT NOT NULL,
   heading TEXT,
   anchor TEXT,
@@ -104,7 +105,18 @@ def connect() -> sqlite3.Connection:
     mem_schema.ensure_scope(con)
     con.executescript(SCHEMA)
     con.executescript(SCHEMA_VAULT)
+    ensure_vault_root(con)
     return con
+
+
+def ensure_vault_root(con: sqlite3.Connection) -> None:
+    """vault_vec gained a `root` column (several vault roots may share a
+    relative path): an older table gets it, and its rows, keyed by the old
+    chunk ids, are pruned as orphans on the next embed."""
+    cols = {r[1] for r in con.execute("PRAGMA table_info(vault_vec)")}
+    if "root" not in cols:
+        con.execute("ALTER TABLE vault_vec ADD COLUMN root TEXT NOT NULL DEFAULT ''")
+        con.commit()
 
 
 def load_vec(con: sqlite3.Connection) -> None:
@@ -112,10 +124,16 @@ def load_vec(con: sqlite3.Connection) -> None:
         import sqlite_vec
     except ImportError:
         sys.stderr.write(
-            "mem-vec: dipendenza sqlite-vec assente — esegui via "
+            "mem-vec: the sqlite-vec dependency is missing; run through "
             "'uv run --script bin/mem-vec'\n")
         sys.exit(EXIT_UNAVAILABLE)
-    con.enable_load_extension(True)
+    try:
+        con.enable_load_extension(True)
+    except AttributeError:
+        sys.stderr.write(
+            "mem-vec: this Python's sqlite3 can't load extensions; the semantic "
+            "layer is unavailable.\n")
+        sys.exit(EXIT_UNAVAILABLE)
     sqlite_vec.load(con)
     con.enable_load_extension(False)
 
@@ -129,9 +147,9 @@ def content_hash(model: str, text: str) -> str:
 
 
 def parse_frontmatter(text: str) -> tuple[dict, str]:
-    """Estrae {description, tags} dal frontmatter YAML e ritorna (meta, body).
-    Parsing minimale stdlib (nessuna dipendenza YAML); gestisce solo tags in
-    flow form [a, b] — quella imposta dalla markdown discipline Maestro."""
+    """{description, tags} from the YAML frontmatter, plus the body.
+    Minimal stdlib parsing (no YAML dependency); tags are read in flow form
+    [a, b] only, the one the Maestro markdown discipline requires."""
     meta: dict = {}
     if not text.startswith("---"):
         return meta, text
@@ -159,9 +177,9 @@ def slugify(heading: str) -> str:
 
 
 def split_sections(body: str) -> list[dict]:
-    """Spezza il corpo sugli heading ## / ###. Il preambolo prima del primo
-    heading (se non vuoto) è una sezione con heading=''. Gli heading dentro
-    i fence di codice sono ignorati."""
+    """Split the body on ## / ### headings. The preamble before the first
+    heading, when not empty, is a section with heading=''. Headings inside
+    code fences are ignored."""
     fence_re = re.compile(r"^\s*(```|~~~)")
     head_re = re.compile(r"^(#{2,3})\s+(.*)$")
     cur = {"heading": "", "heading_path": [], "level": 0, "lines": []}
@@ -193,13 +211,9 @@ def split_sections(body: str) -> list[dict]:
     return out
 
 
-def count_words(text: str) -> int:
-    return len(text.split())
-
-
 def subsplit(text: str, max_words: int, overlap_words: int) -> list[str]:
-    """Divide un testo lungo in sub-chunk di ~max_words parole con overlap.
-    Ritorna [text] se già entro la soglia."""
+    """Split a long text into sub-chunks of about max_words words with an
+    overlap. [text] when it already fits."""
     words = text.split()
     if len(words) <= max_words:
         return [text]
@@ -215,8 +229,8 @@ def subsplit(text: str, max_words: int, overlap_words: int) -> list[str]:
 
 def build_embed_text(description: str, heading_path: list[str],
                      tags: str, chunk_text: str) -> str:
-    """Cartello di contesto (description del file + catena heading + tags)
-    anteposto al testo del chunk, per dare senso anche a heading criptici."""
+    """A context banner (file description, heading chain, tags) put before
+    the chunk text, so that even a cryptic heading embeds with its meaning."""
     ctx = []
     if description:
         ctx.append(description)
@@ -233,13 +247,19 @@ def make_snippet(text: str, max_len: int = 160) -> str:
     return flat if len(flat) <= max_len else flat[:max_len - 1].rstrip() + "…"
 
 
-def compute_chunk_id(rel_path: str, heading_path: list[str], sub_index: int) -> str:
-    key = f"{rel_path}\x1f{' › '.join(heading_path)}\x1f{sub_index}"
+def root_key(vault_root: Path) -> str:
+    """The identity of a vault root in vault_vec: its real absolute path."""
+    return os.path.realpath(str(Path(vault_root).expanduser()))
+
+
+def compute_chunk_id(root: str, rel_path: str, heading_path: list[str], sub_index: int) -> str:
+    key = f"{root}\x1f{rel_path}\x1f{' › '.join(heading_path)}\x1f{sub_index}"
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
 def chunk_file(path: Path, vault_root: Path,
                max_words: int = 1200, overlap_words: int = 100) -> list[dict]:
+    root = root_key(vault_root)
     rel_path = str(path.relative_to(vault_root))
     raw = path.read_text(encoding="utf-8", errors="replace")
     meta, body = parse_frontmatter(raw)
@@ -248,7 +268,8 @@ def chunk_file(path: Path, vault_root: Path,
     for sec in split_sections(body):
         for sub_index, part in enumerate(subsplit(sec["text"], max_words, overlap_words)):
             chunks.append({
-                "chunk_id": compute_chunk_id(rel_path, sec["heading_path"], sub_index),
+                "chunk_id": compute_chunk_id(root, rel_path, sec["heading_path"], sub_index),
+                "root": root,
                 "rel_path": rel_path,
                 "heading": sec["heading"],
                 "anchor": slugify(sec["heading"]) if sec["heading"] else "",
@@ -261,9 +282,9 @@ def chunk_file(path: Path, vault_root: Path,
 
 
 def load_ignore(vault_root: Path):
-    """Legge <vault_root>/.mem-ignore (stile .gitignore semplificato) e
-    ritorna is_ignored(rel_path). Supporta: commenti (#), glob (fnmatch),
-    dir con '/' finale, negazione '!'. Le dot-directory sono sempre ignorate."""
+    """Read <vault_root>/.mem-ignore (a simplified .gitignore) and return
+    is_ignored(rel_path). Supported: comments (#), globs (fnmatch), folders
+    with a trailing '/', negation with '!'. Dot-folders are always ignored."""
     patterns: list[tuple[bool, str]] = []
     ig = vault_root / ".mem-ignore"
     if ig.exists():
@@ -298,7 +319,17 @@ def walk_vault(roots: list[Path]):
         if not root.is_dir():
             continue
         is_ignored = load_ignore(root)
-        for path in sorted(root.rglob("*.md")):
+        # os.walk without followlinks: a symlinked folder or file inside the
+        # vault would index (and embed) content that lives outside it.
+        found = []
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            dirnames.sort()
+            for name in filenames:
+                if name.endswith(".md"):
+                    path = Path(dirpath) / name
+                    if not path.is_symlink():
+                        found.append(path)
+        for path in sorted(found):
             if not is_ignored(str(path.relative_to(root))):
                 yield path, root
 
@@ -353,32 +384,32 @@ def ollama_embed(texts: list[str], model: str) -> list[list[float]]:
             payload = json.loads(resp.read())
     except (urllib.error.URLError, OSError) as e:
         sys.stderr.write(
-            f"mem-vec: Ollama non raggiungibile su {OLLAMA_URL} ({e}). "
-            "Strato semantico non disponibile — usa la ricerca keyword.\n")
+            f"mem-vec: Ollama unreachable at {OLLAMA_URL} ({e}). "
+            "Semantic layer unavailable; use keyword search.\n")
         sys.exit(EXIT_UNAVAILABLE)
     embs = payload.get("embeddings")
     if not embs or len(embs) != len(texts):
-        sys.stderr.write(f"mem-vec: risposta inattesa da Ollama: {str(payload)[:200]}\n")
+        sys.stderr.write(f"mem-vec: unexpected answer from Ollama: {str(payload)[:200]}\n")
         sys.exit(1)
     return embs
 
 
 def scan_vault_state(con, roots, model, *, max_words=1200, overlap=100,
                      use_mtime_skip=True):
-    """(pending, stale, ok, orphans). item: dict del chunker + 'hash','mtime'.
-    orphans: chunk_id spariti dal filesystem. Pre-filtro mtime: un file il
-    cui mtime coincide con quello salvato per i suoi chunk non viene ri-letto."""
+    """(pending, stale, ok, orphans). item: the chunker's dict plus 'hash' and
+    'mtime'. orphans: chunk ids gone from the filesystem. mtime pre-filter: a
+    file whose mtime equals the one saved for its chunks is not re-read."""
     existing = {r["chunk_id"]: r for r in con.execute(
-        "SELECT chunk_id, rel_path, model, content_hash, file_mtime "
+        "SELECT chunk_id, root, rel_path, model, content_hash, file_mtime "
         "FROM vault_vec").fetchall()}
-    by_rel: dict[str, list] = {}
+    by_rel: dict[tuple, list] = {}
     for r in existing.values():
-        by_rel.setdefault(r["rel_path"], []).append(r)
+        by_rel.setdefault((r["root"], r["rel_path"]), []).append(r)
     pending, stale, ok, seen = [], [], [], set()
     for path, root in walk_vault(roots):
         rel = str(path.relative_to(root))
         mtime = path.stat().st_mtime
-        prior = by_rel.get(rel)
+        prior = by_rel.get((root_key(root), rel))
         if (use_mtime_skip and prior
                 and all(p["model"] == model
                         and abs(p["file_mtime"] - mtime) < 1e-6 for p in prior)):
@@ -409,14 +440,14 @@ def _embed_vault(con, roots, model, now, rebuild) -> dict:
     n = 0
     for i in range(0, len(todo), BATCH_SIZE):
         batch = todo[i:i + BATCH_SIZE]
-        embs = ollama_embed([b["embed_text"] or "(vuoto)" for b in batch], model)
+        embs = ollama_embed([b["embed_text"] or "(empty)" for b in batch], model)
         with con:
             for item, embv in zip(batch, embs):
                 con.execute(
-                    "INSERT OR REPLACE INTO vault_vec (chunk_id, rel_path, heading,"
+                    "INSERT OR REPLACE INTO vault_vec (chunk_id, root, rel_path, heading,"
                     " anchor, chunk_index, model, dims, content_hash, snippet,"
-                    " file_mtime, embedding, embedded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (item["chunk_id"], item["rel_path"], item["heading"],
+                    " file_mtime, embedding, embedded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (item["chunk_id"], item["root"], item["rel_path"], item["heading"],
                      item["anchor"], item["chunk_index"], model, len(embv),
                      item["hash"], item["snippet"], item["mtime"], pack(embv), now))
         n += len(batch)
@@ -666,7 +697,7 @@ def _add_scope_flags(sp: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="mem-vec",
-        description="Strato semantico di memories.db (emette JSON; usato da bin/mem).",
+        description="Semantic layer of memories.db (emits JSON; used by bin/mem).",
         epilog=(
             "scope: env MEM_SCOPE marks a satellite session, same slug rules and\n"
             "exit codes as bin/mem. search, similar and dupes accept --scope/\n"
@@ -676,7 +707,7 @@ def build_parser() -> argparse.ArgumentParser:
             "when MEM_SCOPE is set: only the mother instance vectorizes memories\n"
             "and prunes vault_vec of files outside its own roots.\n"
             "\n"
-            "Exit code 3: strato semantico non disponibile (uv/Ollama mancanti).\n"
+            "Exit code 3: semantic layer unavailable (no uv or Ollama).\n"
             "Exit code 4: --scope/--all-scopes refused, or embed run under MEM_SCOPE.\n"
             "Exit code 5: bin/mem_schema.py missing or incompatible next to bin/mem-vec.\n"
             "Exit code 6: invalid MEM_SCOPE or --scope slug.\n"
@@ -685,15 +716,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sp = sub.add_parser("embed", help="Vettorizza righe nuove/modificate")
-    sp.add_argument("--rebuild", action="store_true", help="Rigenera tutto da zero")
-    sp.add_argument("--status", action="store_true", help="Solo report copertura")
+    sp = sub.add_parser("embed", help="Vectorize new or changed rows")
+    sp.add_argument("--rebuild", action="store_true", help="Rebuild everything from scratch")
+    sp.add_argument("--status", action="store_true", help="Coverage report only")
     sp.add_argument("--model", default=DEFAULT_MODEL)
     sp.add_argument("--root", action="append",
-                    help="Radice del vault da indicizzare (ripetibile)")
+                    help="Vault root to index (repeatable)")
     sp.set_defaults(func=cmd_embed)
 
-    sp = sub.add_parser("search", help="Ricerca semantica")
+    sp = sub.add_parser("search", help="Semantic search")
     sp.add_argument("query")
     sp.add_argument("--type")
     sp.add_argument("--status")
@@ -708,14 +739,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_scope_flags(sp)
     sp.set_defaults(func=cmd_search)
 
-    sp = sub.add_parser("similar", help="Righe affini a un id dato")
+    sp = sub.add_parser("similar", help="Rows close to a given id")
     sp.add_argument("id", type=int)
     sp.add_argument("--limit", type=int, default=10)
     sp.add_argument("--min-score", type=float, default=0.0, dest="min_score")
     _add_scope_flags(sp)
     sp.set_defaults(func=cmd_similar)
 
-    sp = sub.add_parser("dupes", help="Coppie candidate duplicate")
+    sp = sub.add_parser("dupes", help="Candidate duplicate pairs")
     sp.add_argument("--min-score", type=float, default=0.85, dest="min_score")
     sp.add_argument("--type")
     sp.add_argument("--limit", type=int, default=50)

@@ -38,6 +38,7 @@ import difflib
 import json
 import os
 import re
+import select
 import shutil
 import signal
 import subprocess
@@ -120,11 +121,21 @@ def pid_alive(pid: int) -> bool:
 
 
 def active_state() -> dict[str, Any] | None:
-    """State only when the supervisor is alive. Clears orphan locks."""
+    """State only when the supervisor is alive. Clears orphan locks.
+
+    A dead supervisor may leave `yap` recording in its own session: every
+    segment's pid is stopped before the state is dropped, or nothing would
+    know how to switch the microphone off.
+    """
     state = load_state()
     if state is None:
         return None
     if not pid_alive(int(state.get("supervisor_pid", -1))):
+        for segment in state.get("segments", []):
+            try:
+                stop_pid(int(segment.get("pid") or 0), grace=1.0)
+            except (TypeError, ValueError):
+                continue
         clear_state()
         return None
     return state
@@ -437,6 +448,16 @@ def cmd_supervise(args: argparse.Namespace) -> None:
         if proc is not None and proc.poll() is None:
             stop_pid(proc.pid)
 
+    def capture_died() -> bool:
+        """`yap` exited on its own: record it and let the supervisor end, so
+        `status` reports no capture instead of a running one with no audio."""
+        proc = current.get("proc")
+        if proc is None or proc.poll() is None:
+            return False
+        state["rotation"] = f"off: yap exited with {proc.returncode}"
+        save_state(state)
+        return True
+
     def shutdown(signum=None, frame=None):
         close_segment()
         watcher = current.get("watcher")
@@ -450,8 +471,9 @@ def cmd_supervise(args: argparse.Namespace) -> None:
     if watcher_bin is None:
         state["rotation"] = "off: audiowatch unavailable"
         open_segment("unknown")
-        while True:
-            time.sleep(3600)
+        while not capture_died():
+            time.sleep(5)
+        shutdown()
 
     state["rotation"] = "on"
     watcher = subprocess.Popen(
@@ -460,8 +482,14 @@ def cmd_supervise(args: argparse.Namespace) -> None:
     current["watcher"] = watcher
     opened = False
     # readline(), never `for line in`: iterating a pipe uses a read-ahead buffer
-    # that can hold a device-change event until the next one arrives.
+    # that can hold a device-change event until the next one arrives. select()
+    # gives the loop a heartbeat to notice a `yap` that died between events.
     while True:
+        ready, _, _ = select.select([watcher.stdout], [], [], 5.0)
+        if not ready:
+            if opened and capture_died():
+                break
+            continue
         line = watcher.stdout.readline()
         if not line:
             break
@@ -511,6 +539,9 @@ def cmd_start(args: argparse.Namespace) -> None:
             project=str(project),
         )
     preflight()
+    # A cold build of the device watcher (swiftc) can take longer than the
+    # start budget below: build it here, so the supervisor finds it ready.
+    ensure_audiowatch()
 
     TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now()

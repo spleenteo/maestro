@@ -117,7 +117,7 @@ def parse_date(s: str | None, *, allow_keywords: bool = True) -> str | None:
 
 
 def effective_today() -> str:
-    """Today, with early-morning rule (00:00–06:00 → ieri)."""
+    """Today under the early-morning rule: between 00:00 and 06:00 it is still yesterday."""
     now = datetime.now()
     if now.hour < 6:
         return (now.date() - timedelta(days=1)).isoformat()
@@ -157,17 +157,9 @@ def emit_rows(rows: list[dict], cols: list[str], force_json: bool) -> None:
         emit_table(rows, cols)
 
 
-def announce(line: str, *, json_mode: bool) -> None:
-    """Announcement on stdout (or skipped in --json mode if writing JSON payload)."""
-    if json_mode:
-        return
+def announce(line: str) -> None:
+    """The announcement line on stdout; a --json caller gets the payload instead."""
     print(line)
-
-
-def tags_list(tags: str | None) -> list[str]:
-    if not tags:
-        return []
-    return [t.strip() for t in tags.split(",") if t.strip()]
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +197,7 @@ def cmd_save(args) -> int:
         emit_json(payload)
     else:
         tags = row["tags"] or ""
-        announce(f'📝 saved: "{row["title"]}" [{tags}] (memory) #{rid}', json_mode=False)
+        announce(f'📝 saved: "{row["title"]}" [{tags}] (memory) #{rid}')
     return 0
 
 
@@ -293,7 +285,7 @@ def cmd_idea(args) -> int:
         emit_json({"id": rid, **row})
     else:
         tags = row["tags"] or ""
-        announce(f'💡 idea: "{row["title"]}" [{tags}] (open) #{rid}', json_mode=False)
+        announce(f'💡 idea: "{row["title"]}" [{tags}] (open) #{rid}')
     return 0
 
 
@@ -318,7 +310,11 @@ def cmd_update(args) -> int:
     if args.title is not None: fields["title"] = args.title
     if args.description is not None: fields["description"] = args.description
     if args.tags is not None: fields["tags"] = ",".join(args.tags)
-    if args.status is not None: fields["status"] = args.status
+    if args.status is not None:
+        fields["status"] = args.status
+        # `done` is the only completion: it stamps completed_date like `mem done`,
+        # any other status clears it, so completed-range searches stay true.
+        fields["completed_date"] = effective_today() if args.status == "done" else None
     if args.due is not None: fields["due_date"] = parse_date(args.due)
     if args.priority is not None: fields["priority"] = args.priority
     if args.date is not None: fields["date"] = parse_date(args.date)
@@ -339,7 +335,7 @@ def cmd_update(args) -> int:
     if args.json:
         emit_json({"id": args.id, "updated": fields})
     else:
-        announce(f"✏️ updated #{args.id}: {changed}", json_mode=False)
+        announce(f"✏️ updated #{args.id}: {changed}")
     return 0
 
 
@@ -361,7 +357,7 @@ def cmd_done(args) -> int:
                     emit_json({"done": committed, "completed_date": today})
                 else:
                     for done_id in committed:
-                        announce(f"✅ done #{done_id}", json_mode=False)
+                        announce(f"✅ done #{done_id}")
                 sys.stderr.write(_missing(con, rid, scope, "task"))
                 return 1
             committed.append(rid)
@@ -369,7 +365,7 @@ def cmd_done(args) -> int:
         emit_json({"done": args.ids, "completed_date": today})
     else:
         for rid in args.ids:
-            announce(f"✅ done #{rid}", json_mode=False)
+            announce(f"✅ done #{rid}")
     return 0
 
 
@@ -387,7 +383,7 @@ def cmd_reopen(args) -> int:
     if args.json:
         emit_json({"reopened": args.id})
     else:
-        announce(f"↩️ reopened #{args.id}", json_mode=False)
+        announce(f"↩️ reopened #{args.id}")
     return 0
 
 
@@ -425,6 +421,9 @@ def cmd_marker(args) -> int:
         return 0
 
     if args.action == "set":
+        if args.value is None:
+            sys.stderr.write("mem marker set: a value is required\n")
+            return EXIT_USAGE
         today = effective_today()
         with connect() as con:
             existing = con.execute(
@@ -449,7 +448,7 @@ def cmd_marker(args) -> int:
         if args.json:
             emit_json({"name": args.name, "value": args.value, "id": rid, "action": action})
         else:
-            announce(f"🏷️ marker {action} #{rid}: {args.name} = {args.value}", json_mode=False)
+            announce(f"🏷️ marker {action} #{rid}: {args.name} = {args.value}")
         return 0
 
     sys.stderr.write("mem marker: unknown action\n")
@@ -665,8 +664,8 @@ def _vec_run(vec_args: list[str]) -> tuple[int, str]:
     uv = shutil.which("uv")
     if uv is None:
         sys.stderr.write(
-            "mem: strato semantico non disponibile — 'uv' non installato "
-            "(brew install uv). La ricerca keyword resta attiva.\n")
+            "mem: semantic layer unavailable, 'uv' is not installed "
+            "(brew install uv). Keyword search stays available.\n")
         return EXIT_SEM_UNAVAILABLE, ""
     script = Path(__file__).resolve().parent / "mem-vec"
     env = os.environ.copy()
@@ -721,7 +720,7 @@ def cmd_embed(args) -> int:
 
 def _cmd_search_semantic(args) -> int:
     if not args.query:
-        sys.stderr.write("mem: --semantic richiede una query di testo\n")
+        sys.stderr.write("mem: --semantic needs a text query\n")
         return EXIT_USAGE
     # Usage errors, checked before `uv` runs: mem-vec ranks a bounded number of
     # hits and has no completed_date filter, so neither can be passed through.
@@ -889,7 +888,7 @@ def cmd_satellite_add(args) -> int:
     if args.json:
         emit_json(row)
     else:
-        announce(f"🛰️ satellite added: {slug} (repo {row['repo_path']})", json_mode=False)
+        announce(f"🛰️ satellite added: {slug} (repo {row['repo_path']})")
     return 0
 
 
@@ -911,7 +910,7 @@ def cmd_satellite_remove(args) -> int:
     if not deleted:
         sys.stderr.write(f"mem: no satellite {args.slug!r}\n")
         return 1
-    announce(f"🛰️ satellite removed: {args.slug}", json_mode=False)
+    announce(f"🛰️ satellite removed: {args.slug}")
     return 0
 
 
@@ -970,7 +969,7 @@ def _add_scope_flags(sp: argparse.ArgumentParser, *, mother_all: bool = False) -
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="mem",
-        description="CLI wrapper su memories.db.",
+        description="CLI over memories.db: the orchestrator's log of memories, tasks and ideas.",
         epilog=(
             "dates: absolute YYYY-MM-DD or relative (today, yesterday, tomorrow, +Nd, -Nd, +Nw, +Nm).\n"
             "A negative offset takes the = form (--since=-7d): argparse reads a bare -7d as a flag.\n"
@@ -978,14 +977,9 @@ def build_parser() -> argparse.ArgumentParser:
             "between 00:00 and 06:00 local the row is attributed to the previous day,\n"
             "so a session running past midnight stays on the lived day.\n"
             "\n"
-            "read options for skills:\n"
-            "  today --date DAY [--to DAY]   rows of one day, or of DAY..TO inclusive,\n"
-            "                                ordered by date then id; --to alone starts\n"
-            "                                at today (early-morning rule)\n"
-            "  todo --due-until DAY          open tasks with no due date or due by DAY\n"
-            "  search --completed-since DAY / --completed-until DAY\n"
-            "                                filter completed_date (rows without one drop out)\n"
-            "  search --limit 0              every matching row (keyword search only)\n"
+            "read options for skills: today --date DAY [--to DAY] (one day or a range),\n"
+            "todo --due-until DAY, search --completed-since/--completed-until DAY,\n"
+            "search --limit 0 (every matching row, keyword search only).\n"
             "\n"
             "Output: ASCII table on TTY, dense JSON on pipe; --json forces JSON.\n"
             "--json rows include `scope` (null for the mother).\n"
@@ -1006,15 +1000,8 @@ def build_parser() -> argparse.ArgumentParser:
             "session's scope. embed refuses to run at all under MEM_SCOPE: only the\n"
             "mother instance vectorizes memories and prunes vault_vec.\n"
             "\n"
-            "satellite add|remove|list|show manage the satellites table: one row per repo\n"
-            "the mother lends its memory to (scope, resolved repo path, project\n"
-            "type, mandate, method, constraints, language, vault folder, created).\n"
-            "Mother-only, like the scope flags above. list and show read the table\n"
-            "as it stands and leave a db without one alone: list answers an empty\n"
-            "list, show exits 1. add validates SLUG like MEM_SCOPE, requires --repo\n"
-            "and --type, stores --repo and --vault resolved, and rejects a relative\n"
-            "--repo, one that isn't an existing directory, or a relative --vault;\n"
-            "a slug or a repo already registered is refused too.\n"
+            "satellite add|remove|list|show manage the satellites table, mother-only:\n"
+            "one row per repo the mother lends its memory to (`mem satellite --help`).\n"
             "\n"
             "Exit code 1: default error — no row, task or satellite matches an id or\n"
             "slug, update has nothing to change, or a date value (--date, --due,\n"
@@ -1024,7 +1011,7 @@ def build_parser() -> argparse.ArgumentParser:
             "action, a missing --semantic query), --to earlier than the first day,\n"
             "search --semantic with --limit 0 or --completed-since/--completed-until,\n"
             "or db not found.\n"
-            "Exit code 3: strato semantico non disponibile (uv/Ollama mancanti) — fallback keyword.\n"
+            "Exit code 3: semantic layer unavailable (no uv or Ollama); fall back to keyword search.\n"
             "Exit code 4: --scope or --all-scopes refused, or embed or satellite\n"
             "add/list/show/remove run under MEM_SCOPE.\n"
             "Exit code 5: bin/mem_schema.py missing or incompatible next to bin/mem.\n"
@@ -1076,7 +1063,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--title", help="New title")
     sp.add_argument("--description", help="New description (replaces the old one)")
     sp.add_argument("--tags", action="append", help="New tags (replace the old ones)")
-    sp.add_argument("--status", help="task: todo|in_progress|done|cancelled; idea: open|done|dismissed")
+    sp.add_argument("--status", choices=["todo", "in_progress", "done", "cancelled", "open", "dismissed"],
+                    help="task: todo|in_progress|done|cancelled; idea: open|done|dismissed "
+                         "(done stamps completed_date, any other status clears it)")
     sp.add_argument("--due", help="Due date: YYYY-MM-DD or relative (tomorrow, +3d, +1w, +1m)")
     sp.add_argument("--priority", choices=["low", "normal", "high"])
     sp.add_argument("--date", help="YYYY-MM-DD or relative (yesterday, --date=-2d); omitted = today with early-morning rule")
@@ -1141,14 +1130,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=50,
                     help="Max rows (default 50; 0 = no limit, keyword search only)")
     sp.add_argument("--semantic", action="store_true",
-                    help="Ricerca per significato via embedding (richiede Ollama+uv)")
+                    help="Search by meaning through embeddings (needs Ollama and uv)")
     sp.add_argument("--min-score", type=float, default=0.0, dest="min_score",
-                    help="Score minimo con --semantic (0-1)")
-    sp.add_argument("--model", help="Override modello embedding (solo con --semantic)")
+                    help="Minimum score with --semantic (0-1)")
+    sp.add_argument("--model", help="Embedding model override (with --semantic only)")
     sp.add_argument("--only", choices=["memory", "vault"],
-                    help="Restringe il recall a una sola sorgente")
+                    help="Restrict the recall to one source")
     sp.add_argument("--vault-frac", type=float, default=0.6, dest="vault_frac",
-                    help="Quota massima di risultati dal vault (anti-sommersione)")
+                    help="Maximum share of hits from the vault, so it can't flood the memories")
     _add_scope_flags(sp)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_search)
@@ -1168,10 +1157,10 @@ def build_parser() -> argparse.ArgumentParser:
     # embed (strato semantico)
     sp = sub.add_parser("embed", help="Vettorizza righe nuove/modificate (Ollama+uv)")
     sp.add_argument("--rebuild", action="store_true", help="Rigenera tutti gli embedding")
-    sp.add_argument("--status", action="store_true", help="Report copertura, nessuna scrittura")
+    sp.add_argument("--status", action="store_true", help="Coverage report, no write")
     sp.add_argument("--model", help="Override modello embedding")
     sp.add_argument("--root", action="append",
-                    help="Radice del vault da indicizzare (ripetibile)")
+                    help="Vault root to index (repeatable)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_embed)
 
@@ -1236,8 +1225,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except SystemExit:
-        raise
     except Exception as e:
         sys.stderr.write(f"mem: error: {e}\n")
         return 1

@@ -160,7 +160,7 @@ class TestDayBoundary(DigestCase):
         self.assertEqual(data["sessions"], [])
 
     def test_relative_dates_resolve(self):
-        for spec in ("today", "oggi", "yesterday", "ieri", "3d"):
+        for spec in ("today", "yesterday", "3d", "+0d"):
             self.json_digest("--date", spec)
         self.json_digest("--date=-3d")
 
@@ -241,7 +241,7 @@ class TestCli(DigestCase):
         self.assertIn("aaaa1111", out)
         self.assertIn("08:00", out)
         self.assertIn("la ruota è sbagliata", out)
-        self.assertIn("1 sessione,", out)
+        self.assertIn("1 session,", out)
 
     def test_unknown_project_exits_2(self):
         env = dict(os.environ, CLAUDE_PROJECTS_ROOT=str(self.root))

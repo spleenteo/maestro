@@ -335,6 +335,20 @@ class TestReopen(TempDbCase):
         self.rid = self.ok_json("task", "task chiuso")["id"]
         self.run_mem("done", str(self.rid))
 
+    def test_update_status_done_stamps_completed_date_and_other_statuses_clear_it(self):
+        task = self.ok_json("task", "task via update")
+        self.ok_json("update", str(task["id"]), "--status", "done")
+        self.assertEqual(self.db_row(task["id"])["completed_date"], effective_today())
+        self.ok_json("update", str(task["id"]), "--status", "todo")
+        self.assertIsNone(self.db_row(task["id"])["completed_date"])
+        self.ok_json("update", str(task["id"]), "--status", "cancelled")
+        self.assertIsNone(self.db_row(task["id"])["completed_date"])
+
+    def test_update_refuses_an_unknown_status(self):
+        task = self.ok_json("task", "task via update")
+        r = self.run_mem("update", str(task["id"]), "--status", "finished")
+        self.assertEqual(r.returncode, 2)
+
     def test_reopen_clears_completed_date_and_sets_todo(self):
         payload = self.ok_json("reopen", str(self.rid))
         self.assertEqual(payload["reopened"], self.rid)
