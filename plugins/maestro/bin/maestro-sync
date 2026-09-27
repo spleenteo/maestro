@@ -20,23 +20,36 @@ command never asks anything.
                     marked, or the listen unit with its state), register
                     (writing register keys the preferences lack) or orphan
                     (marked here, gone upstream: reported, never removed).
-    apply --items ID[,ID...] | --kind KIND [--from FILE] [--instance DIR]
+    apply --items ID[,ID...] | --kind KIND [--from FILE] [--register KEY=VALUE ...]
+          [--instance DIR]
                     applies items of the last plan, after a backup set at
                     private/backups/<stamp>-sync/ named by the plan's stamp
                     and shared by every apply on that plan: manifest.json
                     first, with every selected item pending, the memory db
                     copied once per set through sqlite3's online backup and
-                    checked, every replaced file copied to files/<path>
-                    before it is touched, the manifest rewritten after each
-                    item. `update` writes the mirror text with the instance's
-                    tools: line carried over (or the text of --from FILE as
-                    given, for one item: the owner's merge); `new` copies the
-                    upstream file. --kind update leaves out the items the
-                    owner modified locally (stderr: `skipped (locally
-                    modified): <path>`); they go through --items. Every
-                    applied item appends a line to private/maestro-sync.log.
-                    The kinds bin, retired and register are not implemented
-                    yet; orphans are never applied.
+                    checked, every replaced or removed file copied to
+                    files/<path> before it is touched, the manifest rewritten
+                    after each item. `update` writes the mirror text with the
+                    instance's tools: line carried over (or the text of --from
+                    FILE as given, for one item: the owner's merge); `new`
+                    copies the upstream file; `bin` copies the drifted scripts
+                    (mode kept) then runs bin/mem stats with MEM_DB and
+                    MEM_SCOPE unset, so a schema migration runs while the db
+                    copy is minutes old; `retired` removes a retired path, or
+                    the marked members of the listen unit, after re-checking
+                    the allowlist and, for listen, that no capture runs
+                    (otherwise the item is postponed, nothing is touched, and
+                    the run goes on); `register` runs maestro-register-keys
+                    write with the --register answers (dotted keys as `plan`
+                    lists them; tone_default.synthesis is never set) and moves
+                    its backup into the set. --kind update leaves out the
+                    items the owner modified locally (stderr: `skipped
+                    (locally modified): <path>`); they go through --items.
+                    Every applied item appends a line to
+                    private/maestro-sync.log. Orphans are never applied. At
+                    the end of a run the sets are pruned: the five newest
+                    stay, a set younger than seven days stays, at most twenty
+                    stay.
     note [ID] --outcome skipped|aborted|kept [--count N] [--instance DIR]
                     appends to the log an outcome the skill decided: an item
                     `(skipped by owner)`, `ABORTED by owner after N files`
@@ -57,7 +70,8 @@ another apply holds it) and refuses a stale plan (E_STALE) when the mirror's
 HEAD moved or a file no longer matches the checksum the plan recorded (for
 a new file: when its path now exists). A failed item stops the run: the
 items before it stay applied, the ones after it stay pending in the
-manifest, and the exit code is E_PARTIAL.
+manifest, and the exit code is E_PARTIAL. A postponed listen unit doesn't
+stop the run; the exit code is POSTPONED when everything else applied.
 
 Exit codes, always explicit, never a silent degradation:
      0  OK              done
@@ -86,7 +100,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -145,9 +159,21 @@ SET_DB_PATH = "db/memories.db"
 NO_VERSION = "—"
 
 APPLY_KINDS = ("update", "new", "bin", "retired", "register")
-APPLIED_KINDS = ("update", "new")  # T4a; bin, retired and register follow in T4b
 NOTE_OUTCOMES = ("skipped", "aborted", "kept")
 KEPT_KINDS = ("retired", "register")
+
+# Retention of the backup sets, by folder stamp: the newest RETENTION_KEEP
+# stay whatever their age, a set younger than RETENTION_MIN_AGE stays, and
+# the cap RETENTION_MAX wins over the age guard.
+RETENTION_KEEP = 5
+RETENTION_MIN_AGE = timedelta(days=7)
+RETENTION_MAX = 20
+SET_STAMP_RE = re.compile(r"^(\d{8}-\d{6})" + re.escape(SET_SUFFIX) + "$")
+STAMP_FORMAT = "%Y%m%d-%H%M%S"
+
+# The environment bin/mem stats must not inherit: a satellite's scope or a
+# db elsewhere would make the migration run on the wrong database.
+MEM_ENV_SCRUBBED = ("MEM_DB", "MEM_SCOPE")
 
 # Phase 4b: folders of the mirror that hold template-only or plugin-distributed
 # material, never delivered by this command.
@@ -169,6 +195,27 @@ LISTEN_STATE_FILE = Path(".local") / "state" / "listen" / "current.json"
 LISTEN_MONITOR_PATTERN = "/bin/listen-update[s]( |$)"
 
 REGISTER_KEYS_CMD = "maestro-register-keys"
+# The dotted keys `maestro-register-keys report` prints, each with the env
+# var its `write` reads: a copy of that script's KEYS table. A None var is
+# a key the owner never sets (synthesis is always neutral).
+REGISTER_ENV: Dict[str, Optional[str]] = {
+    "suspended": "MAESTRO_SUSPENDED",
+    "post_pass": "MAESTRO_POST_PASS",
+    "tone_default.communication": "MAESTRO_TONE_COMMUNICATION",
+    "tone_default.documentation": "MAESTRO_TONE_DOCUMENTATION",
+    "tone_default.synthesis": None,
+    "voice": "MAESTRO_VOICE",
+    "communication.sign_off": "MAESTRO_SIGN_OFF",
+    "translation.enabled": "MAESTRO_TRANSLATION",
+    "translation.pair": "MAESTRO_TRANSLATION_PAIR",
+    "translation.new_context_marker": "MAESTRO_TRANSLATION_MARKER",
+    "translation.source_words_max": "MAESTRO_TRANSLATION_WORDS_MAX",
+    "translation.labels": "MAESTRO_TRANSLATION_LABELS",
+    "avoid_words": "MAESTRO_AVOID_WORDS",
+}
+REGISTER_ENV_PREFIX = "MAESTRO_"
+REGISTER_UNCHANGED = "unchanged:"
+REGISTER_INVALID_EXIT = 2
 NEW_PREVIEW_LINES = 30
 ITEM_PREFIX = {"update": "u", "new": "n", "bin": "b", "retired": "r", "register": "g", "orphan": "o"}
 
@@ -1195,11 +1242,54 @@ def back_up_file(root: Path, set_dir: Path, rel: str) -> None:
 # apply: the items
 # --------------------------------------------------------------------------
 
-def select_items(plan: dict, ids: Optional[List[str]], kind: Optional[str]) -> List[dict]:
+def _safe_rel(root: Path, rel: object) -> bool:
+    """A relative path this command may touch at all: non-empty, not `.`,
+    not absolute, no `..`, not under private/, and its real path inside the
+    instance."""
+    if not isinstance(rel, str) or rel in ("", ".") or os.path.isabs(rel):
+        return False
+    parts = Path(rel).parts
+    if not parts or ".." in parts or parts[0] == "private":
+        return False
+    target = real(root / rel)
+    return target != root and str(target).startswith(str(root) + os.sep)
+
+
+def check_retired_allowlist(root: Path, item: dict) -> None:
+    """Defence in depth on a retired item, whatever the plan file says: the
+    unit is a retired path or `listen`, every member to remove is that path
+    or one of the four listen members, and no path escapes the instance.
+    E_ITEM otherwise."""
+    unit = item.get("path")
+    if unit == LISTEN_UNIT:
+        allowed = LISTEN_MEMBERS
+    elif unit in RETIRED_PATHS:
+        allowed = (unit,)
+    else:
+        raise SyncError(E_ITEM, f"refusing to remove {unit!r} ({item.get('id')}): not a retired path")
+    members = item.get("members")
+    if not isinstance(members, list) or not members:
+        raise SyncError(E_ITEM, f"refusing {item.get('id')} {unit}: the plan names no member")
+    for member in members:
+        rel = member.get("path") if isinstance(member, dict) else None
+        if rel not in allowed or not _safe_rel(root, rel):
+            raise SyncError(E_ITEM, f"refusing to remove {rel!r} ({item.get('id')} {unit}): not a retired path")
+
+
+def check_bin_paths(root: Path, item: dict) -> None:
+    """Every file of a bin item lies under bin/ and inside the instance."""
+    for entry in item.get("files") or []:
+        rel = entry.get("path") if isinstance(entry, dict) else None
+        if not isinstance(rel, str) or Path(rel).parts[:1] != ("bin",) or not _safe_rel(root, rel):
+            raise SyncError(E_ITEM, f"refusing to copy {rel!r} ({item.get('id')}): not a bin/ script")
+
+
+def select_items(root: Path, plan: dict, ids: Optional[List[str]], kind: Optional[str]) -> List[dict]:
     """The items to apply: those named by id (each checked against the plan)
     or every item of a kind, minus, for --kind update, the locally modified
-    ones, listed on stderr. E_ITEM for an orphan, a kept retired item, or a
-    kind this command doesn't apply yet."""
+    ones, listed on stderr. E_ITEM for an orphan, a kept retired item, an
+    unknown kind, or a retired or bin item naming a path outside its
+    allowlist."""
     if ids:
         candidates = []
         for item_id in ids:
@@ -1212,11 +1302,15 @@ def select_items(plan: dict, ids: Optional[List[str]], kind: Optional[str]) -> L
     for item in candidates:
         if item["kind"] == "orphan":
             raise SyncError(E_ITEM, f"{item['id']} {item['path']} is an orphan: reported, never applied")
-        if item["kind"] == "retired" and item.get("state") == "kept":
-            raise SyncError(E_ITEM, f"{item['id']} {item['path']} is kept: its skill carries no marker, "
-                                    "so nothing of it is removed")
-        if item["kind"] not in APPLIED_KINDS:
-            raise SyncError(E_ITEM, f"not implemented yet: {item['kind']} ({item['id']} {item['path']})")
+        if item["kind"] not in APPLY_KINDS:
+            raise SyncError(E_ITEM, f"unknown kind {item['kind']!r} ({item['id']} {item['path']}): bad plan")
+        if item["kind"] == "retired":
+            if item.get("state") == "kept":
+                raise SyncError(E_ITEM, f"{item['id']} {item['path']} is kept: its skill carries no marker, "
+                                        "so nothing of it is removed")
+            check_retired_allowlist(root, item)
+        if item["kind"] == "bin":
+            check_bin_paths(root, item)
         if kind == "update" and item.get("locally_modified"):
             print(f"skipped (locally modified): {item['path']}", file=sys.stderr)
             continue
@@ -1224,21 +1318,44 @@ def select_items(plan: dict, ids: Optional[List[str]], kind: Optional[str]) -> L
     return selected
 
 
+def _stale(path: str, what: str = "changed") -> SyncError:
+    return SyncError(E_STALE, f"{path} {what} since the plan: run `maestro-sync plan` again")
+
+
 def check_fresh(root: Path, plan: dict, selected: List[dict]) -> None:
     """E_STALE when the mirror's HEAD is no longer the plan's, or a selected
-    file changed since the plan (a new file's path now exists)."""
+    file changed since the plan: an update's or the preferences' checksum,
+    a new file's path now existing, a bin script's checksum (a missing one
+    now present), a retired member's marker file."""
     mirror = Path(plan["mirror"])
     head = git(mirror, "rev-parse", "HEAD").strip()
     if head != plan["mirror_head"]:
         raise SyncError(E_STALE, f"the mirror {mirror} is at {head[:12]}, the plan was made at "
                                  f"{str(plan['mirror_head'])[:12]}: run `maestro-sync plan` again")
     for item in selected:
-        target = root / item["path"]
-        if item["kind"] == "new":
-            if os.path.lexists(target):
-                raise SyncError(E_STALE, f"{item['path']} appeared since the plan: run `maestro-sync plan` again")
-        elif not target.is_file() or sha256(target) != item.get("checksum"):
-            raise SyncError(E_STALE, f"{item['path']} changed since the plan: run `maestro-sync plan` again")
+        kind = item["kind"]
+        if kind == "new":
+            if os.path.lexists(root / item["path"]):
+                raise _stale(item["path"], "appeared")
+        elif kind == "bin":
+            for entry in item["files"]:
+                target = root / entry["path"]
+                if entry.get("state") == "missing":
+                    if os.path.lexists(target):
+                        raise _stale(entry["path"], "appeared")
+                elif not target.is_file() or sha256(target) != entry.get("checksum"):
+                    raise _stale(entry["path"])
+        elif kind == "retired":
+            for member in item["members"]:
+                if not member.get("marked"):
+                    continue
+                marker = marker_file(root, member["path"])
+                if not marker.is_file() or sha256(marker) != member.get("checksum"):
+                    raise _stale(member["path"])
+        else:
+            target = root / item["path"]
+            if not target.is_file() or sha256(target) != item.get("checksum"):
+                raise _stale(item["path"])
 
 
 def apply_update(root: Path, mirror: Path, item: dict, from_bytes: Optional[bytes]) -> None:
@@ -1259,30 +1376,196 @@ def apply_new(root: Path, mirror: Path, item: dict) -> None:
     shutil.copy2(mirror / item["path"], target)
 
 
+def _proc_detail(r: subprocess.CompletedProcess) -> str:
+    return " ".join((r.stderr.strip() or r.stdout.strip() or f"exit {r.returncode}").split())
+
+
+def apply_bin(root: Path, mirror: Path, set_dir: Path, manifest: dict, item: dict, entry: dict) -> None:
+    """The drifted scripts copied from the mirror with shutil.copy2 (mode
+    kept), each replaced one first copied into files/bin/<name>; then
+    bin/mem stats with MEM_DB and MEM_SCOPE unset, so a schema migration the
+    new bin/mem carries runs while the db copy is minutes old. A failing
+    stats is E_PARTIAL naming the set."""
+    replaced: List[str] = []
+    for entry_file in item["files"]:
+        rel = entry_file["path"]
+        if (root / rel).is_file():
+            back_up_file(root, set_dir, rel)
+            replaced.append(rel)
+    entry["backups"] = replaced
+    write_manifest(set_dir, manifest, E_PARTIAL)
+    for entry_file in item["files"]:
+        rel = entry_file["path"]
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(mirror / rel, root / rel)
+    env = {k: v for k, v in os.environ.items() if k not in MEM_ENV_SCRUBBED}
+    mem = root / "bin" / "mem"
+    try:
+        r = subprocess.run([str(mem), "stats"], capture_output=True, text=True, env=env, cwd=str(root))
+    except OSError as exc:
+        raise SyncError(E_PARTIAL, f"cannot run bin/mem stats after the copy: {exc}; the old scripts and "
+                                   f"the db copy are in {set_dir}")
+    if r.returncode != 0:
+        raise SyncError(E_PARTIAL, f"bin/mem stats failed after the copy (exit {r.returncode}): "
+                                   f"{_proc_detail(r)}; the old scripts and the db copy are in {set_dir}")
+
+
+def apply_retired(root: Path, set_dir: Path, manifest: dict, item: dict, entry: dict) -> Optional[str]:
+    """The marked members of a retired item removed, each copied into
+    files/<path> first; an empty user-skills/ folder removed after
+    maestro-net. The listen unit's state is read again here, never from the
+    plan: when a capture or an old monitor runs, nothing is touched and the
+    reason is returned (the item is postponed)."""
+    if item["path"] == LISTEN_UNIT:
+        state, reason, _members = listen_unit(root)
+        if state == "postponed":
+            return reason or "a capture runs"
+        if state != "listed":
+            raise SyncError(E_ITEM, f"the listen unit is {state} now, not listed: run `maestro-sync plan` again")
+    marked = [m["path"] for m in item["members"] if m.get("marked")]
+    backups: List[str] = []
+    for rel in marked:
+        for file_rel in files_under(root, rel):
+            back_up_file(root, set_dir, file_rel)
+            backups.append(file_rel)
+    entry["backups"] = backups
+    write_manifest(set_dir, manifest, E_PARTIAL)
+    for rel in marked:
+        target = root / rel
+        if target.is_dir() and not os.path.islink(target):
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+    if item["path"] == "user-skills/maestro-net":
+        try:
+            os.rmdir(root / "user-skills")
+        except OSError:
+            pass
+    return None
+
+
+def parse_register_answers(pairs: List[str]) -> Dict[str, str]:
+    """The --register KEY=VALUE answers as the env vars maestro-register-keys
+    write reads. E_USAGE for a pair without `=`, an unknown key, or
+    tone_default.synthesis (always neutral, never set)."""
+    env: Dict[str, str] = {}
+    known = ", ".join(key for key, var in REGISTER_ENV.items() if var)
+    for pair in pairs:
+        key, sep, value = pair.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            raise SyncError(E_USAGE, f"--register takes KEY=VALUE, got {pair!r}")
+        if key not in REGISTER_ENV:
+            raise SyncError(E_USAGE, f"--register: unknown key {key!r}; the keys are {known}")
+        var = REGISTER_ENV[key]
+        if var is None:
+            raise SyncError(E_USAGE, f"--register: {key} is always neutral and is never set")
+        env[var] = value
+    return env
+
+
+def register_env(answers: Dict[str, str]) -> Dict[str, str]:
+    """This process's environment without any inherited MAESTRO_* variable,
+    plus the answers: only what the owner said reaches the preferences."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(REGISTER_ENV_PREFIX)}
+    env.update(answers)
+    return env
+
+
+def validate_register_answers(answers: Dict[str, str]) -> None:
+    """`maestro-register-keys render` with the answers, before any set is
+    opened: its exit 2 is an invalid value, E_USAGE here with nothing
+    written anywhere."""
+    exe = register_keys_command()
+    try:
+        r = subprocess.run([str(exe), "render"], capture_output=True, text=True, env=register_env(answers))
+    except OSError as exc:
+        raise SyncError(E_PLUGIN, f"cannot run {exe}: {exc}")
+    if r.returncode == REGISTER_INVALID_EXIT:
+        raise SyncError(E_USAGE, f"--register: {_proc_detail(r)}")
+    if r.returncode != 0:
+        raise SyncError(E_PLUGIN, f"{REGISTER_KEYS_CMD} render failed (exit {r.returncode}): {_proc_detail(r)}")
+
+
+def apply_register(root: Path, set_dir: Path, item: dict, entry: dict, answers: Dict[str, str]) -> str:
+    """`maestro-register-keys write` on the preferences with the answers in
+    its environment; its `backup <path>` file moved into the set as
+    files/private/preferences.md and recorded as the replaced file. Returns
+    the log marker: `register, N keys added, backup <set file>`, or
+    `register, 0 keys added` when write found every key present."""
+    exe = register_keys_command()
+    prefs = root / PREFS_FILE
+    try:
+        r = subprocess.run([str(exe), "write", str(prefs)], capture_output=True, text=True,
+                           env=register_env(answers), cwd=str(root))
+    except OSError as exc:
+        raise SyncError(E_PARTIAL, f"cannot run {exe}: {exc}")
+    if r.returncode == REGISTER_INVALID_EXIT:
+        raise SyncError(E_USAGE, f"{REGISTER_KEYS_CMD} write refused a value, nothing written: {_proc_detail(r)}")
+    if r.returncode != 0:
+        raise SyncError(E_PARTIAL, f"{REGISTER_KEYS_CMD} write failed (exit {r.returncode}): {_proc_detail(r)}")
+    lines = r.stdout.splitlines()
+    if lines and lines[0].startswith(REGISTER_UNCHANGED):
+        entry["backups"] = []
+        entry["keys_added"] = 0
+        return "register, 0 keys added"
+    backup = next((ln[len("backup "):] for ln in lines if ln.startswith("backup ")), None)
+    written = next((re.match(r"^written (\d+) key", ln) for ln in lines if ln.startswith("written ")), None)
+    if backup is None or written is None:
+        raise SyncError(E_PARTIAL, f"{REGISTER_KEYS_CMD} write printed neither its backup nor its count: "
+                                   f"{' | '.join(lines) or 'no output'}")
+    dest = set_dir / SET_FILES_DIR / PREFS_FILE
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(backup, str(dest))
+    added = int(written.group(1))
+    entry["backups"] = [str(PREFS_FILE)]
+    entry["keys_added"] = added
+    return f"register, {added} keys added, backup {dest}"
+
+
+def apply_item(root: Path, mirror: Path, set_dir: Path, manifest: dict, item: dict, entry: dict,
+               from_bytes: Optional[bytes], answers: Dict[str, str]) -> Tuple[str, Optional[str]]:
+    """One item applied; (log marker, postponement reason or None)."""
+    kind = item["kind"]
+    if kind == "update":
+        back_up_file(root, set_dir, item["path"])
+        entry["backups"] = [item["path"]]
+        write_manifest(set_dir, manifest, E_PARTIAL)
+        apply_update(root, mirror, item, from_bytes)
+        return ("applied, merged" if from_bytes is not None else "applied"), None
+    if kind == "new":
+        apply_new(root, mirror, item)
+        return "new", None
+    if kind == "bin":
+        apply_bin(root, mirror, set_dir, manifest, item, entry)
+        return "applied", None
+    if kind == "retired":
+        reason = apply_retired(root, set_dir, manifest, item, entry)
+        return ("retired, postponed" if reason else "retired"), reason
+    return apply_register(root, set_dir, item, entry, answers), None
+
+
 def run_apply(root: Path, plan: dict, selected: List[dict], from_path: Optional[Path],
-              from_bytes: Optional[bytes]) -> int:
+              from_bytes: Optional[bytes], answers: Dict[str, str]) -> int:
     """The selected items, in order, against one backup set: each file
     backed up before it is touched, the manifest rewritten after each
-    item, a log line per applied item. A failure stops the run."""
+    item, a log line per applied or postponed item. A failure stops the
+    run (E_PARTIAL); a postponed listen unit doesn't, and the run exits
+    POSTPONED when everything else applied. A value maestro-register-keys
+    refuses (E_USAGE) leaves the item pending and propagates."""
     mirror = Path(plan["mirror"])
     upstream = plan["versions"].get("upstream")
     set_dir, manifest = open_set(root, plan, selected)
     print(f"SET {set_dir}")
     entries = {entry["id"]: entry for entry in manifest["items"]}
-    applied = failed = 0
+    applied = failed = postponed = 0
     for item in selected:
         entry = entries[item["id"]]
         try:
-            if item["kind"] == "update":
-                back_up_file(root, set_dir, item["path"])
-                entry["backups"] = [item["path"]]
-                write_manifest(set_dir, manifest, E_PARTIAL)
-                apply_update(root, mirror, item, from_bytes)
-                marker = "applied, merged" if from_bytes is not None else "applied"
-            else:
-                apply_new(root, mirror, item)
-                marker = "new"
+            marker, reason = apply_item(root, mirror, set_dir, manifest, item, entry, from_bytes, answers)
         except (OSError, UnicodeDecodeError, SyncError) as exc:
+            if isinstance(exc, SyncError) and exc.code == E_USAGE:
+                raise
             entry["outcome"] = "failed"
             entry["error"] = str(exc)
             write_manifest(set_dir, manifest, E_PARTIAL)
@@ -1290,17 +1573,80 @@ def run_apply(root: Path, plan: dict, selected: List[dict], from_path: Optional[
             print(f"failed   {item['id']:<4} {item['kind']:<8} {item['path']}")
             failed += 1
             break
-        entry["outcome"] = "applied"
-        entry["applied_at"] = utc_now().isoformat()
-        if from_path is not None:
-            entry["from_file"] = str(from_path)
+        if reason:
+            entry["outcome"] = "postponed"
+            entry["reason"] = reason
+            postponed += 1
+            verdict = "postponed"
+        else:
+            entry["outcome"] = "applied"
+            entry["applied_at"] = utc_now().isoformat()
+            if from_path is not None:
+                entry["from_file"] = str(from_path)
+            applied += 1
+            verdict = "applied"
         write_manifest(set_dir, manifest, E_PARTIAL)
         append_log(root, item_log_line(item, marker, upstream))
-        print(f"applied  {item['id']:<4} {item['kind']:<8} {item['path']}")
-        applied += 1
-    pending = len(selected) - applied - failed
-    print(f"RESULT applied={applied} failed={failed} pending={pending}")
-    return E_PARTIAL if failed else OK
+        print(f"{verdict:<8} {item['id']:<4} {item['kind']:<8} {item['path']}")
+    pending = len(selected) - applied - failed - postponed
+    print(f"RESULT applied={applied} failed={failed} postponed={postponed} pending={pending}")
+    if failed:
+        return E_PARTIAL
+    return POSTPONED if postponed else OK
+
+
+# --------------------------------------------------------------------------
+# apply: retention of the sets
+# --------------------------------------------------------------------------
+
+def set_stamp_time(folder: Path) -> Optional[datetime]:
+    """The UTC time a set's folder name carries; None for a folder that
+    isn't `<stamp>-sync`."""
+    m = SET_STAMP_RE.match(folder.name)
+    if not m or not folder.is_dir():
+        return None
+    try:
+        return datetime.strptime(m.group(1), STAMP_FORMAT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def prune_sets(root: Path, current: Path) -> List[Path]:
+    """Retention by folder stamp: the RETENTION_KEEP newest sets stay; of
+    the rest, a set older than RETENTION_MIN_AGE goes; when more than
+    RETENTION_MAX remain, the oldest go too. The set of this run always
+    stays. Returns the removed folders; a folder that can't be removed is a
+    warning on stderr, never a failure."""
+    stamped = []
+    for folder in (root / BACKUPS_DIR).glob(f"*{SET_SUFFIX}"):
+        when = set_stamp_time(folder)
+        if when is not None:
+            stamped.append((when, folder))
+    stamped.sort(key=lambda pair: pair[0], reverse=True)
+    now = utc_now()
+    survivors = stamped[:RETENTION_KEEP]
+    doomed: List[Path] = []
+    for when, folder in stamped[RETENTION_KEEP:]:
+        if folder != current and now - when > RETENTION_MIN_AGE:
+            doomed.append(folder)
+        else:
+            survivors.append((when, folder))
+    while len(survivors) > RETENTION_MAX:
+        when, folder = survivors.pop()
+        if folder == current:
+            survivors.insert(0, (when, folder))
+            continue
+        doomed.append(folder)
+    removed: List[Path] = []
+    for folder in doomed:
+        try:
+            shutil.rmtree(folder)
+        except OSError as exc:
+            print(f"maestro-sync: warning: cannot remove the old set {folder}: {exc}", file=sys.stderr)
+            continue
+        removed.append(folder)
+        print(f"PRUNED {folder}")
+    return removed
 
 
 def cmd_apply(args) -> int:
@@ -1316,19 +1662,26 @@ def cmd_apply(args) -> int:
             from_bytes = from_path.read_bytes()
         except OSError as exc:
             raise SyncError(E_USAGE, f"cannot read --from {from_path}: {exc}")
+    answers = parse_register_answers(args.register or [])
+    if answers:
+        validate_register_answers(answers)
     root = instance_root(args.instance or os.getcwd())
     plan = load_plan(root)
     lock = acquire_lock(root)
     try:
-        selected = select_items(plan, ids, args.kind)
+        selected = select_items(root, plan, ids, args.kind)
         if from_path is not None and selected and selected[0]["kind"] != "update":
             raise SyncError(E_USAGE, f"--from FILE applies to an update item, {selected[0]['id']} is "
                                      f"{selected[0]['kind']}")
+        if answers and not any(it["kind"] == "register" for it in selected):
+            raise SyncError(E_USAGE, "--register KEY=VALUE goes with a register item, and none is selected")
         check_fresh(root, plan, selected)
         if not selected:
             print("nothing to apply")
             return OK
-        return run_apply(root, plan, selected, from_path, from_bytes)
+        code = run_apply(root, plan, selected, from_path, from_bytes, answers)
+        prune_sets(root, set_dir_for(root, plan))
+        return code
     finally:
         release_lock(lock)
 
@@ -1394,6 +1747,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="every item of this kind (update leaves out the locally modified ones)")
     sp.add_argument("--from", dest="from_file", metavar="FILE",
                     help="with one --items id of kind update: write this file's text as given")
+    sp.add_argument("--register", action="append", metavar="KEY=VALUE",
+                    help="with a register item: an answer for a missing key, by its dotted name "
+                         "(tone_default.communication, communication.sign_off, ...); repeatable; "
+                         "an unanswered key takes its default")
     sp.add_argument("--instance", help="instance root (default: the current directory)")
     sp.set_defaults(func=cmd_apply)
 

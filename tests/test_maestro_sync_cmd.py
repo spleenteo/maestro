@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -45,6 +46,7 @@ E_STALE = 6
 E_ITEM = 7
 E_PARTIAL = 8
 E_LOCKED = 9
+POSTPONED = 10
 
 LISTEN_MEMBERS = (".claude/skills/listen", "bin/listen", "bin/listen-updates",
                   "bin/audiowatch.swift")
@@ -1289,18 +1291,6 @@ class TestApplyUpdate(SyncFixture):
         self.assertEqual(r.returncode, E_ITEM)
         self.assertTrue((self.instance / "howto" / "99-mine.md").exists())
 
-    def test_the_other_kinds_are_not_implemented_yet(self):
-        recorder_procs(self.bindir)
-        write(self.instance / "bin" / "mem", "#!/bin/sh\necho old\n", mode=0o755)
-        seed_listen(self.instance)
-        self.plan_json()
-        for item_id, kind in (("b1", "bin"), ("r1", "retired"), ("g1", "register")):
-            with self.subTest(kind=kind):
-                r = self.apply("--items", item_id)
-                self.assertEqual(r.returncode, E_ITEM)
-                self.assertIn(f"not implemented yet: {kind}", r.stderr)
-        self.assertEqual(self.sets(), [])
-
     def test_a_kept_item_is_refused(self):
         recorder_procs(self.bindir)
         seed_listen(self.instance, unmarked=(".claude/skills/listen",))
@@ -1516,6 +1506,446 @@ class TestNote(SyncFixture):
         self.assertEqual(len(lines), 2)
         self.assertIn("(applied)", lines[0])
         self.assertIn("(skipped by owner)", lines[1])
+
+
+# ---------------------------------------------------------------------------
+# apply — bin
+# ---------------------------------------------------------------------------
+
+OLD_MEM = "#!/bin/sh\necho old\n"
+
+
+class TestApplyBin(SyncFixture):
+    def push_mem(self, body: str) -> None:
+        """A new `bin/mem` on upstream main, executable, with the plugin
+        re-recorded at the new tip."""
+        write(self.mirror_src.work / "bin" / "mem", body, mode=0o755)
+        sha = commit(self.mirror_src.work, ["bin/mem"], "new mem")
+        subprocess.run(["git", "push", "-q", str(self.mirror_src.origin), "main"],
+                       cwd=self.mirror_src.work, check=True)
+        recorder_claude(self.bindir, sha, self.plugin)
+
+    def recorder_mem(self, exit_code: int = 0) -> str:
+        """A `bin/mem` logging its argv and its environment into the temp root."""
+        return ("#!/bin/sh\n"
+                f"printf '%s\\n' \"$*\" >> \"{self.root / 'mem calls.log'}\"\n"
+                f"env >> \"{self.root / 'mem env.log'}\"\n"
+                f"exit {exit_code}\n")
+
+    def test_drifted_scripts_are_copied_with_their_mode_and_backed_up(self):
+        self.push_mem(self.recorder_mem())
+        write(self.instance / "bin" / "mem", OLD_MEM, mode=0o755)
+        (self.instance / "bin" / "mem_schema.py").unlink()
+        self.plan_json()
+        r = self.apply("--kind", "bin")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual((self.instance / "bin" / "mem").read_bytes(), (self.mirror / "bin" / "mem").read_bytes())
+        self.assertTrue(os.access(self.instance / "bin" / "mem", os.X_OK))
+        self.assertEqual((self.instance / "bin" / "mem_schema.py").read_bytes(),
+                         (ROOT / "bin" / "mem_schema.py").read_bytes())
+        self.assertEqual((self.sets()[0] / "files" / "bin" / "mem").read_text(), OLD_MEM)
+        self.assertFalse((self.sets()[0] / "files" / "bin" / "mem_schema.py").exists())
+        entry = self.manifest()["items"][0]
+        self.assertEqual((entry["kind"], entry["outcome"], entry["backups"]), ("bin", "applied", ["bin/mem"]))
+        self.assertRegex(self.log_lines()[0], LOG_LINE + re.escape(f"— → {NEW_VERSION}  bin (applied)") + "$")
+        self.assertRegex(r.stdout, r"(?m)^applied +b1 +bin +bin$")
+
+    def test_stats_runs_once_with_mem_db_and_mem_scope_scrubbed(self):
+        self.push_mem(self.recorder_mem())
+        write(self.instance / "bin" / "mem", OLD_MEM, mode=0o755)
+        self.plan_json()
+        r = self.apply("--kind", "bin", env={"MEM_DB": "/else where.db", "MEM_SCOPE": "sat"})
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual((self.root / "mem calls.log").read_text().splitlines(), ["stats"])
+        env_lines = (self.root / "mem env.log").read_text().splitlines()
+        self.assertEqual([ln for ln in env_lines if ln.startswith(("MEM_DB=", "MEM_SCOPE="))], [])
+        self.assertIn(f"HOME={self.home}", env_lines)
+
+    def test_a_failing_stats_is_a_failed_item_naming_the_set(self):
+        self.push_mem(self.recorder_mem(exit_code=1))
+        write(self.instance / "bin" / "mem", OLD_MEM, mode=0o755)
+        self.plan_json()
+        r = self.apply("--kind", "bin")
+        self.assertEqual(r.returncode, E_PARTIAL, r.stderr)
+        self.assertIn(str(self.sets()[0]), r.stderr)
+        entry = self.manifest()["items"][0]
+        self.assertEqual(entry["outcome"], "failed")
+        self.assertIn("stats", entry["error"])
+        self.assertEqual((self.sets()[0] / "files" / "bin" / "mem").read_text(), OLD_MEM)
+        self.assertEqual(self.log_lines(), [])
+
+    def test_a_script_changed_since_the_plan_is_stale(self):
+        write(self.instance / "bin" / "mem", OLD_MEM, mode=0o755)
+        self.plan_json()
+        write(self.instance / "bin" / "mem", "#!/bin/sh\necho older\n", mode=0o755)
+        r = self.apply("--kind", "bin")
+        self.assertEqual(r.returncode, E_STALE)
+        self.assertEqual(self.sets(), [])
+
+    def test_a_bin_path_outside_bin_in_a_tampered_plan_is_refused(self):
+        write(self.instance / "bin" / "mem", OLD_MEM, mode=0o755)
+        plan = self.plan_json()
+        item = next(it for it in plan["items"] if it["kind"] == "bin")
+        item["files"][0]["path"] = "private/memories.db"
+        write(self.instance / PLAN_FILE, json.dumps(plan))
+        r = self.apply("--kind", "bin")
+        self.assertEqual(r.returncode, E_ITEM, r.stderr)
+        self.assertIn("refusing", r.stderr.lower())
+        self.assertEqual(self.sets(), [])
+
+
+# ---------------------------------------------------------------------------
+# apply — retired paths and the listen unit
+# ---------------------------------------------------------------------------
+
+class TestApplyRetired(SyncFixture):
+    SETUP = ".claude/skills/setup"
+
+    def setUp(self):
+        super().setUp()
+        recorder_procs(self.bindir)
+
+    def seed_setup(self) -> None:
+        write(self.instance / self.SETUP / "SKILL.md", marked_md(OLD_VERSION, description="setup"))
+        write(self.instance / self.SETUP / "finalize.sh", "#!/bin/sh\n", mode=0o755)
+
+    def test_a_retired_skill_is_backed_up_then_removed(self):
+        self.seed_setup()
+        self.plan_json()
+        r = self.apply("--kind", "retired")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertFalse((self.instance / self.SETUP).exists())
+        files = self.sets()[0] / "files"
+        self.assertEqual((files / self.SETUP / "SKILL.md").read_text(), marked_md(OLD_VERSION, description="setup"))
+        self.assertTrue(os.access(files / self.SETUP / "finalize.sh", os.X_OK))
+        entry = self.manifest()["items"][0]
+        self.assertEqual((entry["outcome"], sorted(entry["backups"])),
+                         ("applied", [f"{self.SETUP}/SKILL.md", f"{self.SETUP}/finalize.sh"]))
+        self.assertRegex(self.log_lines()[0], LOG_LINE + re.escape(f"— → {NEW_VERSION}  {self.SETUP} (retired)") + "$")
+
+    def test_a_retired_howto_file_is_removed_and_its_neighbours_stay(self):
+        rel = "howto/09-memoria-semantica.md"
+        write(self.instance / rel, marked_md(OLD_VERSION, description="old howto"))
+        self.plan_json()
+        r = self.apply("--kind", "retired")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertFalse((self.instance / rel).exists())
+        self.assertEqual((self.sets()[0] / "files" / rel).read_text(), marked_md(OLD_VERSION, description="old howto"))
+        self.assertTrue((self.instance / "howto" / "01-first-steps.md").is_file())
+
+    def test_listen_removes_the_marked_members_and_keeps_the_owner_one(self):
+        seed_listen(self.instance, unmarked=("bin/listen",))
+        write(self.instance / "listen" / "keep.md", "mine\n")
+        self.plan_json()
+        r = self.apply("--kind", "retired")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        for rel in (".claude/skills/listen", "bin/listen-updates", "bin/audiowatch.swift"):
+            self.assertFalse((self.instance / rel).exists(), rel)
+        self.assertEqual((self.instance / "bin" / "listen").read_text(), "#!/bin/sh\necho mine\n")
+        self.assertEqual((self.instance / "listen" / "keep.md").read_text(), "mine\n")
+        self.assertTrue((self.instance / "bin" / "mem").is_file())
+        files = self.sets()[0] / "files"
+        self.assertTrue((files / ".claude" / "skills" / "listen" / "SKILL.md").is_file())
+        self.assertTrue((files / "bin" / "listen-updates").is_file())
+        self.assertTrue((files / "bin" / "audiowatch.swift").is_file())
+        self.assertFalse((files / "bin" / "listen").exists())
+        entry = self.manifest()["items"][0]
+        self.assertEqual(sorted(entry["backups"]),
+                         [".claude/skills/listen/SKILL.md", "bin/audiowatch.swift", "bin/listen-updates"])
+        self.assertRegex(self.log_lines()[0], LOG_LINE + re.escape(f"— → {NEW_VERSION}  listen (retired)") + "$")
+
+    def test_a_tampered_plan_is_refused_by_the_allowlist(self):
+        self.seed_setup()
+        write(self.instance / "private" / "secret.md", "keep\n")
+        plan = self.plan_json()
+        for bad in ("", ".", "private", "private/secret.md", "../outside", "howto/01-first-steps.md",
+                    str(self.root)):
+            with self.subTest(path=bad):
+                tampered = json.loads(json.dumps(plan))
+                item = next(it for it in tampered["items"] if it["kind"] == "retired")
+                item["members"][0]["path"] = bad
+                write(self.instance / PLAN_FILE, json.dumps(tampered))
+                r = self.apply("--items", item["id"])
+                self.assertEqual(r.returncode, E_ITEM, r.stderr)
+                self.assertIn("refusing", r.stderr.lower())
+        self.assertTrue((self.instance / self.SETUP / "SKILL.md").is_file())
+        self.assertTrue((self.instance / "private" / "secret.md").is_file())
+        self.assertTrue((self.instance / "howto" / "01-first-steps.md").is_file())
+        self.assertEqual(self.sets(), [])
+
+    def test_a_tampered_unit_path_is_refused_by_the_allowlist(self):
+        self.seed_setup()
+        plan = self.plan_json()
+        item = next(it for it in plan["items"] if it["kind"] == "retired")
+        item["path"] = "private"
+        write(self.instance / PLAN_FILE, json.dumps(plan))
+        r = self.apply("--kind", "retired")
+        self.assertEqual(r.returncode, E_ITEM, r.stderr)
+        self.assertTrue((self.instance / "private" / "preferences.md").is_file())
+        self.assertEqual(self.sets(), [])
+
+    def test_a_capture_started_after_the_plan_postpones_the_unit(self):
+        seed_listen(self.instance)
+        self.plan_json()
+        write_listen_state(self.home, os.getpid())
+        recorder_procs(self.bindir, ps_command="/usr/bin/python3 /x/maestro-listen _supervise 42")
+        r = self.apply("--kind", "retired")
+        self.assertEqual(r.returncode, POSTPONED, r.stderr)
+        for rel in LISTEN_MEMBERS:
+            self.assertTrue((self.instance / rel).exists(), rel)
+        entry = self.manifest()["items"][0]
+        self.assertEqual((entry["outcome"], entry["backups"]), ("postponed", []))
+        self.assertIn("capture supervisor", entry["reason"])
+        self.assertFalse((self.sets()[0] / "files").exists())
+        self.assertRegex(self.log_lines()[0], LOG_LINE + re.escape(f"— → {NEW_VERSION}  listen (retired, postponed)") + "$")
+        self.assertRegex(r.stdout, r"(?m)^postponed +r1 +retired +listen$")
+
+    def test_a_postponed_unit_does_not_stop_the_other_items(self):
+        self.seed_setup()
+        seed_listen(self.instance)
+        self.plan_json()
+        recorder_procs(self.bindir, pgrep_pid=4242)
+        r = self.apply("--kind", "retired")
+        self.assertEqual(r.returncode, POSTPONED, r.stderr)
+        self.assertFalse((self.instance / self.SETUP).exists())
+        self.assertTrue((self.instance / "bin" / "listen").is_file())
+        outcomes = {e["path"]: e["outcome"] for e in self.manifest()["items"]}
+        self.assertEqual(outcomes, {self.SETUP: "applied", "listen": "postponed"})
+        lines = self.log_lines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn(f"{self.SETUP} (retired)", lines[0])
+        self.assertIn("listen (retired, postponed)", lines[1])
+
+    def test_a_postponed_unit_next_to_a_failure_is_partial(self):
+        seed_listen(self.instance)
+        self.push_main({"howto/aa/blocked.md": marked_md(NEW_VERSION, description="blocked")})
+        write(self.instance / "howto" / "aa", "a file\n")
+        self.plan_json()
+        recorder_procs(self.bindir, pgrep_pid=4242)
+        r = self.apply("--items", "r1,n1")
+        self.assertEqual(r.returncode, E_PARTIAL, r.stderr)
+        self.assertEqual([e["outcome"] for e in self.manifest()["items"]], ["postponed", "failed"])
+
+    def test_an_empty_user_skills_folder_goes_with_maestro_net(self):
+        write(self.instance / "user-skills" / "maestro-net" / "SKILL.md", marked_md(OLD_VERSION, description="net"))
+        self.plan_json()
+        r = self.apply("--kind", "retired")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertFalse((self.instance / "user-skills").exists())
+        self.assertTrue((self.sets()[0] / "files" / "user-skills" / "maestro-net" / "SKILL.md").is_file())
+
+    def test_a_user_skills_folder_with_other_skills_stays(self):
+        write(self.instance / "user-skills" / "maestro-net" / "SKILL.md", marked_md(OLD_VERSION, description="net"))
+        write(self.instance / "user-skills" / "mine" / "SKILL.md", unmarked_md("mine"))
+        self.plan_json()
+        r = self.apply("--kind", "retired")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertFalse((self.instance / "user-skills" / "maestro-net").exists())
+        self.assertTrue((self.instance / "user-skills" / "mine" / "SKILL.md").is_file())
+
+    def test_a_marker_changed_since_the_plan_is_stale(self):
+        self.seed_setup()
+        self.plan_json()
+        write(self.instance / self.SETUP / "SKILL.md", marked_md(NEW_VERSION, description="setup"))
+        r = self.apply("--kind", "retired")
+        self.assertEqual(r.returncode, E_STALE)
+        self.assertTrue((self.instance / self.SETUP / "SKILL.md").is_file())
+        self.assertEqual(self.sets(), [])
+
+
+# ---------------------------------------------------------------------------
+# apply — the writing register keys
+# ---------------------------------------------------------------------------
+
+REGISTER_KEYS_SCRIPT = PLUGIN_ROOT / "bin" / "maestro-register-keys"
+
+
+class TestApplyRegister(SyncFixture):
+    ANSWERS = {
+        "suspended": "4,6", "post_pass": "off",
+        "tone_default.communication": "friendly", "tone_default.documentation": "formal",
+        "voice": "Short and dry", "communication.sign_off": "Bye, Jane",
+        "translation.enabled": "on", "translation.pair": "it -> en",
+        "translation.new_context_marker": "NEW", "translation.source_words_max": "3",
+        "translation.labels": "Literal, Polished", "avoid_words": "genuinely, leverage",
+    }
+
+    def register(self, answers: dict, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+        full = list(args) or ["--kind", "register"]
+        for key, value in answers.items():
+            full += ["--register", f"{key}={value}"]
+        return self.apply(*full, env=env)
+
+    def prefs(self) -> Path:
+        return self.instance / "private" / "preferences.md"
+
+    def test_every_answer_of_an_absent_block_is_written_and_read_back(self):
+        self.plan_json()
+        r = self.register(self.ANSWERS)
+        self.assertEqual(r.returncode, OK, r.stderr)
+        text = self.prefs().read_text()
+        for line in ("suspended: [4, 6]", "post_pass: off", "  communication: friendly",
+                     "  documentation: formal", "  synthesis: neutral", "voice: Short and dry",
+                     '  sign_off: "Bye, Jane"', "  enabled: true", '  pair: "it -> en"',
+                     "  new_context_marker: NEW", "  source_words_max: 3",
+                     "  labels: [Literal, Polished]", "avoid_words: [genuinely, leverage]"):
+            self.assertRegex(text, rf"(?m)^{re.escape(line)}( |$)")
+        report = subprocess.run([sys.executable, str(REGISTER_KEYS_SCRIPT), "report", str(self.prefs())],
+                                capture_output=True, text=True, env={"PATH": SYSTEM_PATH})
+        self.assertEqual(json.loads(report.stdout)["missing"], [])
+        self.assertEqual(self.items("register"), [])
+
+    def test_a_value_with_a_newline_is_passed_verbatim(self):
+        self.plan_json()
+        r = self.register({"communication.sign_off": "Bye,\nJane"})
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertIn('sign_off: "Bye,\\nJane"', self.prefs().read_text())
+
+    def test_the_synthesis_tone_is_refused(self):
+        self.plan_json()
+        before = self.prefs().read_bytes()
+        r = self.register({"tone_default.synthesis": "neutral"})
+        self.assertEqual(r.returncode, E_USAGE)
+        self.assertIn("synthesis", r.stderr)
+        self.assertEqual(self.prefs().read_bytes(), before)
+        self.assertEqual(self.sets(), [])
+
+    def test_an_unknown_key_or_a_pair_without_equals_is_refused(self):
+        self.plan_json()
+        for pair in ("tone_default.chat=friendly", "voice"):
+            with self.subTest(pair=pair):
+                r = self.apply("--kind", "register", "--register", pair)
+                self.assertEqual(r.returncode, E_USAGE)
+                self.assertIn("--register", r.stderr)
+        self.assertEqual(self.sets(), [])
+
+    def test_an_invalid_tone_writes_nothing_and_opens_no_set(self):
+        self.plan_json()
+        before = self.prefs().read_bytes()
+        r = self.register({"tone_default.communication": "chatty"})
+        self.assertEqual(r.returncode, E_USAGE, r.stderr)
+        self.assertIn("chatty", r.stderr)
+        self.assertEqual(self.prefs().read_bytes(), before)
+        self.assertEqual(list(self.prefs().parent.glob("preferences.md.bak.*")), [])
+        self.assertEqual(self.sets(), [])
+        self.assertEqual(self.log_lines(), [])
+
+    def test_an_inherited_maestro_variable_is_not_written(self):
+        self.plan_json()
+        r = self.register({"tone_default.communication": "friendly"}, env={"MAESTRO_VOICE": "leaked"})
+        self.assertEqual(r.returncode, OK, r.stderr)
+        text = self.prefs().read_text()
+        self.assertNotIn("leaked", text)
+        self.assertRegex(text, r'(?m)^voice: ""')
+
+    def test_the_backup_moves_into_the_set_and_the_log_names_it(self):
+        self.plan_json()
+        before = self.prefs().read_bytes()
+        r = self.register({"tone_default.communication": "friendly"})
+        self.assertEqual(r.returncode, OK, r.stderr)
+        copy = self.sets()[0] / "files" / "private" / "preferences.md"
+        self.assertEqual(copy.read_bytes(), before)
+        self.assertEqual(list(self.prefs().parent.glob("preferences.md.bak.*")), [])
+        entry = self.manifest()["items"][0]
+        self.assertEqual((entry["kind"], entry["outcome"], entry["backups"], entry["keys_added"]),
+                         ("register", "applied", ["private/preferences.md"], 13))
+        # The log names the set file by the instance's real path.
+        self.assertRegex(self.log_lines()[0], LOG_LINE + re.escape(
+            f"— → {NEW_VERSION}  private/preferences.md (register, 13 keys added, backup {copy.resolve()})") + "$")
+
+    def test_unchanged_is_applied_with_zero_keys_and_no_replaced_file(self):
+        plan = self.plan_json()
+        r = subprocess.run([sys.executable, str(REGISTER_KEYS_SCRIPT), "write", str(self.prefs())],
+                           capture_output=True, text=True, env={"PATH": SYSTEM_PATH})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for bak in self.prefs().parent.glob("preferences.md.bak.*"):
+            bak.unlink()
+        before = self.prefs().read_bytes()
+        item = next(it for it in plan["items"] if it["kind"] == "register")
+        item["checksum"] = sha256_of(self.prefs())
+        write(self.instance / PLAN_FILE, json.dumps(plan))
+        r = self.register({})
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual(self.prefs().read_bytes(), before)
+        entry = self.manifest()["items"][0]
+        self.assertEqual((entry["outcome"], entry["backups"], entry["keys_added"]), ("applied", [], 0))
+        self.assertFalse((self.sets()[0] / "files").exists())
+        self.assertRegex(self.log_lines()[0], LOG_LINE + re.escape(
+            f"— → {NEW_VERSION}  private/preferences.md (register, 0 keys added)") + "$")
+
+    def test_answers_without_a_register_item_are_refused(self):
+        self.plan_json()
+        r = self.register({"tone_default.communication": "friendly"}, "--items", "u1")
+        self.assertEqual(r.returncode, E_USAGE)
+        self.assertIn("--register", r.stderr)
+        self.assertEqual(self.sets(), [])
+
+    def test_preferences_changed_since_the_plan_are_stale(self):
+        self.plan_json()
+        write(self.prefs(), self.prefs().read_text() + "\nedited\n")
+        r = self.register({"tone_default.communication": "friendly"})
+        self.assertEqual(r.returncode, E_STALE)
+        self.assertEqual(self.sets(), [])
+
+
+# ---------------------------------------------------------------------------
+# retention of the backup sets
+# ---------------------------------------------------------------------------
+
+class TestRetention(SyncFixture):
+    def fake_set(self, days: float = 0, hours: float = 0) -> Path:
+        """A backup set whose folder stamp lies `days` and `hours` in the past."""
+        stamp = (datetime.now(timezone.utc) - timedelta(days=days, hours=hours)).strftime("%Y%m%d-%H%M%S")
+        folder = self.instance / BACKUPS_DIR / f"{stamp}-sync"
+        write(folder / "manifest.json", json.dumps({"stamp": stamp, "mirror_head": self.mirror_src.main,
+                                                    "items": []}))
+        write(folder / "files" / "CLAUDE.md", "old\n")
+        return folder
+
+    def test_a_fresh_sixth_set_stays_and_an_eight_day_old_one_goes(self):
+        fresh = [self.fake_set(hours=h) for h in range(1, 6)]
+        sixth = self.fake_set(days=2)
+        old = self.fake_set(days=8)
+        self.plan_json()
+        r = self.apply("--items", "u1")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        names = [s.name for s in self.sets()]
+        for folder in fresh + [sixth]:
+            self.assertIn(folder.name, names)
+        self.assertNotIn(old.name, names)
+        self.assertEqual(len(names), 7)
+        self.assertIn(f"PRUNED {old.resolve()}", r.stdout)
+
+    def test_the_five_newest_stay_whatever_their_age(self):
+        olds = [self.fake_set(days=30 + d) for d in range(4)]
+        self.plan_json()
+        r = self.apply("--items", "u1")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        names = [s.name for s in self.sets()]
+        for folder in olds:
+            self.assertIn(folder.name, names)
+        self.assertEqual(len(names), 5)
+
+    def test_more_than_twenty_fresh_sets_are_capped_at_twenty(self):
+        fakes = [self.fake_set(hours=h) for h in range(1, 26)]
+        plan = self.plan_json()
+        r = self.apply("--items", "u1")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        names = [s.name for s in self.sets()]
+        self.assertEqual(len(names), 20)
+        self.assertIn(f"{plan['stamp']}-sync", names)
+        for folder in fakes[:19]:
+            self.assertIn(folder.name, names)
+        for folder in fakes[19:]:
+            self.assertNotIn(folder.name, names)
+
+    def test_a_folder_without_a_stamp_is_left_alone(self):
+        stray = write(self.instance / BACKUPS_DIR / "notes-sync" / "manifest.json", "{}")
+        self.fake_set(days=8)
+        self.plan_json()
+        r = self.apply("--items", "u1")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertTrue(stray.is_file())
 
 
 if __name__ == "__main__":
