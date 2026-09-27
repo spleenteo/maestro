@@ -23,3 +23,4 @@ One file per decision, in the shape `YYYY-MM-DD-<slug>.md`: context, the decisio
 | 2026-09-17 | [`translate` is a template skill](2026-09-17-translate-template-skill.md) | A plugin skill; a section of `writing-register` |
 | 2026-09-24 | [Task creation thresholds live in `CLAUDE.md` and in every channel skill](2026-09-24-task-creation-thresholds.md) | Thresholds that depend on the store |
 | 2026-09-27 | [The mother answers a satellite by relevance to its mandate](2026-09-27-satellite-perimeter-by-mandate.md) | A fixed folder perimeter for a satellite with a mandate |
+| 2026-09-28 | [`maestro-sync` is a command with backup sets](2026-09-28-maestro-sync-as-a-command.md) | Bash blocks in the skill; a Node or pip package; one backup set per `apply` call |

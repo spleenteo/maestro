@@ -10,6 +10,8 @@ description: "maestro-sync moves into the Maestro plugin, refuses to run with a 
 
 **Date**: 2026-09-15 · **Work**: `satellites-plugin` · **Status**: active
 
+Mechanics moved into the `maestro-sync` command on 2026-09-28: see `2026-09-28-maestro-sync-as-a-command.md`; the policy here stands.
+
 ## Context
 
 Each instance carried its own copy of `maestro-sync`, updated by running itself. A copy older than the template it applied had no way to know what it didn't know: the satellites work changed `bin/mem`, the skills that call it, and the checks a sync needs. `bin/*` stayed outside sync scope (decision of 2026-09-13), so every release asked the owner to copy scripts by hand before syncing, and a missed copy left skills calling options the instance's `bin/mem` lacked.

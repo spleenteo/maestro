@@ -57,4 +57,4 @@ python3 -m unittest discover -s tests -t .
 bin/register-check <every README, CHANGELOG, howto guide, decision record or devflow document touched by the slice>
 ```
 
-Baseline on 2026-09-13: 160 tests, OK, 5 skipped.
+Baseline on 2026-09-28: 811 tests, OK, 8 skipped.

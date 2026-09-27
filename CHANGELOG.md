@@ -4,7 +4,7 @@ Versioned record of intentional changes to the Maestro template: patterns, skill
 
 Versions follow the `vYYYY.MM.DD.N` scheme (date-based, incremental within the day). Each entry documents what changed, why it matters, and any migration note for instances syncing in.
 
-The skill `maestro-sync` reads this file from the latest pull of the read-only mirror (`~/.maestro/`) and shows the delta between an instance's current `maestro_version` and `HEAD` before applying file-level diffs.
+The `maestro-sync` command of the Maestro plugin reads this file from the read-only mirror (`~/.maestro/`, refreshed at every `plan`) and shows the slice between an instance's oldest `maestro_version` and the mirror's top version before any file-level diff is applied.
 
 ## Versions at a glance
 

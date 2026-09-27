@@ -93,7 +93,7 @@ To attach a project as a satellite, open a session in its repo and ask to make i
 
 ## Keeping an instance up to date
 
-Files distributed by Maestro carry `origin: maestro` and a `maestro_version` in their frontmatter, and are never edited in place: a change is made in this repository and reaches every instance through `/maestro:maestro-sync`. The skill mirrors the template into `~/.maestro/`, shows the changelog delta between the instance's version and `HEAD`, applies the diffs file by file with your confirmation, proposes new upstream files and the removal of retired ones, copies drifted `bin/` scripts after backing up the memory db, and asks once for the preference keys the instance lacks. The one field you may customize on a distributed file is `tools:`, for instance-specific MCP tools; your own skills, agents and `private/` are never touched. Versions follow the date-based `vYYYY.MM.DD.N` scheme, in `CHANGELOG.md`.
+Files distributed by Maestro carry `origin: maestro` and a `maestro_version` in their frontmatter, and are never edited in place: a change is made in this repository and reaches every instance through `/maestro:maestro-sync`. The skill is a conversation over the plugin's `maestro-sync` command, which does the mechanics and asks nothing itself. `plan` mirrors the template into `~/.maestro/`, checks that the loaded plugin is not behind it, shows the changelog slice between the instance's version and upstream, and lists one item per thing to do: a changed file, a new upstream file, a drifted `bin/` script, a retired path, a preference key the instance lacks. Each kind is applied on your yes. Before its first write, `apply` opens a backup set under `private/backups/<stamp>-sync/` with a manifest, a checked copy of the memory db and every file it replaces or removes, so `maestro-sync rollback <stamp>` brings the instance back byte for byte; `maestro-sync backups` lists the sets. The one field you may customize on a distributed file is `tools:`, for instance-specific MCP tools, and an update carries it over; your own skills, agents and `private/` are never touched. Versions follow the date-based `vYYYY.MM.DD.N` scheme, in `CHANGELOG.md`.
 
 ## What's included
 
@@ -107,7 +107,7 @@ In every instance:
 In the plugin, once per machine:
 
 - **Skills**: `new-instance`, `maestro-sync`, `maestro-net` (`recap`, `ask`, `request`, and the registry commands), `satellite` (attaches a repo to a mother), `listen` (captures a call in progress through `yap`, answers questions about it while it runs, files a note and the transcript where you confirm).
-- **Commands** on the Bash tool's PATH: `maestro-net`, `maestro-listen`, `maestro-register-keys`.
+- **Commands** on the Bash tool's PATH: `maestro-net`, `maestro-sync` (`plan`, `apply`, `note`, `rollback`, `backups`), `maestro-listen`, `maestro-register-keys`.
 - **Hooks**: a `SessionStart` hook that recognises a satellite repo, and a `PreToolUse` guard that opens its vault folder to the file tools.
 
 `/listen` calls `maestro-listen` on every question during a call; to keep permission prompts out of the conversation, allow it once in `~/.claude/settings.json`:

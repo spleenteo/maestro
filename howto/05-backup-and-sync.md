@@ -1,8 +1,8 @@
 ---
 origin: maestro
 maestro_version: v2026.09.17.1
-tags: [howto, backup, sync, privacy, gitignore, symlinks, cloud-drive, orchestrator]
-description: How to back up and synchronize your orchestrator safely — what to keep out of git, how to sync across machines via cloud drives, and how to symlink external apps, skills, and agents.
+tags: [howto, backup, sync, privacy, gitignore, symlinks, cloud-drive, orchestrator, maestro-sync, rollback]
+description: "How to back up and synchronize your orchestrator safely: what to keep out of git, how to sync across machines via cloud drives, how to symlink external apps, skills and agents, and how template updates reach an instance through the maestro-sync command (mirror and worktree keys, the five verbs, backup sets and rollback)."
 ---
 
 # How to handle backups and sync
@@ -58,6 +58,37 @@ Trade-off: the git repo itself is now synced by two systems (git + cloud). It's 
 - Cloud conflict copies (`file (conflict from Your Mac).md`) can creep in. Spot them with `find . -name "*conflict*"` periodically.
 
 The cleaner alternative: keep the repo under a normal location (e.g., `~/Code/my-orchestrator/`) and sync only `private/` via the cloud by symlinking it into the drive.
+
+## Keeping an instance up to date
+
+Template changes reach an instance through `/maestro:maestro-sync`: a short conversation in the orchestrator over the plugin's `maestro-sync` command, which does the mechanics and asks nothing itself (`maestro-sync --help` lists every verb and exit code). It runs from the instance root only.
+
+### The mirror and the working tree
+
+The sync reads the template from a read-only clone, the mirror, reset to `origin/main` at every run. It lives at `~/.maestro/` unless `private/preferences.md` declares another path under `maestro_mirror_path`. A second key, `maestro_worktree_path`, names the working tree where you develop the template, when you have one: the plan reports its uncommitted files or unpushed commits, and the orchestrator asks whether to push, continue or abort before anything else. Both keys are read in either shape, first match wins, `~` expanded:
+
+```markdown
+- **maestro_mirror_path**: ~/.maestro
+maestro_worktree_path: ~/Code/maestro
+```
+
+The mirror can be neither the instance nor the working tree, and a mirror with local edits is refused.
+
+### The five verbs
+
+- `plan`: refreshes the mirror, checks that the loaded plugin is not behind it, and writes `private/maestro-sync.plan.json`: the changelog slice from the instance's oldest `maestro_version` to upstream, and one item per thing to do, of kind `update`, `new`, `bin`, `retired`, `register` or `orphan`.
+- `apply`: applies items of the last plan, by id (`--items u1,u2`) or by kind (`--kind update`), after the backup set is open; `--from FILE` writes a merged text for one update, `--register KEY=VALUE` answers a missing register key.
+- `note`: records in `private/maestro-sync.log` an outcome the conversation decided: skipped, aborted or kept.
+- `rollback STAMP`: restores a set, its items in reverse order, then the memory db.
+- `backups`: lists the sets, newest first, with the two versions and the item counts.
+
+### Backup sets and rollback
+
+The first `apply` on a plan creates `private/backups/<stamp>-sync/`, and every later `apply` on the same plan appends to it. The set holds `manifest.json` (written before the first write, rewritten after every item with its outcome), a checked copy of `private/memories.db` under `db/`, and under `files/` every file the run replaces or removes, at its path in the instance. `maestro-sync rollback <stamp>` reads the manifest, puts every file back, removes the files the sync added and copies the db back; the conversation names the command once at the end of a sync. Retention runs after each `apply`: the five newest sets stay whatever their age, older ones go once they are past seven days, and at most twenty stay in any case.
+
+### Loose backups from earlier syncs
+
+Before the command existed, the sync wrote loose copies next to the files it replaced: `private/*.bak.<stamp>` files and `private/retired.bak.<stamp>-listen/` folders. They are not sets: `rollback` does not read them, nothing removes them, and `maestro-sync backups` names them in one line. Delete them by hand once you no longer need them.
 
 ## Backing up `private/`
 
