@@ -55,3 +55,8 @@ tests/test_maestro_register_keys.py export-ignore
 # checks it against the template's own CHANGELOG.md: meaningless without
 # plugins/, absent from an archived instance.
 tests/test_maestro_versions.py export-ignore
+
+# This test runs the plugin's maestro-sync out of plugins/ against temporary
+# instances and mirrors: meaningless without plugins/, absent from an
+# archived instance.
+tests/test_maestro_sync_cmd.py export-ignore

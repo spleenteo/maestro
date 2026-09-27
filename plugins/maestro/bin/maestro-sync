@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""maestro-sync: sync a Maestro instance with the template, as a command.
+
+The mechanics of /maestro:maestro-sync (its phases 0 to 6c) with backup
+sets under private/backups/. The skill on top of it does the talking; this
+command never asks anything.
+
+    plan [--instance DIR] [--plugin-root DIR] [--json]
+                    checks the instance root, reads the mirror and working
+                    tree paths from private/preferences.md, reports the
+                    working tree's state, refreshes the read-only mirror to
+                    origin/main and checks the installed plugin against it.
+    apply           not implemented yet
+    note            not implemented yet
+    rollback        not implemented yet
+    backups         not implemented yet
+
+`plan` writes only the mirror (clone on first run, fetch, reset): the
+instance's files are read. Without --plugin-root the repository URL comes
+from this command's own plugin root and the check that the loaded plugin
+is the installed one is skipped, with a warning.
+
+Exit codes, always explicit, never a silent degradation:
+     0  OK              done
+     2  E_USAGE         usage error, or a verb not implemented yet
+     3  E_NOT_INSTANCE  not an instance root, or the template repository
+     4  E_MIRROR        the mirror, the working tree or a git call failed
+     5  E_PLUGIN        the installed plugin can't be checked or is behind
+     6  E_STALE         the plan is older than the mirror or than a file
+     7  E_ITEM          unknown item, or a bad plan
+     8  E_PARTIAL       a write failed after others succeeded
+     9  E_LOCKED        another apply holds private/maestro-sync.lock
+    10  POSTPONED       the listen unit, while a capture runs
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional
+
+sys.dont_write_bytecode = True  # the plugin folder is a checkout: no __pycache__/
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from maestro_registry import is_instance_dir  # noqa: E402
+
+OK = 0
+E_USAGE = 2
+E_NOT_INSTANCE = 3
+E_MIRROR = 4
+E_PLUGIN = 5
+E_STALE = 6
+E_ITEM = 7
+E_PARTIAL = 8
+E_LOCKED = 9
+POSTPONED = 10
+
+EXIT_CODES = (
+    (OK, "OK", "done"),
+    (E_USAGE, "E_USAGE", "usage error, or a verb not implemented yet"),
+    (E_NOT_INSTANCE, "E_NOT_INSTANCE", "not an instance root, or the template repository"),
+    (E_MIRROR, "E_MIRROR", "the mirror, the working tree or a git call failed"),
+    (E_PLUGIN, "E_PLUGIN", "the installed plugin can't be checked or is behind"),
+    (E_STALE, "E_STALE", "the plan is older than the mirror or than a file"),
+    (E_ITEM, "E_ITEM", "unknown item, or a bad plan"),
+    (E_PARTIAL, "E_PARTIAL", "a write failed after others succeeded"),
+    (E_LOCKED, "E_LOCKED", "another apply holds private/maestro-sync.lock"),
+    (POSTPONED, "POSTPONED", "the listen unit, while a capture runs"),
+)
+
+PLUGIN_ID = "maestro@maestro"
+DEFAULT_MIRROR = "~/.maestro"
+MIRROR_KEY = "maestro_mirror_path"
+WORKTREE_KEY = "maestro_worktree_path"
+SCRIPT_PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+NO_PLUGIN_ROOT_WARNING = (
+    "no --plugin-root given: the check that the loaded plugin is the installed one is skipped")
+
+WORKTREE_FILES_SHOWN = 10
+WORKTREE_COMMITS_SHOWN = 5
+
+
+class SyncError(Exception):
+    """A failure with an exit code; the message goes to stderr."""
+
+    def __init__(self, code: int, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+# --------------------------------------------------------------------------
+# Subprocess helpers
+# --------------------------------------------------------------------------
+
+def git(cwd: Path, *args: str) -> str:
+    """One git call, its stdout. A non-zero exit, or git not runnable, is
+    E_MIRROR with git's own message: nothing degrades into an empty result."""
+    try:
+        r = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
+    except OSError as exc:
+        raise SyncError(E_MIRROR, f"cannot run git in {cwd}: {exc}")
+    if r.returncode != 0:
+        detail = " ".join((r.stderr.strip() or r.stdout.strip() or f"exit {r.returncode}").split())
+        raise SyncError(E_MIRROR, f"git {' '.join(args)} failed in {cwd}: {detail}")
+    return r.stdout
+
+
+def real(path) -> Path:
+    return Path(os.path.realpath(os.path.expanduser(str(path))))
+
+
+# --------------------------------------------------------------------------
+# Phase 0: the instance root
+# --------------------------------------------------------------------------
+
+def instance_root(path) -> Path:
+    """The instance's real path. E_NOT_INSTANCE for the template repository
+    (plugins/maestro/ present) or a folder without preferences.md and bin/mem."""
+    root = real(path)
+    if (root / "plugins" / "maestro").is_dir():
+        raise SyncError(E_NOT_INSTANCE, f"{root} is the Maestro template repository, not an instance.")
+    if not is_instance_dir(root):
+        raise SyncError(
+            E_NOT_INSTANCE,
+            f"{root} is not the root of a Maestro instance (no private/preferences.md next to "
+            "bin/mem). Open a session in the instance folder and run /maestro:maestro-sync there.")
+    return root
+
+
+# --------------------------------------------------------------------------
+# Phase 1: the two paths from preferences
+# --------------------------------------------------------------------------
+
+def read_pref_key(prefs: Path, key: str) -> Optional[str]:
+    """The value of `key` in preferences.md, in either shape
+    (`- **key**: value` or `key: value`), first match wins, backticks and
+    quotes stripped, `~` expanded. None when absent or empty."""
+    pattern = re.compile(
+        rf"^\s*(?:-\s*\*\*{re.escape(key)}\*\*\s*:|{re.escape(key)}\s*:)\s*(.*?)\s*$")
+    try:
+        text = prefs.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SyncError(E_NOT_INSTANCE, f"cannot read {prefs}: {exc}")
+    for line in text.splitlines():
+        m = pattern.match(line)
+        if not m:
+            continue
+        value = m.group(1).strip().strip("`").strip("\"'").strip()
+        if not value:
+            return None
+        return os.path.expanduser(value)
+    return None
+
+
+# --------------------------------------------------------------------------
+# Phase 2: the working tree, reported as data
+# --------------------------------------------------------------------------
+
+def worktree_status(path: Optional[str]) -> dict:
+    """`state` in absent | clean | uncommitted | unpushed, with the
+    uncommitted `files` (porcelain lines) and the `commits` not yet pushed
+    (oneline). Uncommitted edits take precedence over unpushed commits.
+    Nothing is ever done to the working tree."""
+    status = {"path": path, "state": "absent", "files": [], "commits": []}
+    if not path:
+        return status
+    tree = Path(path)
+    if not tree.is_dir():
+        return status
+    files = [ln for ln in git(tree, "status", "--porcelain").splitlines() if ln.strip()]
+    try:
+        log = git(tree, "log", "--oneline", "@{u}..HEAD")
+    except SyncError:
+        # No upstream configured: every commit no remote branch reaches is unpushed.
+        log = git(tree, "log", "--oneline", "HEAD", "--not", "--remotes")
+    commits = [ln for ln in log.splitlines() if ln.strip()]
+    status["files"] = files
+    status["commits"] = commits
+    status["state"] = "uncommitted" if files else ("unpushed" if commits else "clean")
+    return status
+
+
+# --------------------------------------------------------------------------
+# Phase 3: the mirror and the plugin
+# --------------------------------------------------------------------------
+
+def plugin_repo_url(plugin_root: Path) -> str:
+    """The template's repository URL from the plugin's manifest."""
+    manifest = plugin_root / ".claude-plugin" / "plugin.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SyncError(E_PLUGIN, f"cannot read the plugin manifest {manifest}: {exc}")
+    url = data.get("repository") if isinstance(data, dict) else None
+    if not url or not isinstance(url, str):
+        raise SyncError(E_PLUGIN, f"{manifest} declares no repository URL")
+    return url
+
+
+def refresh_mirror(mirror: Path, repo_url: str, instance: Path, worktree: Optional[str]) -> str:
+    """Clone the mirror when missing, else refuse one with local edits or
+    one that is the instance or the working tree; fetch every branch from
+    the template's URL and reset to origin/main. Returns the mirror's HEAD."""
+    mirror_real = real(mirror)
+    others = [real(instance)] + ([real(worktree)] if worktree else [])
+    if mirror_real in others:
+        raise SyncError(
+            E_MIRROR,
+            f"The mirror path {mirror} is the instance or the working tree: refusing to reset it.")
+    if (mirror / ".git").exists():
+        if git(mirror, "status", "--porcelain", "--untracked-files=no").strip():
+            raise SyncError(
+                E_MIRROR,
+                f"The mirror at {mirror} has local edits: it is not a plain mirror, "
+                "refusing to reset it.")
+    else:
+        if mirror.exists() and not mirror.is_dir():
+            raise SyncError(E_MIRROR, f"The mirror path {mirror} exists and is not a directory.")
+        try:
+            mirror.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise SyncError(E_MIRROR, f"cannot create the mirror's folder {mirror.parent}: {exc}")
+        git(mirror.parent, "clone", "--quiet", repo_url, str(mirror))
+    git(mirror, "fetch", "--quiet", repo_url, "+refs/heads/*:refs/remotes/origin/*")
+    git(mirror, "reset", "--quiet", "--hard", "origin/main")
+    return git(mirror, "rev-parse", "HEAD").strip()
+
+
+def installed_plugin() -> dict:
+    """The user-scope maestro@maestro row of `claude plugin list --json`."""
+    exe = shutil.which("claude")
+    if not exe:
+        raise SyncError(E_PLUGIN,
+                        "The claude command isn't on PATH, so the installed plugin can't be checked.")
+    try:
+        r = subprocess.run([exe, "plugin", "list", "--json"], capture_output=True, text=True)
+    except OSError as exc:
+        raise SyncError(E_PLUGIN, f"cannot run claude: {exc}")
+    if r.returncode != 0:
+        detail = " ".join((r.stderr.strip() or r.stdout.strip()).split())
+        raise SyncError(E_PLUGIN, f"claude plugin list --json failed (exit {r.returncode}): {detail}")
+    try:
+        rows = json.loads(r.stdout)
+    except ValueError as exc:
+        raise SyncError(E_PLUGIN, f"claude plugin list --json returned no JSON: {exc}")
+    if not isinstance(rows, list):
+        rows = []
+    matches = [row for row in rows
+               if isinstance(row, dict) and row.get("id") == PLUGIN_ID and row.get("scope") == "user"]
+    return matches[0] if matches else {}
+
+
+def check_plugin(mirror: Path, plugin_root: Optional[Path]) -> str:
+    """The installed plugin's commit, once it is a commit of the mirror with
+    origin/main among its ancestors and, when --plugin-root is given, the
+    loaded plugin is the installed one. E_PLUGIN otherwise."""
+    row = installed_plugin()
+    version = str(row.get("version", ""))
+    if not SHA_RE.fullmatch(version):
+        raise SyncError(
+            E_PLUGIN,
+            f"{PLUGIN_ID} isn't installed at user scope from its marketplace, so its commit is unknown.")
+    if plugin_root is not None:
+        installed = real(row.get("installPath") or "")
+        loaded = real(plugin_root)
+        if installed != loaded:
+            raise SyncError(
+                E_PLUGIN,
+                f"This session runs the Maestro plugin from {loaded}, but {installed} is installed. "
+                "Restart Claude Code, then run /maestro:maestro-sync again.")
+    try:
+        git(mirror, "cat-file", "-e", f"{version}^{{commit}}")
+        git(mirror, "merge-base", "--is-ancestor", "origin/main", version)
+    except SyncError:
+        raise SyncError(
+            E_PLUGIN,
+            f"The Maestro plugin ({version}) is behind the template's main branch. "
+            "Update it, restart Claude Code, then run /maestro:maestro-sync again: "
+            "`claude plugin marketplace update maestro` then `claude plugin update maestro@maestro`. "
+            "If the marketplace was added from a branch, remove it and add spleenteo/maestro "
+            "again without one.")
+    return version
+
+
+# --------------------------------------------------------------------------
+# plan
+# --------------------------------------------------------------------------
+
+def print_summary(plan: dict) -> None:
+    print(f"INSTANCE {plan['instance']}")
+    print(f"MIRROR {plan['mirror']}")
+    print(f"MIRROR_HEAD {plan['mirror_head']}")
+    print(f"PLUGIN {plan['plugin']}")
+    tree = plan["worktree"]
+    print(f"WORKTREE {tree['state']}" + (f" {tree['path']}" if tree["path"] else ""))
+    for line in tree["files"][:WORKTREE_FILES_SHOWN]:
+        print(f"  {line}")
+    for line in tree["commits"][:WORKTREE_COMMITS_SHOWN]:
+        print(f"  {line}")
+    for warning in plan["warnings"]:
+        print(f"WARNING {warning}")
+
+
+def cmd_plan(args) -> int:
+    instance = instance_root(args.instance or os.getcwd())
+    prefs = instance / "private" / "preferences.md"
+    mirror = Path(read_pref_key(prefs, MIRROR_KEY) or os.path.expanduser(DEFAULT_MIRROR))
+    worktree = read_pref_key(prefs, WORKTREE_KEY)
+    tree = worktree_status(worktree)
+
+    plugin_root = Path(args.plugin_root) if args.plugin_root else None
+    warnings: List[str] = []
+    if plugin_root is None:
+        warnings.append(NO_PLUGIN_ROOT_WARNING)
+        print(f"maestro-sync: warning: {NO_PLUGIN_ROOT_WARNING}", file=sys.stderr)
+    repo_url = plugin_repo_url(plugin_root or SCRIPT_PLUGIN_ROOT)
+    mirror_head = refresh_mirror(mirror, repo_url, instance, worktree)
+    plugin_sha = check_plugin(mirror, plugin_root)
+
+    plan: Dict[str, object] = {
+        "instance": str(instance),
+        "mirror": str(mirror),
+        "mirror_head": mirror_head,
+        "plugin": plugin_sha,
+        "repo_url": repo_url,
+        "worktree": tree,
+        "warnings": warnings,
+    }
+    if args.json:
+        print(json.dumps(plan, indent=2))
+    else:
+        print_summary(plan)
+    return OK
+
+
+def cmd_not_implemented(args) -> int:
+    print(f"maestro-sync: `{args.verb}` is not implemented yet", file=sys.stderr)
+    return E_USAGE
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    codes = "\n".join(f"  {code:>3}  {name:<15} {meaning}" for code, name, meaning in EXIT_CODES)
+    p = argparse.ArgumentParser(
+        prog="maestro-sync",
+        description="Sync a Maestro instance with the template: the mechanics behind "
+                    "/maestro:maestro-sync, without the conversation.",
+        epilog="exit codes:\n" + codes,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = p.add_subparsers(dest="verb")
+
+    sp = sub.add_parser("plan", help="Refresh the mirror, check the plugin and report the instance")
+    sp.add_argument("--instance", help="instance root (default: the current directory)")
+    sp.add_argument("--plugin-root",
+                    help="root of the plugin this session loaded (CLAUDE_PLUGIN_ROOT); "
+                         "without it the loaded-versus-installed check is skipped")
+    sp.add_argument("--json", action="store_true", help="print the plan as JSON")
+    sp.set_defaults(func=cmd_plan)
+
+    for verb, text in (("apply", "Apply items of the last plan, after a backup set"),
+                       ("note", "Record an outcome the skill decided"),
+                       ("rollback", "Restore a backup set"),
+                       ("backups", "List the backup sets")):
+        sp = sub.add_parser(verb, help=f"{text} (not implemented yet)")
+        sp.add_argument("rest", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
+        sp.set_defaults(func=cmd_not_implemented)
+    return p
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not args.verb:
+        parser.print_usage(sys.stderr)
+        print("maestro-sync: a verb is required (plan, apply, note, rollback, backups)",
+              file=sys.stderr)
+        return E_USAGE
+    try:
+        return args.func(args)
+    except SyncError as exc:
+        print(f"maestro-sync: {exc}", file=sys.stderr)
+        return exc.code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

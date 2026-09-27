@@ -55,6 +55,7 @@ EXPORT_IGNORED_TEST_FILES = (
     "test_plugin_layout.py",
     "test_maestro_net.py",
     "test_maestro_sync.py",
+    "test_maestro_sync_cmd.py",
     "test_maestro_versions.py",
     "test_template_archive.py",
     "test_finalize.py",
