@@ -131,7 +131,8 @@ sys.dont_write_bytecode = True  # the plugin folder is a checkout: no __pycache_
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from maestro_registry import is_instance_dir  # noqa: E402
 from maestro_versions import (  # noqa: E402
-    BASELINE_VERSION, MARKDOWN_GLOBS, changelog_top_version, parse_version, read_marker)
+    BASELINE_VERSION, MARKDOWN_GLOBS, changelog_top_version, parse_version, read_marker,
+    update_cache_path)
 
 OK = 0
 E_USAGE = 2
@@ -1067,7 +1068,23 @@ def cmd_plan(args) -> int:
         print(json.dumps(plan, indent=2, ensure_ascii=False))
     else:
         print_summary(plan, plan_file)
+    write_update_cache(plan["versions"].get("upstream"))
     return OK
+
+
+def write_update_cache(upstream: Optional[str]) -> None:
+    """Refresh the session-start hook's update cache (same path and shape as
+    the hook's: `{"upstream", "checked_at"}`) with the mirror's top version,
+    so an instance that just planned or synced shows a notice only when it is
+    behind. A failure never fails the sync: one stderr warning."""
+    if not upstream:
+        return
+    path = update_cache_path()
+    try:
+        write_json_atomic(path, {"upstream": upstream,
+                                 "checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()})
+    except OSError as exc:
+        print(f"maestro-sync: warning: cannot write the update cache {path}: {exc}", file=sys.stderr)
 
 
 # --------------------------------------------------------------------------
@@ -1721,6 +1738,8 @@ def cmd_apply(args) -> int:
             return OK
         code = run_apply(root, plan, selected, from_path, from_bytes, answers)
         prune_sets(root, set_dir_for(root, plan))
+        if code in (OK, POSTPONED):
+            write_update_cache(plan["versions"].get("upstream"))
         return code
     finally:
         release_lock(lock)

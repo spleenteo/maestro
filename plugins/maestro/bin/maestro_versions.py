@@ -1,6 +1,6 @@
 """maestro_versions.py — the vYYYY.MM.DD.N version scheme, the changelog's
-top version, and the file-marker rules shared by maestro-sync and, in V3,
-by the update-check hook.
+top version, the file-marker rules and the update cache's path, shared by
+maestro-sync and by the update check in hooks/satellite-hook.
 
 Marker rules (docs/work/2026-09-27-sync-script/slices.md, V1): a markdown
 file is marked when its first line is `---`, the frontmatter ends at the
@@ -15,6 +15,7 @@ Pure text and path handling: no subprocess, no network.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -30,6 +31,11 @@ BASELINE_VERSION = "v2026.04.29.1"
 # The four globs the instance scan walks: no recursion beyond one level of
 # skill/agent folders, no symlink following.
 MARKDOWN_GLOBS = ("CLAUDE.md", ".claude/skills/*/SKILL.md", ".claude/agents/*.md", "howto/*.md")
+
+# The update cache the session-start hook reads and maestro-sync refreshes:
+# `{"upstream": "v…", "checked_at": "<UTC ISO>"}`, one file per user.
+UPDATE_CACHE_ENV = "MAESTRO_UPDATE_CACHE"
+DEFAULT_UPDATE_CACHE = "~/.claude/maestro-update-check.json"
 
 
 def parse_version(text: str) -> tuple[int, int, int, int]:
@@ -106,3 +112,17 @@ def read_marker(path: str | Path) -> tuple[bool, str | None]:
     if path.suffix == ".md":
         return _markdown_marker(text)
     return _script_marker(text)
+
+
+def read_file_version(path: str | Path) -> str:
+    """The `maestro_version` of a marked markdown file, or BASELINE_VERSION
+    when the file is unmarked or carries no version: the floor the command
+    uses, so the hook and maestro-sync agree on what an old file is."""
+    _marked, version = read_marker(path)
+    return version or BASELINE_VERSION
+
+
+def update_cache_path() -> Path:
+    """Where the update cache lives: `MAESTRO_UPDATE_CACHE`, or the default
+    under the user's home (`HOME` decides, so tests keep it in a temp dir)."""
+    return Path(os.path.expanduser(os.environ.get(UPDATE_CACHE_ENV) or DEFAULT_UPDATE_CACHE))

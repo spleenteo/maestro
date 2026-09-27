@@ -14,6 +14,10 @@ plugins/ export-ignore
 # The template repo's own marketplace manifest.
 .claude-plugin/ export-ignore
 
+# The template's release version, fetched by the plugin's update check from
+# GitHub: a copy inside an instance would go stale at the first release.
+.version export-ignore
+
 # devflow config for working on the template repo itself.
 .devflow.yml export-ignore
 

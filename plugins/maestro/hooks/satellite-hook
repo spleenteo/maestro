@@ -2,13 +2,27 @@
 """Maestro satellite hook.
 
 session-start   Reads the hook input on stdin. When the session's folder is
-                inside a repo listed under `satellites:` in the Maestro
-                registry, exports MEM_SCOPE through CLAUDE_ENV_FILE, writes a
-                marker for the vault guard, and prints the satellite's role,
-                the mother's identity extract and the memory rules as
-                additional context. Anywhere else it prints nothing.
+                a Maestro instance root behind the template, prints one line
+                saying which version is available (the update check below).
+                When the folder is inside a repo listed under `satellites:`
+                in the Maestro registry, exports MEM_SCOPE through
+                CLAUDE_ENV_FILE, writes a marker for the vault guard, and
+                prints the satellite's role, the mother's identity extract
+                and the memory rules as additional context. Anywhere else it
+                prints nothing. One JSON line per run at most.
 pre-tool-use M  Called by vault-guard with the marker M: allows Read, Write,
                 Edit, Grep and Glob on paths under the satellite's vault folder.
+update-fetch    The detached fetcher the update check spawns: reads the
+                template's `.version` from MAESTRO_VERSION_URL (default: the
+                raw GitHub file) and rewrites the update cache. Exits 0 and
+                leaves the cache alone on any error.
+
+The update check compares the cached upstream version (MAESTRO_UPDATE_CACHE
+or ~/.claude/maestro-update-check.json) with the instance's CLAUDE.md
+`maestro_version`; when the cache is missing or older than
+MAESTRO_UPDATE_INTERVAL seconds (default 12 hours) it stamps `checked_at`
+and spawns the fetcher, without waiting. Outside an instance root it does
+nothing and spawns nothing.
 
 The hook runs in every session on the machine: it never fails the session.
 Any error outside a satellite is silent; inside a satellite it becomes one
@@ -21,7 +35,12 @@ import json
 import os
 import re
 import shlex
+import signal
+import subprocess
 import sys
+import tempfile
+import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -29,9 +48,14 @@ PLUGIN_ROOT = HERE.parent
 
 sys.dont_write_bytecode = True  # the plugin folder is a checkout: no __pycache__/
 sys.path.insert(0, str(PLUGIN_ROOT / "bin"))
-from maestro_registry import NetError, inside, parse_registry, registry_path  # noqa: E402
+from maestro_registry import NetError, inside, is_instance_dir, parse_registry, registry_path  # noqa: E402
 from maestro_satellites import MIN_SCHEMA_API, match_satellite, schema_api  # noqa: E402
 from maestro_satellites import satellite_row as mother_row  # noqa: E402
+from maestro_versions import is_newer, read_file_version, update_cache_path  # noqa: E402
+
+VERSION_URL = "https://raw.githubusercontent.com/spleenteo/maestro/main/.version"
+UPDATE_INTERVAL = 43200  # seconds: twice a day
+UPSTREAM_RE = re.compile(r"^v\d{4}\.\d{2}\.\d{2}\.\d+\s*$")
 
 # Sections of the mother's preferences a satellite may see: the exact name,
 # optionally followed by a parenthetical ("Identity (the orchestrator)").
@@ -202,6 +226,132 @@ def emit_context(text: str) -> None:
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
 
 
+# --------------------------------------------------------------------------
+# the update check
+# --------------------------------------------------------------------------
+
+class FetchTimeout(Exception):
+    """Raised by the SIGALRM handler when the fetch outlives its alarm."""
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def read_update_cache(path: Path) -> dict:
+    """The cache as a dict; `{}` when missing, unreadable or not an object."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_update_cache(path: Path, upstream: str | None) -> None:
+    """`{"upstream", "checked_at"}` replaced atomically (mkstemp + os.replace);
+    `upstream` is left out when nothing is known yet."""
+    data = {"checked_at": utc_now().isoformat()}
+    if upstream:
+        data["upstream"] = upstream
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+            fh.write("\n")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def cache_is_stale(cache: dict) -> bool:
+    """True when `checked_at` is missing, unparseable or older than the
+    interval (MAESTRO_UPDATE_INTERVAL seconds, default UPDATE_INTERVAL)."""
+    try:
+        interval = int(os.environ.get("MAESTRO_UPDATE_INTERVAL") or UPDATE_INTERVAL)
+    except ValueError:
+        interval = UPDATE_INTERVAL
+    try:
+        checked_at = datetime.fromisoformat(str(cache.get("checked_at")))
+    except ValueError:
+        return True
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=timezone.utc)
+    return utc_now() - checked_at >= timedelta(seconds=interval)
+
+
+def spawn_fetcher(cache_file: Path, upstream: str | None) -> None:
+    """Stamp `checked_at` first, so two sessions starting together don't both
+    fetch, then start `update-fetch` detached: its own session, no inherited
+    stream (the hook's stdout is the JSON line Claude Code reads), no wait."""
+    write_update_cache(cache_file, upstream)
+    subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "update-fetch"],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True, close_fds=True)
+
+
+def update_check(folder: str) -> str | None:
+    """The one-line notice when the cached upstream version is newer than the
+    instance's CLAUDE.md, else None. Only in an instance root that isn't the
+    template itself (`plugins/maestro/` absent). The notice comes from the
+    cache as it was: a stale cache refreshes in the background, for the next
+    session."""
+    root = Path(folder)
+    if not is_instance_dir(root) or (root / "plugins" / "maestro").is_dir():
+        return None
+    cache_file = update_cache_path()
+    cache = read_update_cache(cache_file)
+    upstream = cache.get("upstream")
+    if not isinstance(upstream, str):
+        upstream = None
+    notice = None
+    if upstream:
+        try:
+            local = read_file_version(root / "CLAUDE.md")
+            if is_newer(upstream, local):
+                notice = (f"Maestro {upstream} is available (this instance is on {local}): "
+                          "run /maestro:maestro-sync.")
+        except (OSError, ValueError):  # no CLAUDE.md, or a malformed version on either side
+            notice = None
+    if cache_is_stale(cache):
+        try:
+            spawn_fetcher(cache_file, upstream)
+        except OSError:
+            pass
+    return notice
+
+
+def update_fetch() -> int:
+    """Fetch the template's `.version` and rewrite the cache. Any error, a
+    body that isn't a version, or a fetch past the 5-second alarm: exit 0
+    with the cache untouched."""
+    url = os.environ.get("MAESTRO_VERSION_URL") or VERSION_URL
+
+    def on_alarm(_signum, _frame):
+        raise FetchTimeout()
+
+    signal.signal(signal.SIGALRM, on_alarm)
+    signal.alarm(5)
+    try:
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            body = resp.read(256).decode("utf-8", errors="replace")
+    except Exception:  # URLError, socket and http.client errors, FetchTimeout, a bad URL
+        return 0
+    finally:
+        signal.alarm(0)
+    if not UPSTREAM_RE.match(body):
+        return 0
+    try:
+        write_update_cache(update_cache_path(), body.strip())
+    except OSError:
+        pass
+    return 0
+
+
 def export_scope(scope: str) -> bool:
     env_file = os.environ.get("CLAUDE_ENV_FILE")
     if not env_file:
@@ -225,30 +375,52 @@ def write_marker(marker: Path | None, scope: str, vault: str | None) -> bool:
     return True
 
 
-def start_satellite(scope: str, entry: dict, registry: dict, marker: Path | None) -> None:
+def start_satellite(scope: str, entry: dict, registry: dict, marker: Path | None) -> str:
+    """The satellite's context text, or the one line saying why satellite mode is off."""
     mother_name = entry["mother"]
     mother_entry = registry["instances"].get(mother_name)
     if not mother_entry:
-        emit_context(f"Maestro: this repo is registered as satellite `{scope}` of `{mother_name}`, "
-                     "which the registry doesn't list. Satellite mode is off.")
-        return
+        return (f"Maestro: this repo is registered as satellite `{scope}` of `{mother_name}`, "
+                "which the registry doesn't list. Satellite mode is off.")
     mother = Path(mother_entry["path"]).expanduser()
     if schema_api(mother) < MIN_SCHEMA_API:
-        emit_context(f"Maestro: this repo is satellite `{scope}` of `{mother_name}`, but that "
-                     f"instance's bin/mem is too old for satellites (needs SCHEMA_API {MIN_SCHEMA_API}). "
-                     "Satellite mode is off until the mother is updated.")
-        return
+        return (f"Maestro: this repo is satellite `{scope}` of `{mother_name}`, but that "
+                f"instance's bin/mem is too old for satellites (needs SCHEMA_API {MIN_SCHEMA_API}). "
+                "Satellite mode is off until the mother is updated.")
     try:
         row = mother_row(mother_name, mother, scope, entry, timeout=10)
     except NetError as exc:
-        emit_context(f"Maestro: this repo is satellite `{scope}` of `{mother_name}`, but {exc}. "
-                     "Satellite mode is off.")
-        return
+        return (f"Maestro: this repo is satellite `{scope}` of `{mother_name}`, but {exc}. "
+                "Satellite mode is off.")
     identity = identity_extract(mother)
     vault_open = write_marker(marker, scope, row.get("vault_folder"))
     exported = export_scope(scope)
     can_request = "request" in (mother_entry.get("accepts") or [])
-    emit_context(context_text(scope, mother_name, mother, row, identity, exported, vault_open, can_request))
+    return context_text(scope, mother_name, mother, row, identity, exported, vault_open, can_request)
+
+
+def satellite_context(folder: str, marker: Path | None) -> str | None:
+    """The satellite context for `folder`; None anywhere outside a registered satellite."""
+    reg_file = registry_path()
+    try:
+        raw = reg_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if "satellites:" not in raw:
+        return None
+    try:
+        registry = parse_registry(raw, str(reg_file))
+    except Exception:
+        return None
+    scope, entry = match_satellite(registry, folder)
+    if scope is None:
+        return None
+    try:
+        return start_satellite(scope, entry, registry, marker)
+    except Exception as exc:
+        drop_marker(marker)
+        return (f"Maestro: satellite `{scope}` failed at session start "
+                f"({exc.__class__.__name__}: {exc}). Satellite mode may be incomplete.")
 
 
 def session_start() -> int:
@@ -263,26 +435,14 @@ def session_start() -> int:
     marker = marker_path(project_dir)
     drop_marker(marker)
 
-    reg_file = registry_path()
     try:
-        raw = reg_file.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return 0
-    if "satellites:" not in raw:
-        return 0
-    try:
-        registry = parse_registry(raw, str(reg_file))
+        notice = update_check(folder)
     except Exception:
-        return 0
-    scope, entry = match_satellite(registry, folder)
-    if scope is None:
-        return 0
-    try:
-        start_satellite(scope, entry, registry, marker)
-    except Exception as exc:
-        drop_marker(marker)
-        emit_context(f"Maestro: satellite `{scope}` failed at session start "
-                     f"({exc.__class__.__name__}: {exc}). Satellite mode may be incomplete.")
+        notice = None
+    context = satellite_context(folder, marker)
+    parts = [part for part in (notice, context) if part]
+    if parts:
+        emit_context("\n\n".join(parts))
     return 0
 
 
@@ -324,6 +484,8 @@ def main() -> int:
             return session_start()
         if mode == "pre-tool-use" and len(sys.argv) > 2:
             return pre_tool_use(sys.argv[2])
+        if mode == "update-fetch":
+            return update_fetch()
     except Exception:
         return 0
     return 0

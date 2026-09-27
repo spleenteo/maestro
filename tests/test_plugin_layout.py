@@ -15,10 +15,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "plugins" / "maestro" / "bin"))
+from maestro_versions import changelog_top_version  # noqa: E402
+
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 PLUGIN_DIR = ROOT / "plugins" / "maestro"
 PLUGIN_MANIFEST = PLUGIN_DIR / ".claude-plugin" / "plugin.json"
@@ -149,6 +153,16 @@ class TestNoOriginMarker(unittest.TestCase):
             self.assertIn("origin: maestro", scanned)
         finally:
             tmp.unlink(missing_ok=True)
+
+
+class TestVersionFile(unittest.TestCase):
+    """`.version` at the repo root is what the plugin's update check fetches
+    from GitHub: one line, the top `## v…` heading of CHANGELOG.md, bumped
+    by the release commit."""
+
+    def test_version_file_equals_the_changelog_top_version(self):
+        self.assertEqual((ROOT / ".version").read_text(encoding="utf-8"),
+                         changelog_top_version(ROOT / "CHANGELOG.md") + "\n")
 
 
 class TestMaestroNetScriptPlacement(unittest.TestCase):

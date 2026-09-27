@@ -1,5 +1,5 @@
 {
-  "description": "Maestro satellites: recognise a registered satellite repo at session start, give it its scope and role, and open its linked vault folder to the file tools.",
+  "description": "Maestro at session start: in an instance root, one line when a newer template version is available (checked in the background twice a day); in a registered satellite repo, its scope and role, and its linked vault folder opened to the file tools.",
   "hooks": {
     "SessionStart": [
       {
