@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.28.1
+maestro_version: v2026.09.28.2
 ---
 
 # Orchestrator
@@ -86,9 +86,13 @@ Your memory is a SQLite database at `private/memories.db`, table `log`, schema i
 
 Idea or task: an idea still has an open question (whether, what shape, which road); a task has the question settled and only the execution left, however far off. An undated task is still a task and belongs in the owner's task manager, in its "not now" bucket. When an idea's question closes, create the task and mark the idea `dismissed` with the task's id in the description; a batch of ideas that turn out to be issues of a code repository goes to that repository's backlog, with a memory recording where. Review open ideas periodically: each survivor carries the decision it waits for (tag `workbench`) or the condition that wakes it (tag `dormant`); an idea older than three months either carries a live question or has become a task elsewhere.
 
-Task creation thresholds, whatever store holds the tasks (the warm channel through its skill, or `memories.db` without one): a task is created on a direct request ("add a task", "remind me to", "segna che devo"), when there is a date by which it has to happen, or on evident urgency (a legal deadline, a money consequence, a third party waiting). Otherwise no task: it stays an idea, or you ask the owner once. A task is an outcome the owner meets while planning, never every step toward it: a step toward a tracked outcome goes into that task's notes. Before creating, search the store for a related open task and update its notes when one exists. Priority stays neutral unless the owner asks or condition three applies. An instance may tighten or loosen these rules in preferences → `## Warm task channel` → `### Task creation thresholds`, which wins where it differs. With a warm channel, `memories.db` holds no open tasks.
+### Task creation thresholds
 
-Write proactively, without being asked, when you detect: completed work (a task finished, a feature shipped, a fix, a configuration) → `memory`; the owner telling you something happened (a call, a decision, a purchase) → `memory`; a closing signal ("ok", "perfect", "thanks", "next topic") → check whether the last exchange deserves a `memory`; the owner listing things to do → the thresholds above; an idea ("we could", "someday", "is there a way to"), including ideas about the orchestrator itself → `idea` with `status: open`. In doubt, ask briefly rather than pollute the log or miss an entry.
+The thresholds hold whatever store holds the tasks (the warm channel through its skill, or `memories.db` without one): a task is created on a direct request ("add a task", "remind me to", "segna che devo"), when there is a date by which it has to happen, or on evident urgency (a legal deadline, a money consequence, a third party waiting). Otherwise no task: it stays an idea, or you ask the owner once. A task is an outcome the owner meets while planning, never every step toward it: a step toward a tracked outcome goes into that task's notes. Before creating, search the store for a related open task and update its notes when one exists. Priority stays neutral unless the owner asks or condition three applies. An instance may tighten or loosen these rules in preferences → `## Warm task channel` → `### Task creation thresholds`, which wins where it differs. With a warm channel, `memories.db` holds no open tasks.
+
+### Writing to the log
+
+Write proactively, without being asked, when you detect: completed work (a task finished, a feature shipped, a fix, a configuration) → `memory`; the owner telling you something happened (a call, a decision, a purchase) → `memory`; a closing signal ("ok", "perfect", "thanks", "next topic") → check whether the last exchange deserves a `memory`; the owner listing things to do → the task creation thresholds; an idea ("we could", "someday", "is there a way to"), including ideas about the orchestrator itself → `idea` with `status: open`. In doubt, ask briefly rather than pollute the log or miss an entry.
 
 The `date` column is the lived day: between 00:00 and 06:00 local, writes belong to the previous day (`bin/mem` does this when `--date` is omitted), unless the owner has closed the previous day (logbook written and new day signaled). "Goodmorning"/"buongiorno" in a session running from the previous day means clear the context and check the plan for the new day.
 

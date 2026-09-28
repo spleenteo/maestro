@@ -12,6 +12,7 @@ One line per version; the full entry below carries the reasons and the migration
 
 | Version | Theme |
 |---|---|
+| v2026.09.28.2 | `### Task creation thresholds` is a heading again in `CLAUDE.md`; a test catches references to missing headings |
 | v2026.09.28.1 | The project review: `maestro-sync` becomes a command with backup sets and rollback, an update notice at session start, `CLAUDE.md` at a third of its size, the register rules in one place, English everywhere, the README as the guide, MIT license |
 | v2026.09.27.1 | The mother answers a satellite's `ask` and `request` by relevance to its mandate, with `private/` and other scopes always excluded |
 | v2026.09.24.1 | Task creation thresholds in `CLAUDE.md` and in every channel skill; the `steward` agent reviews the backlog weekly |
@@ -35,6 +36,24 @@ One line per version; the full entry below carries the reasons and the migration
 | v2026.04.30.2 | Three patterns promoted from a personal instance into the template |
 | v2026.04.30.1 | Available apps moves from `CLAUDE.md` into `preferences.md`; the distribution rule |
 | v2026.04.29.1 | Initial snapshot for changelog tracking |
+
+---
+
+## v2026.09.28.2 — 2026-09-28
+
+**Theme**: a patch. The slimming of `CLAUDE.md` in v2026.09.28.1 turned `### Task creation thresholds` into a plain paragraph, while four files still sent their readers to that heading by name. An instance noticed it while onboarding the `steward`: HR could not find the section it was told to read.
+
+### Fixed
+
+- **`CLAUDE.md` → `## Memory`** has two subsections again: `### Task creation thresholds`, the heading that `steward.md`, `howto/04`, `howto/07` and `preferences.example.md` cite, and `### Writing to the log`, which holds the proactive triggers and the `bin/mem` rules so they don't fall under the thresholds. No rule changed.
+
+### Added
+
+- **`tests/test_claude_md_refs.py`**: every `` `CLAUDE.md` → `## …` `` reference in the tracked markdown files must name a heading that exists, and a `###` cited under a `##` must sit in that section. `CHANGELOG.md` and `docs/decisions-log/` are left out, because they record the headings of their own time.
+
+### Migration
+
+1. **Run `/maestro:maestro-sync`** in each instance and accept the `CLAUDE.md` diff. Nothing else changes.
 
 ---
 
