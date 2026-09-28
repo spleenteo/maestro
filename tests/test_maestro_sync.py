@@ -162,8 +162,9 @@ def preferences_text(mirror, worktree, shape: str = "bold") -> str:
 def make_mirror(root: Path) -> SimpleNamespace:
     """A template repo on `main` with marked files, `bin/`, a `CHANGELOG.md`
     with two entries, plus a bare `origin.git` clone the command fetches
-    from. Returns `work`, `origin`, `old` (first commit), `main` (tip of
-    main), `ahead` (a commit on a `feature` branch)."""
+    from. Returns `work`, `origin`, `old` (first commit), `plugin` (the last
+    commit that changed the plugin's files), `main` (tip of main, docs
+    only), `ahead` (a commit on a `feature` branch)."""
     work = root / "mirror src"
     init_git_repo(work)
     for rel in MARKED_PATHS:
@@ -172,7 +173,10 @@ def make_mirror(root: Path) -> SimpleNamespace:
     shutil.copy2(ROOT / "bin" / "mem", work / "bin" / "mem")
     shutil.copy2(ROOT / "bin" / "mem_schema.py", work / "bin" / "mem_schema.py")
     write(work / "CHANGELOG.md", changelog(OLD_VERSION))
+    write(work / "plugins/maestro/bin/tool", "v1\n")
     old = commit(work, ["."], f"{OLD_VERSION}: seed")
+    write(work / "plugins/maestro/bin/tool", "v2\n")
+    plugin = commit(work, ["."], "plugin change")
     for rel in MARKED_PATHS:
         write(work / rel, marked_md(NEW_VERSION, description=rel, body="New body.\n"))
     write(work / "CHANGELOG.md", changelog(NEW_VERSION, OLD_VERSION))
@@ -183,7 +187,8 @@ def make_mirror(root: Path) -> SimpleNamespace:
     subprocess.run(["git", "checkout", "-q", "main"], cwd=work, check=True)
     origin = root / "origin.git"
     subprocess.run(["git", "clone", "-q", "--bare", str(work), str(origin)], check=True)
-    return SimpleNamespace(work=work, origin=origin, old=old, main=main, ahead=ahead)
+    return SimpleNamespace(work=work, origin=origin, old=old, plugin=plugin, main=main,
+                           ahead=ahead)
 
 
 def make_plugin_root(root: Path, repo_url: str, name: str = "plugin root") -> Path:
@@ -636,6 +641,18 @@ class TestPluginCheck(SyncFixture):
         r = self.plan()
         self.assertEqual(r.returncode, E_PLUGIN)
         self.assertIn("behind", r.stderr)
+
+    def test_plugin_behind_main_only_outside_the_plugin_passes(self):
+        recorder_claude(self.bindir, self.mirror_src.plugin, self.plugin)
+        r = self.plan()
+        self.assertEqual(r.returncode, OK, r.stderr)
+
+    def test_update_plugin_updates_the_marketplace_then_the_plugin(self):
+        r = run_sync("update-plugin", env=self.env, cwd=self.root)
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual((self.bindir / "claude.log").read_text().splitlines(),
+                         ["plugin marketplace update maestro", "plugin update maestro@maestro"])
+        self.assertIn("Restart Claude Code", r.stdout)
 
     def test_a_commit_unknown_to_the_mirror_is_refused(self):
         recorder_claude(self.bindir, "deadbeefdeadbeefdeadbeef", self.plugin)

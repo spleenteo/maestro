@@ -16,7 +16,7 @@ command -v maestro-sync >/dev/null 2>&1 || SYNC="${CLAUDE_PLUGIN_ROOT}/bin/maest
 "$SYNC" plan --plugin-root "${CLAUDE_PLUGIN_ROOT}"
 ```
 
-Every later call uses the same `SYNC` resolution, so repeat those two lines in each block. Read the summary: `VERSIONS <floor> -> <upstream>`, the `CHANGELOG` block, `ITEMS <N>` then one line per item (`<id> <kind> <path> ...`), `WORKTREE <state> <path>` with its files and commits, `WARNING` lines, `PLAN <file>`. Diffs and previews are in `private/maestro-sync.plan.json`: `items[]` with `id`, `kind`, `path`, `from`, `to`, `diff` or `preview`, `locally_modified`, `state`, `members`, `missing`, `hints`. On a first run the mirror is cloned: say so. Exit 3, 4 or 5: show the message and stop. Exit 5 for a plugin behind upstream carries the way out: `claude plugin marketplace update maestro`, `claude plugin update maestro@maestro`, restart Claude Code, run `/maestro:maestro-sync` again; never update and retry in the same session.
+Every later call uses the same `SYNC` resolution, so repeat those two lines in each block. Read the summary: `VERSIONS <floor> -> <upstream>`, the `CHANGELOG` block, `ITEMS <N>` then one line per item (`<id> <kind> <path> ...`), `WORKTREE <state> <path>` with its files and commits, `WARNING` lines, `PLAN <file>`. Diffs and previews are in `private/maestro-sync.plan.json`: `items[]` with `id`, `kind`, `path`, `from`, `to`, `diff` or `preview`, `locally_modified`, `state`, `members`, `missing`, `hints`. On a first run the mirror is cloned: say so. Exit 3, 4 or 5: show the message and stop. Exit 5 for a plugin behind upstream (the message names `update-plugin`; the check looks only at the plugin's own files, so a release that leaves them alone passes): ask "The Maestro plugin is behind: update it now?"; on yes run `"$SYNC" update-plugin` (same `SYNC` resolution), then tell the owner to restart Claude Code and run `/maestro:maestro-sync` again, and stop. Never retry the plan in the same session.
 
 ## 2. Working tree
 
@@ -59,7 +59,7 @@ Push to upstream: promotions happen in the working tree. Resolve a conflict alon
 
 ## Failure modes
 
-- Exit 3 or 5: not an instance root, or the plugin can't be checked or is behind. Show the message (exit 5 names the update commands and the restart) and stop.
+- Exit 3 or 5: not an instance root, or the plugin can't be checked or is behind. Show the message and stop; for a plugin behind upstream, offer `update-plugin` as in step 1.
 - Exit 4: the mirror clone or fetch, the working tree or a git call failed (no network, a mirror with local edits, a mirror that is the instance or the worktree). Show it and stop.
 - Exit 6: the plan is older than the mirror or than a file. Run `plan` again; a new set starts.
 - Exit 7, 9 or 11: unknown item or set, bad plan or manifest, another apply or rollback holds `private/maestro-sync.lock`, or the set, lock, log or plan can't be written; nothing applied. Show it and stop. Exit 10 is the postponed `listen` unit, never a failure.

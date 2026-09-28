@@ -70,6 +70,10 @@ command never asks anything.
                     items restored)` to the log. E_ITEM on an unknown stamp, a
                     set lacking a file it should hold, or a manifest path
                     outside the instance, with nothing touched.
+    update-plugin   runs `claude plugin marketplace update maestro` then
+                    `claude plugin update maestro@maestro`, the way out of a
+                    plugin behind upstream; the new plugin loads at the next
+                    start of Claude Code.
     backups [--instance DIR]
                     lists the sets newest first, one line each:
                     `<stamp>  <from> → <to>  <N> items  <applied>/<failed>/<pending>`
@@ -166,6 +170,9 @@ MIRROR_KEY = "maestro_mirror_path"
 WORKTREE_KEY = "maestro_worktree_path"
 SCRIPT_PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+# What the plugin ships: an installed commit behind main is current when
+# main changed nothing under these paths.
+PLUGIN_PATHS = ("plugins/maestro", ".claude-plugin")
 NO_PLUGIN_ROOT_WARNING = (
     "no --plugin-root given: the check that the loaded plugin is the installed one is skipped")
 
@@ -443,9 +450,10 @@ def installed_plugin() -> dict:
 
 
 def check_plugin(mirror: Path, plugin_root: Optional[Path]) -> str:
-    """The installed plugin's commit, once it is a commit of the mirror with
-    origin/main among its ancestors and, when --plugin-root is given, the
-    loaded plugin is the installed one. E_PLUGIN otherwise."""
+    """The installed plugin's commit, once it is a commit of the mirror that
+    has origin/main among its ancestors or ships the same plugin files as
+    origin/main and, when --plugin-root is given, the loaded plugin is the
+    installed one. E_PLUGIN otherwise."""
     row = installed_plugin()
     version = str(row.get("version", ""))
     if not SHA_RE.fullmatch(version):
@@ -460,18 +468,50 @@ def check_plugin(mirror: Path, plugin_root: Optional[Path]) -> str:
                 E_PLUGIN,
                 f"This session runs the Maestro plugin from {loaded}, but {installed} is installed. "
                 "Restart Claude Code, then run /maestro:maestro-sync again.")
-    try:
-        git(mirror, "cat-file", "-e", f"{version}^{{commit}}")
-        git(mirror, "merge-base", "--is-ancestor", "origin/main", version)
-    except SyncError:
+    if not plugin_current(mirror, version):
         raise SyncError(
             E_PLUGIN,
             f"The Maestro plugin ({version}) is behind the template's main branch. "
-            "Update it, restart Claude Code, then run /maestro:maestro-sync again: "
-            "`claude plugin marketplace update maestro` then `claude plugin update maestro@maestro`. "
+            "Run `maestro-sync update-plugin`, restart Claude Code, then run "
+            "/maestro:maestro-sync again. "
             "If the marketplace was added from a branch, remove it and add spleenteo/maestro "
             "again without one.")
     return version
+
+
+def plugin_current(mirror: Path, version: str) -> bool:
+    """True when the commit is in the mirror and either contains origin/main
+    or differs from it nowhere under PLUGIN_PATHS."""
+    try:
+        git(mirror, "cat-file", "-e", f"{version}^{{commit}}")
+    except SyncError:
+        return False
+    try:
+        git(mirror, "merge-base", "--is-ancestor", "origin/main", version)
+        return True
+    except SyncError:
+        pass
+    r = subprocess.run(["git", "diff", "--quiet", version, "origin/main", "--", *PLUGIN_PATHS],
+                       cwd=mirror, capture_output=True)
+    return r.returncode == 0
+
+
+def cmd_update_plugin(args) -> int:
+    exe = shutil.which("claude")
+    if not exe:
+        raise SyncError(E_PLUGIN, "The claude command isn't on PATH, so the plugin can't be updated.")
+    marketplace = PLUGIN_ID.split("@", 1)[1]
+    for argv in (["plugin", "marketplace", "update", marketplace], ["plugin", "update", PLUGIN_ID]):
+        try:
+            r = subprocess.run([exe, *argv], capture_output=True, text=True)
+        except OSError as exc:
+            raise SyncError(E_PLUGIN, f"cannot run claude: {exc}")
+        if r.returncode != 0:
+            detail = " ".join((r.stderr.strip() or r.stdout.strip()).split())
+            raise SyncError(E_PLUGIN, f"claude {' '.join(argv)} failed (exit {r.returncode}): {detail}")
+        print(f"claude {' '.join(argv)}: ok")
+    print("Plugin updated. Restart Claude Code, then run /maestro:maestro-sync again.")
+    return OK
 
 
 # --------------------------------------------------------------------------
@@ -2016,6 +2056,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--instance", help="instance root (default: the current directory)")
     sp.set_defaults(func=cmd_rollback)
 
+    sp = sub.add_parser("update-plugin", help="Update the marketplace and the installed Maestro plugin")
+    sp.set_defaults(func=cmd_update_plugin)
+
     sp = sub.add_parser("backups", help="List the backup sets, newest first")
     sp.add_argument("--instance", help="instance root (default: the current directory)")
     sp.set_defaults(func=cmd_backups)
@@ -2027,7 +2070,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if not args.verb:
         parser.print_usage(sys.stderr)
-        print("maestro-sync: a verb is required (plan, apply, note, rollback, backups)",
+        print("maestro-sync: a verb is required (plan, apply, note, rollback, update-plugin, backups)",
               file=sys.stderr)
         return E_USAGE
     try:

@@ -1,8 +1,8 @@
 ---
 origin: maestro
-maestro_version: v2026.09.28.1
+maestro_version: v2026.09.28.3
 tags: [howto, backup, sync, privacy, gitignore, symlinks, cloud-drive, orchestrator, maestro-sync, rollback]
-description: "How to back up and synchronize your orchestrator safely: what to keep out of git, how to sync across machines via cloud drives, how to symlink external apps, skills and agents, and how template updates reach an instance through the maestro-sync command (mirror and worktree keys, the five verbs, backup sets and rollback) and how the session-start update notice works (cache, interval, env overrides)."
+description: "How to back up and synchronize your orchestrator safely: what to keep out of git, how to sync across machines via cloud drives, how to symlink external apps, skills and agents, and how template updates reach an instance through the maestro-sync command (mirror and worktree keys, the six verbs, backup sets and rollback) and how the session-start update notice works (cache, interval, env overrides)."
 ---
 
 # How to handle backups and sync
@@ -74,12 +74,13 @@ maestro_worktree_path: ~/Code/maestro
 
 The mirror can be neither the instance nor the working tree, and a mirror with local edits is refused.
 
-### The five verbs
+### The six verbs
 
-- `plan`: refreshes the mirror, checks that the loaded plugin is not behind it, and writes `private/maestro-sync.plan.json`: the changelog slice from the instance's oldest `maestro_version` to upstream, and one item per thing to do, of kind `update`, `new`, `bin`, `retired`, `register` or `orphan`.
+- `plan`: refreshes the mirror, checks that the loaded plugin is not behind it (only the plugin's own files count: a release that leaves `plugins/maestro/` and `.claude-plugin/` alone doesn't ask for a plugin update), and writes `private/maestro-sync.plan.json`: the changelog slice from the instance's oldest `maestro_version` to upstream, and one item per thing to do, of kind `update`, `new`, `bin`, `retired`, `register` or `orphan`.
 - `apply`: applies items of the last plan, by id (`--items u1,u2`) or by kind (`--kind update`), after the backup set is open; `--from FILE` writes a merged text for one update, `--register KEY=VALUE` answers a missing register key.
 - `note`: records in `private/maestro-sync.log` an outcome the conversation decided: skipped, aborted or kept.
 - `rollback STAMP`: restores a set, its items in reverse order, then the memory db.
+- `update-plugin`: runs `claude plugin marketplace update maestro` then `claude plugin update maestro@maestro`, the way out when `plan` stops with exit 5 for a plugin behind upstream. The conversation offers it; the new plugin loads after a restart of Claude Code, and the sync runs again from the new session.
 - `backups`: lists the sets, newest first, with the two versions and the item counts.
 
 ### Backup sets and rollback

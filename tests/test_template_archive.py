@@ -60,6 +60,7 @@ EXPORT_IGNORED_TEST_FILES = (
     "test_template_archive.py",
     "test_finalize.py",
     "test_new_instance.py",
+    "test_claude_md_refs.py",
 )
 
 # A sample of test files that have nothing to do with the template and

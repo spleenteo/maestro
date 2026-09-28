@@ -12,6 +12,7 @@ One line per version; the full entry below carries the reasons and the migration
 
 | Version | Theme |
 |---|---|
+| v2026.09.28.3 | `maestro-sync` asks for a plugin update only when the plugin changed, and runs the update itself |
 | v2026.09.28.2 | `### Task creation thresholds` is a heading again in `CLAUDE.md`; a test catches references to missing headings |
 | v2026.09.28.1 | The project review: `maestro-sync` becomes a command with backup sets and rollback, an update notice at session start, `CLAUDE.md` at a third of its size, the register rules in one place, English everywhere, the README as the guide, MIT license |
 | v2026.09.27.1 | The mother answers a satellite's `ask` and `request` by relevance to its mandate, with `private/` and other scopes always excluded |
@@ -36,6 +37,30 @@ One line per version; the full entry below carries the reasons and the migration
 | v2026.04.30.2 | Three patterns promoted from a personal instance into the template |
 | v2026.04.30.1 | Available apps moves from `CLAUDE.md` into `preferences.md`; the distribution rule |
 | v2026.04.29.1 | Initial snapshot for changelog tracking |
+
+---
+
+## v2026.09.28.3 — 2026-09-28
+
+**Theme**: fewer plugin updates, and no commands to copy. `maestro-sync plan` stopped with exit 5 whenever the installed plugin was older than the last commit on `main`, even when that commit touched only `CLAUDE.md` or the README. Every release sent every instance through an update and a restart it didn't need.
+
+### Changed
+
+- **The plugin check** (`plugins/maestro/bin/maestro-sync`) looks at the plugin's own files: an installed commit behind `main` passes when `main` changed nothing under `plugins/maestro/` and `.claude-plugin/`. A plugin that really is behind still stops the plan with exit 5.
+- **The `maestro-sync` skill** offers the update on exit 5 and, on the owner's yes, runs it; then it asks for a restart of Claude Code and stops, as before.
+
+### Added
+
+- **`maestro-sync update-plugin`**: runs `claude plugin marketplace update maestro` then `claude plugin update maestro@maestro`, and exits 5 with the reason when either fails. Documented in `--help` and in `howto/05-backup-and-sync.md`.
+
+### Fixed
+
+- **`tests/test_claude_md_refs.py`** is `export-ignore` in `.gitattributes`: v2026.09.28.2 let it into the archive a new instance is built from, where it checks the template's own files.
+
+### Migration
+
+1. **Update the plugin** one last time by hand and restart Claude Code: `claude plugin marketplace update maestro`, then `claude plugin update maestro@maestro`. From this version on the sync offers to do it.
+2. **Run `/maestro:maestro-sync`** in each instance: `howto/05-backup-and-sync.md` arrives as a diff.
 
 ---
 
