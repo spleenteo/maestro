@@ -21,3 +21,6 @@ skills-lock.json
 # Design and devflow working documents: kept on the owner's disk, never published
 docs/work/
 docs/shaping*.md
+
+# Copied in by the Pages workflow at deploy time
+site/CHANGELOG.md

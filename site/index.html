@@ -218,6 +218,43 @@ code { font-family: var(--term); color: var(--amber-hi); }
 .copy:hover { border-color: var(--amber); }
 .req { margin-top: 24px; }
 
+/* ---------- Patch notes ---------- */
+.score { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-family: var(--pixel); font-size: 10px; margin-bottom: 18px; }
+.score b { font-weight: normal; color: var(--amber-hi); }
+#reel {
+  position: relative;
+  height: 440px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--amber-dim) transparent;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 56px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 56px), transparent 100%);
+}
+#reel:focus-visible { outline: 2px solid var(--amber-hi); outline-offset: -2px; }
+#reel .msg { padding: 16px; }
+.month { position: sticky; top: 0; z-index: 1; padding: 12px 16px 10px; background: #0d0800; font-family: var(--pixel); font-size: 10px; color: var(--amber-dim); text-shadow: none; border-bottom: 2px solid var(--amber-faint); }
+.rel {
+  display: grid;
+  grid-template-columns: 5ch 13ch 1fr;
+  gap: 4px 16px;
+  align-items: baseline;
+  padding: 10px 16px;
+  border-bottom: 2px dashed var(--amber-faint);
+  color: var(--amber);
+  text-decoration: none;
+  opacity: 0;
+  transform: translateX(-16px);
+}
+.rel.in { animation: slidein .45s steps(4) forwards; }
+@keyframes slidein { to { opacity: 1; transform: none; } }
+.rel:hover, .rel:focus-visible { background: var(--amber); color: var(--bg); text-shadow: none; outline: none; }
+.rel:hover *, .rel:focus-visible * { color: var(--bg); }
+.rel .lv { font-family: var(--pixel); font-size: 9px; color: var(--amber-dim); text-shadow: none; }
+.rel .v { font-family: var(--pixel); font-size: 10px; color: var(--amber-hi); white-space: nowrap; }
+.rel .th { font-size: 21px; }
+.rel .new { font-family: var(--pixel); font-size: 8px; margin-left: 10px; vertical-align: 2px; animation: blink .6s steps(1) infinite; }
+
 footer { max-width: 980px; margin: 0 auto; padding: 32px 16px 48px; border-top: 3px solid var(--amber-faint); font-size: 20px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 
 @media (max-width: 640px) {
@@ -230,10 +267,14 @@ footer { max-width: 980px; margin: 0 auto; padding: 32px 16px 48px; border-top: 
   .cmd code { font-size: 19px; }
   #map { width: 640px; }
   .swipe { display: block; }
+  #reel { height: 480px; }
+  .rel { grid-template-columns: 5ch 1fr; }
+  .rel .th { grid-column: 1 / -1; font-size: 19px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; }
   .note { display: none; }
+  .rel { opacity: 1; transform: none; }
 }
 </style>
 </head>
@@ -413,6 +454,20 @@ footer { max-width: 980px; margin: 0 auto; padding: 32px 16px 48px; border-top: 
         <p><code>/maestro:maestro-sync</code> brings template updates into an instance, with a backup and a rollback.</p>
       </div>
     </div>
+  </section>
+
+  <section id="updates">
+    <h2>PATCH NOTES</h2>
+    <div class="score">
+      <span>HI-SCORE <b id="hiVer">----</b></span>
+      <span>LEVELS <b id="lvCount">00</b></span>
+      <span>SINCE <b id="since">----</b></span>
+    </div>
+    <div class="window">
+      <div class="bar"><span>CHANGELOG.MD</span><button id="reelToggle" type="button" aria-pressed="false">PAUSE</button></div>
+      <div id="reel" tabindex="0" aria-label="Maestro versions, newest first"><div class="msg">LOADING<span class="blink">...</span></div></div>
+    </div>
+    <p class="dim" style="margin-top:14px">Every version of the template, newest first, read from the <a href="https://github.com/spleenteo/maestro/blob/main/CHANGELOG.md">CHANGELOG</a>. The list scrolls by itself and stops under the mouse; a line opens its full entry.</p>
   </section>
 
   <section id="start">
@@ -738,6 +793,122 @@ footer { max-width: 980px; margin: 0 auto; padding: 32px 16px 48px; border-top: 
     travel(lv3, from, mother, ask ? "ask" : "request", () =>
       travel(lv3, mother, orbit(s.a), ask ? "answer" : "done"));
   }, 2400);
+
+  /* ---------- Patch notes ---------- */
+  const reel = document.getElementById("reel");
+  const toggle = document.getElementById("reelToggle");
+  const REPO = "https://github.com/spleenteo/maestro/blob/main/CHANGELOG.md";
+  const esc = t => t.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const slug = t => t.toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, "").replace(/ /g, "-");
+  const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+  function parseChangelog(md) {
+    const anchors = {};
+    for (const m of md.matchAll(/^## (v\d{4}\.\d{2}\.\d{2}\.\d+\b.*)$/gm)) anchors[m[1].split(" ")[0]] = slug(m[1]);
+    const table = md.split(/^## Versions at a glance\s*$/m)[1] || "";
+    const rows = [];
+    for (const line of table.split("\n")) {
+      if (/^(## |---\s*$)/.test(line)) break;
+      const m = line.match(/^\|\s*(v(\d{4})\.(\d{2})\.(\d{2})\.\d+)\s*\|\s*(.*?)\s*\|\s*$/);
+      if (m) rows.push({ v: m[1], y: m[2], mo: m[3], d: m[4], theme: m[5], anchor: anchors[m[1]] });
+    }
+    return rows;
+  }
+
+  async function loadChangelog() {
+    for (const url of ["CHANGELOG.md", "https://raw.githubusercontent.com/spleenteo/maestro/main/CHANGELOG.md"]) {
+      try {
+        const res = await fetch(url, { cache: "no-cache" });
+        if (!res.ok) continue;
+        const rows = parseChangelog(await res.text());
+        if (rows.length) return rows;
+      } catch (e) {}
+    }
+    return [];
+  }
+
+  function countUp(node, to) {
+    if (reduce) { node.textContent = String(to).padStart(2, "0"); return; }
+    let n = 0;
+    const t = setInterval(() => {
+      node.textContent = String(++n).padStart(2, "0");
+      if (n >= to) clearInterval(t);
+    }, 45);
+  }
+
+  let reelAuto = !reduce, reelHover = false, reelVisible = false, reelWait = 0;
+  const setAuto = on => {
+    reelAuto = on;
+    toggle.textContent = on ? "PAUSE" : "PLAY";
+    toggle.setAttribute("aria-pressed", String(!on));
+  };
+  if (reduce) setAuto(false);
+
+  loadChangelog().then(rows => {
+    if (!rows.length) {
+      reel.innerHTML = `<div class="msg">NO SIGNAL. Read the <a href="${REPO}">CHANGELOG</a> on GitHub.</div>`;
+      toggle.hidden = true;
+      return;
+    }
+    reel.textContent = "";
+    let month = "";
+    rows.forEach((r, i) => {
+      const key = r.y + r.mo;
+      if (key !== month) {
+        month = key;
+        const h = document.createElement("div");
+        h.className = "month";
+        h.textContent = "== STAGE " + MONTHS[Number(r.mo) - 1] + " " + r.y + " ==";
+        reel.appendChild(h);
+      }
+      const a = document.createElement("a");
+      a.className = "rel";
+      a.href = r.anchor ? REPO + "#" + r.anchor : REPO;
+      a.innerHTML =
+        `<span class="lv">LV${String(rows.length - i).padStart(2, "0")}</span>` +
+        `<span class="v">${esc(r.v)}${i === 0 ? '<span class="new">NEW!</span>' : ""}</span>` +
+        `<span class="th">${esc(r.theme).replace(/`([^`]+)`/g, "<code>$1</code>")}</span>`;
+      reel.appendChild(a);
+    });
+    const last = rows[rows.length - 1];
+    document.getElementById("hiVer").textContent = rows[0].v;
+    document.getElementById("since").textContent = `${MONTHS[Number(last.mo) - 1]} ${last.y}`;
+    const lvCount = document.getElementById("lvCount");
+    const items = reel.querySelectorAll(".rel");
+    if ("IntersectionObserver" in window && !reduce) {
+      const io = new IntersectionObserver(entries => entries.forEach(e => {
+        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+      }), { root: reel, threshold: 0.2 });
+      items.forEach(it => io.observe(it));
+      new IntersectionObserver(entries => {
+        reelVisible = entries[0].isIntersecting;
+        if (reelVisible && lvCount.textContent === "00") countUp(lvCount, rows.length);
+      }, { threshold: 0.3 }).observe(reel);
+    } else {
+      items.forEach(it => it.classList.add("in"));
+      lvCount.textContent = String(rows.length).padStart(2, "0");
+      reelVisible = true;
+    }
+  });
+
+  toggle.addEventListener("click", () => setAuto(!reelAuto));
+  reel.addEventListener("pointerenter", e => { if (e.pointerType === "mouse") reelHover = true; });
+  reel.addEventListener("pointerleave", () => { reelHover = false; });
+  ["wheel", "touchstart", "keydown"].forEach(ev => reel.addEventListener(ev, () => setAuto(false), { passive: true }));
+  // Attract mode: a slow stepped scroll, a pause at the bottom, back to the top.
+  setInterval(() => {
+    if (!reelAuto || reelHover || !reelVisible) return;
+    if (reelWait > 0) { reelWait--; return; }
+    const end = reel.scrollHeight - reel.clientHeight;
+    if (end <= 0) return;
+    if (reel.scrollTop >= end - 1) {
+      reel.scrollTop = 0;
+      reelWait = 30;
+    } else {
+      reel.scrollTop += 2;
+      if (reel.scrollTop >= end - 1) reelWait = 40;
+    }
+  }, 70);
 
   /* ---------- Copy buttons ---------- */
   document.querySelectorAll(".copy").forEach(b => b.addEventListener("click", async () => {
