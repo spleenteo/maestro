@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # origin: maestro
-# maestro_version: v2026.07.16.2
+# maestro_version: v2026.09.28.1
 """mem: the CLI over memories.db.
 
 It spares the orchestrator the verbosity, the escaping and the error rate of

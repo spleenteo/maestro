@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.24.1
+maestro_version: v2026.09.28.1
 tags: [howto, memory, integrations, mcp, sqlite, basecamp, calendar, tasks]
 description: How the memory db works, how to query and extend it, and how to integrate external tools (Basecamp, reminders, Google Calendar) without losing the orchestrator's single source of truth.
 ---

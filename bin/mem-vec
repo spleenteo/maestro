@@ -4,7 +4,7 @@
 # dependencies = ["sqlite-vec>=0.1.6"]
 # ///
 # origin: maestro
-# maestro_version: v2026.07.16.2
+# maestro_version: v2026.09.28.1
 """mem-vec: the semantic layer of memories.db (data layer).
 
 Used by bin/mem, which is the UX layer: this script ALWAYS emits JSON on

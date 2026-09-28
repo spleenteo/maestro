@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.17.1
+maestro_version: v2026.09.28.1
 tags: [howto, agents, hr, roster, claude-code, orchestrator, delegation]
 description: How to hire, use, and retire craft agents via the HR agent. Agents are subagents with their own identity and isolated context, registered in `.claude/roster.yaml`.
 ---

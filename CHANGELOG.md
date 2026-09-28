@@ -12,6 +12,7 @@ One line per version; the full entry below carries the reasons and the migration
 
 | Version | Theme |
 |---|---|
+| v2026.09.28.1 | The project review: `maestro-sync` becomes a command with backup sets and rollback, an update notice at session start, `CLAUDE.md` at a third of its size, the register rules in one place, English everywhere, the README as the guide, MIT license |
 | v2026.09.27.1 | The mother answers a satellite's `ask` and `request` by relevance to its mandate, with `private/` and other scopes always excluded |
 | v2026.09.24.1 | Task creation thresholds in `CLAUDE.md` and in every channel skill; the `steward` agent reviews the backlog weekly |
 | v2026.09.17.1 | The writing register gains domains (communication, documentation, synthesis), tones, per-instance values and the `translate` skill |
@@ -34,6 +35,42 @@ One line per version; the full entry below carries the reasons and the migration
 | v2026.04.30.2 | Three patterns promoted from a personal instance into the template |
 | v2026.04.30.1 | Available apps moves from `CLAUDE.md` into `preferences.md`; the distribution rule |
 | v2026.04.29.1 | Initial snapshot for changelog tracking |
+
+---
+
+## v2026.09.28.1 — 2026-09-28
+
+**Theme**: the project review. A brutal read of the template as a whole, from an external, expert reader's seat, turned into four blocks of work: the plugin and the `bin/` tools cleaned up and put in English, the prompt layer slimmed and deduplicated, the README rewritten as the guide to Maestro, and then the two developments the review asked for: `maestro-sync` as a command with backup sets and a rollback, and an update notice at the start of an instance's session.
+
+### Added
+
+- **`maestro-sync`, the command** (`plugins/maestro/bin/maestro-sync`, with `maestro_versions.py`): `plan` refreshes the mirror, checks the plugin, scans the instance and the mirror and writes `private/maestro-sync.plan.json`; `apply` applies items by id or by kind after a backup set; `note` records the outcomes only the conversation decides; `rollback <stamp>` restores a set, its items in reverse order and the db last; `backups` lists the sets. Eleven exit codes, documented in `--help`. Backup sets live in `private/backups/<stamp>-sync/`, one per plan, with `manifest.json` written before the first write and rewritten after each item, a checked copy of `memories.db`, and every replaced or removed file under `files/`; the five newest sets stay, older ones go once past seven days, twenty at most. An `update` keeps the instance's `tools:` group (the one behaviour change against the bash skill); a file the owner edited by hand is recognised by history and never overwritten by an "apply all". `rollback` refuses a set that belongs to another instance.
+- **The update notice** (`plugins/maestro/hooks/satellite-hook`, `.version` at the repo root): an instance whose `CLAUDE.md` is behind the template gets one line at session start, `Maestro v… is available (this instance is on v…): run /maestro:maestro-sync`. The hook reads a cache in `~/.claude/maestro-update-check.json` and, at most every 12 hours, spawns a detached fetch of `.version` from GitHub that never delays a session; `maestro-sync plan` and `apply` refresh the cache. Satellites and plain folders get nothing. Overrides: `MAESTRO_VERSION_URL`, `MAESTRO_UPDATE_CACHE`, `MAESTRO_UPDATE_INTERVAL`.
+- **One command for a satellite**: `maestro-net satellite add --type …` writes the role into the mother and the entry into the registry, undoing the first when the second fails; `satellite remove` drops both.
+- **`LICENSE`**: MIT.
+
+### Changed
+
+- **The `maestro-sync` skill** is 66 lines: a conversation over the command, one question per kind of item, a merge proposal for a locally modified file, the summary from the set's manifest. The 41 tests that extracted its bash blocks are gone; the command has its own black-box tests.
+- **`maestro-net`** split into `maestro_registry.py` (parser, validation, atomic writes, line surgery) and `maestro_satellites.py` (satellite matching, the role in the mother); the session hook imports the two modules instead of executing the whole script. `recap` passes the title after `--`; a satellite scope must be a slug and is quoted before reaching `CLAUDE_ENV_FILE`. Registry writes are atomic.
+- **`bin/` fixes**: `mem update --status done` stamps `completed_date` and any other status clears it, `--status` is validated, `marker set` needs a value; `vault_vec` gains a `root` column so two vault roots sharing a relative path don't collide, and the vault walk no longer follows symlinks; `session-digest` reuses `bin/mem`'s date parsing and the early-morning rule; `maestro-listen` stops orphan `yap` processes when its supervisor dies, notices a capture that exited, and builds `audiowatch` before the start budget.
+- **English everywhere**: help texts, docstrings, comments and messages of `maestro-net`, `bin/mem`, `bin/mem-vec`, `bin/session-digest`, `bin/register-check`; `howto/09-memoria-semantica.md` becomes `howto/09-semantic-memory.md` (the old name is a retired path the sync proposes for removal); the registry header and the example commands in the guides.
+- **`CLAUDE.md`** from 354 to 132 lines with no rule dropped: the satellite block is three lines (the request header carries the rules), the writing register keeps the seven prohibitions and the perimeter and points to the skill for domains and tones, the memory section loses its rationale and the flags `bin/mem --help` already carries. The register rules live in one place, `.claude/skills/writing-register/SKILL.md`; agents and skills declare their domain and tone in one paragraph.
+- **Drift fixed**: `Task` tool → `Agent`; `installed_at` → `hired_at`; HR rewritten on the roster as shipped; `guide` indexes all twelve howto guides; the retired local `maestro-sync` skill removed from the template; the pointer skill path in `preferences.example.md`; `add-external-app`'s rollback and section references; "matrix" wording; the steward's roster description; chezmoi steps and implementation notes dropped from `howto/11`.
+- **README** rewritten as an overview for GitHub readers: one instance per context, the three layers of long-term memory, sub-apps versus satellites with examples and a table, preferences, install, sync, what's included, requirements, a table of contents. The CHANGELOG opens with a one-line-per-version table; `docs/decisions-log/` has an index; `docs/development-guidelines.md` names the new gate baseline and the `.version` bump in a release commit.
+
+### Why
+
+Three reviewers (prompt layer, code, documentation) found the same rule written in up to seven files, names the runtime no longer had, four verified bugs, and a sync procedure of 658 lines of bash run by the model with loose backups in `private/`. The owner approved every theme. The sync moved into a command because the mechanics were hiding in quoting and `pipefail`, and because a set with a manifest is the only backup an owner can roll back without reading a skill. The update notice exists because seven instances drifted for weeks without anyone knowing.
+
+- **Work**: `sync-script` (the review itself ran outside devflow, as a conversation)
+- **Decision**: [`maestro-sync` is a command; the skill is the conversation over it](docs/decisions-log/2026-09-28-maestro-sync-as-a-command.md)
+
+### Migration
+
+1. **Update the plugin** and restart Claude Code: `claude plugin marketplace update maestro`, then `claude plugin update maestro@maestro`. The new `maestro-sync` skill and command, the split `maestro-net` and the update notice arrive with it.
+2. **Run `/maestro:maestro-sync`** in each instance: `CLAUDE.md`, the agents, the skills and the guides arrive as diffs, `howto/09-semantic-memory.md` as a new file and `howto/09-memoria-semantica.md` as a retired path; say yes to the `bin/` copy (the db is backed up into the set first; `vault_vec` gains its `root` column and the vault re-embeds once). The first sync creates `private/backups/`; the loose `private/*.bak.*` files of earlier syncs stay as they are.
+3. **Satellites**: nothing to do; the registry format is unchanged.
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.17.1
+maestro_version: v2026.09.28.1
 name: librarian
 description: Research and catalog agent. Searches the owner's vault (locally, via `rg`) and optionally the web, and returns structured reports of sources for the orchestrator. Also reviews or creates frontmatter (`description`, `tags`) on owner-territory files per project conventions. Never talks to the owner directly.
 tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Glob, Grep

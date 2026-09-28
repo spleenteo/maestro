@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # origin: maestro
-# maestro_version: v2026.09.17.1
+# maestro_version: v2026.09.28.1
 """register-check: the mechanical check of the writing register prohibitions.
 
 It covers the four prohibitions with a syntactic signature (3, 4, 5, 6).

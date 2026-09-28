@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # origin: maestro
-# maestro_version: v2026.08.26.1
+# maestro_version: v2026.09.28.1
 """session-digest: the owner's messages from the Claude Code sessions of one day.
 
 Written for the `logbook` skill: when the owner works in several parallel
