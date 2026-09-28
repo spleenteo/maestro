@@ -5,6 +5,8 @@ description: "What Maestro is and how its pieces fit: one orchestrator instance 
 
 # Maestro
 
+A one-page tour of the project: [spleenteo.github.io/maestro](https://spleenteo.github.io/maestro/).
+
 - [What Maestro is](#what-maestro-is)
 - [Long-term memory](#long-term-memory)
 - [Sub-apps and satellites](#sub-apps-and-satellites)
