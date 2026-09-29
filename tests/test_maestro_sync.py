@@ -654,6 +654,21 @@ class TestPluginCheck(SyncFixture):
                          ["plugin marketplace update maestro", "plugin update maestro@maestro"])
         self.assertIn("Restart Claude Code", r.stdout)
 
+    def test_plan_reports_whether_the_marketplace_auto_updates(self):
+        self.assertIn("AUTOUPDATE off", self.plan().stdout)
+        write(self.home / ".claude" / "settings.json", json.dumps(
+            {"extraKnownMarketplaces": {"maestro": {"source": {"source": "github"}, "autoUpdate": True}}}))
+        self.assertIn("AUTOUPDATE on", self.plan().stdout)
+
+    def test_autoupdate_turns_it_on_and_keeps_the_other_settings(self):
+        settings = write(self.home / ".claude" / "settings.json", json.dumps(
+            {"model": "x", "extraKnownMarketplaces": {"maestro": {"source": {"source": "github"}}}}))
+        r = run_sync("autoupdate", env=self.env, cwd=self.root)
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual(json.loads(settings.read_text()),
+                         {"model": "x", "extraKnownMarketplaces": {
+                             "maestro": {"source": {"source": "github"}, "autoUpdate": True}}})
+
     def test_a_commit_unknown_to_the_mirror_is_refused(self):
         recorder_claude(self.bindir, "deadbeefdeadbeefdeadbeef", self.plugin)
         r = self.plan()

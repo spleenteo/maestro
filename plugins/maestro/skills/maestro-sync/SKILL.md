@@ -16,15 +16,19 @@ command -v maestro-sync >/dev/null 2>&1 || SYNC="${CLAUDE_PLUGIN_ROOT}/bin/maest
 "$SYNC" plan --plugin-root "${CLAUDE_PLUGIN_ROOT}"
 ```
 
-Every later call uses the same `SYNC` resolution, so repeat those two lines in each block. Read the summary: `VERSIONS <floor> -> <upstream>`, the `CHANGELOG` block, `ITEMS <N>` then one line per item (`<id> <kind> <path> ...`), `WORKTREE <state> <path>` with its files and commits, `WARNING` lines, `PLAN <file>`. Diffs and previews are in `private/maestro-sync.plan.json`: `items[]` with `id`, `kind`, `path`, `from`, `to`, `diff` or `preview`, `locally_modified`, `state`, `members`, `missing`, `hints`. On a first run the mirror is cloned: say so. Exit 3, 4 or 5: show the message and stop. Exit 5 for a plugin behind upstream (the message names `update-plugin`; the check looks only at the plugin's own files, so a release that leaves them alone passes): ask "The Maestro plugin is behind: update it now?"; on yes run `"$SYNC" update-plugin` (same `SYNC` resolution), then tell the owner to restart Claude Code and run `/maestro:maestro-sync` again, and stop. Never retry the plan in the same session.
+Every later call uses the same `SYNC` resolution, so repeat those two lines in each block. Read the summary: `VERSIONS <floor> -> <upstream>`, the `CHANGELOG` block, `AUTOUPDATE on|off`, `ITEMS <N>` then one line per item (`<id> <kind> <path> ...`), `WORKTREE <state> <path>` with its files and commits, `WARNING` lines, `PLAN <file>`. Diffs and previews are in `private/maestro-sync.plan.json`: `items[]` with `id`, `kind`, `path`, `from`, `to`, `diff` or `preview`, `locally_modified`, `state`, `members`, `missing`, `hints`. On a first run the mirror is cloned: say so. Exit 3, 4 or 5: show the message and stop. Exit 5 for a plugin behind upstream (the message names `update-plugin`; the check looks only at the plugin's own files, so a release that leaves them alone passes): ask "The Maestro plugin is behind: update it now?"; on yes run `"$SYNC" update-plugin` (same `SYNC` resolution), then tell the owner to restart Claude Code and run `/maestro:maestro-sync` again, and stop. Never retry the plan in the same session.
 
 ## 2. Working tree
 
 `WORKTREE uncommitted` or `unpushed`: show the files and commits listed and ask before anything else. `push`: only when the state is `unpushed` (everything committed), run `git push origin main` in the worktree path, never `git add`, then go on. `continue`: sync without that work. `abort`: stop, nothing done. `absent` or `clean`: say nothing.
 
-## 3. Context
+## 3. What's new
 
-Show the `CHANGELOG` block with the two versions as context, no question yet. `ITEMS 0`: say the instance is up to date at `<upstream>` and stop, no memory row.
+Open with the two versions, then "This update brings:" and a numbered list drawn from the `CHANGELOG` block: one plain line per change the owner will notice (a new command, a question the sync no longer asks, a fixed bug), in the owner's language, newest version first, at most seven lines, no file lists, no internal names where a plain word works. Migration steps the plan already covers (running the sync, the plugin update) stay out. No question yet.
+
+`AUTOUPDATE off`: ask once "Turn on auto-update for the Maestro plugin? Claude Code would then update it at every start."; yes: `"$SYNC" autoupdate`; no: go on. `AUTOUPDATE on`: say nothing about it, even when an item's diff recommends it.
+
+`ITEMS 0`: say the instance is up to date at `<upstream>` and stop, no memory row.
 
 ## 4. One question per kind
 

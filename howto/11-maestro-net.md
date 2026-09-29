@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.28.1
+maestro_version: v2026.09.29.1
 tags: [howto, maestro-net, cross-instance, registry, skill, plugin, marketplace, isolation, orchestrator]
 description: "How several Maestro instances talk to each other: the verbs `recap` and `ask`, a satellite's `request` to its mother, the `~/.claude/maestro-instances.yaml` registry and its `satellites:` block, installing `maestro-net` from the Maestro Claude Code plugin, and how a failure degrades explicitly. Reference for maestro-net."
 ---
@@ -38,7 +38,7 @@ claude plugin marketplace update maestro
 claude plugin update maestro@maestro
 ```
 
-`/maestro:maestro-sync` offers the same two commands when it finds the loaded plugin behind the template (`maestro-sync update-plugin`).
+`/maestro:maestro-sync` asks to turn auto-update on when it is off (`maestro-sync autoupdate`), and offers the two commands when it finds the loaded plugin behind the template (`maestro-sync update-plugin`).
 
 From any session, the skill runs as `/maestro:maestro-net` (the `<plugin>:<skill>` form every plugin skill uses), and the Bash tool can call the `maestro-net` command directly, because the plugin puts its `bin/` on the Bash tool's `PATH` while it's enabled:
 

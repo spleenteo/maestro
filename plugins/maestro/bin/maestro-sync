@@ -70,6 +70,11 @@ command never asks anything.
                     items restored)` to the log. E_ITEM on an unknown stamp, a
                     set lacking a file it should hold, or a manifest path
                     outside the instance, with nothing touched.
+    autoupdate      turns on auto-update for the maestro marketplace:
+                    "autoUpdate": true on its entry under
+                    extraKnownMarketplaces in ~/.claude/settings.json (or
+                    $CLAUDE_CONFIG_DIR/settings.json), every other key kept.
+                    `plan` reports the setting as AUTOUPDATE on|off.
     update-plugin   runs `claude plugin marketplace update maestro` then
                     `claude plugin update maestro@maestro`, the way out of a
                     plugin behind upstream; the new plugin loads at the next
@@ -494,6 +499,57 @@ def plugin_current(mirror: Path, version: str) -> bool:
     r = subprocess.run(["git", "diff", "--quiet", version, "origin/main", "--", *PLUGIN_PATHS],
                        cwd=mirror, capture_output=True)
     return r.returncode == 0
+
+
+def claude_config_dir() -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"))
+
+
+def read_json_file(path: Path) -> Optional[dict]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def autoupdate_on() -> bool:
+    """True when Claude Code auto-updates the maestro marketplace, as the
+    user settings or the known marketplaces file record it."""
+    marketplace = PLUGIN_ID.split("@", 1)[1]
+    config = claude_config_dir()
+    settings = read_json_file(config / "settings.json") or {}
+    entry = (settings.get("extraKnownMarketplaces") or {}).get(marketplace) or {}
+    known = (read_json_file(config / "plugins" / "known_marketplaces.json") or {}).get(marketplace) or {}
+    return entry.get("autoUpdate") is True or known.get("autoUpdate") is True
+
+
+def cmd_autoupdate(args) -> int:
+    marketplace = PLUGIN_ID.split("@", 1)[1]
+    config = claude_config_dir()
+    path = config / "settings.json"
+    settings = read_json_file(path) if path.exists() else {}
+    if settings is None:
+        raise SyncError(E_PLUGIN, f"{path} isn't a readable JSON object: set autoUpdate by hand.")
+    markets = settings.setdefault("extraKnownMarketplaces", {})
+    entry = markets.get(marketplace)
+    if not isinstance(entry, dict) or "source" not in entry:
+        known = (read_json_file(config / "plugins" / "known_marketplaces.json") or {}).get(marketplace) or {}
+        if "source" not in known:
+            raise SyncError(E_PLUGIN, f"the {marketplace} marketplace isn't known to Claude Code: "
+                                      "add it with `claude plugin marketplace add spleenteo/maestro`.")
+        entry = {"source": known["source"]}
+    if entry.get("autoUpdate") is True:
+        print(f"auto-update already on for {marketplace}")
+        return OK
+    entry["autoUpdate"] = True
+    markets[marketplace] = entry
+    try:
+        write_json_atomic(path, settings)
+    except OSError as exc:
+        raise SyncError(E_PLUGIN, f"cannot write {path}: {exc}")
+    print(f"auto-update on for {marketplace} in {path}")
+    return OK
 
 
 def cmd_update_plugin(args) -> int:
@@ -1034,6 +1090,7 @@ def build_plan(instance: Path, mirror: Path, mirror_head: str, plugin_sha: str, 
         "versions": {"floor": floor, "upstream": upstream},
         "worktree": tree,
         "changelog": changelog_slice(mirror, floor, upstream),
+        "autoupdate": autoupdate_on(),
         "warnings": warnings,
         "items": items,
     }
@@ -1068,6 +1125,7 @@ def print_summary(plan: dict, plan_file: Path) -> None:
     if plan["changelog"]:
         print("CHANGELOG")
         print(plan["changelog"])
+    print(f"AUTOUPDATE {'on' if plan['autoupdate'] else 'off'}")
     print(f"ITEMS {len(plan['items'])}")
     for item in plan["items"]:
         print(item_line(item))
@@ -2056,6 +2114,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--instance", help="instance root (default: the current directory)")
     sp.set_defaults(func=cmd_rollback)
 
+    sp = sub.add_parser("autoupdate", help="Turn on auto-update for the maestro marketplace")
+    sp.set_defaults(func=cmd_autoupdate)
+
     sp = sub.add_parser("update-plugin", help="Update the marketplace and the installed Maestro plugin")
     sp.set_defaults(func=cmd_update_plugin)
 
@@ -2070,7 +2131,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if not args.verb:
         parser.print_usage(sys.stderr)
-        print("maestro-sync: a verb is required (plan, apply, note, rollback, update-plugin, backups)",
+        print("maestro-sync: a verb is required (plan, apply, note, rollback, autoupdate, update-plugin, backups)",
               file=sys.stderr)
         return E_USAGE
     try:

@@ -12,6 +12,7 @@ One line per version; the full entry below carries the reasons and the migration
 
 | Version | Theme |
 |---|---|
+| v2026.09.29.1 | The sync opens with a numbered list of what's new, and asks about auto-update only when it is off |
 | v2026.09.28.3 | `maestro-sync` asks for a plugin update only when the plugin changed, and runs the update itself |
 | v2026.09.28.2 | `### Task creation thresholds` is a heading again in `CLAUDE.md`; a test catches references to missing headings |
 | v2026.09.28.1 | The project review: `maestro-sync` becomes a command with backup sets and rollback, an update notice at session start, `CLAUDE.md` at a third of its size, the register rules in one place, English everywhere, the README as the guide, MIT license |
@@ -37,6 +38,26 @@ One line per version; the full entry below carries the reasons and the migration
 | v2026.04.30.2 | Three patterns promoted from a personal instance into the template |
 | v2026.04.30.1 | Available apps moves from `CLAUDE.md` into `preferences.md`; the distribution rule |
 | v2026.04.29.1 | Initial snapshot for changelog tracking |
+
+---
+
+## v2026.09.29.1 — 2026-09-29
+
+**Theme**: a sync that tells you what changed and stops asking what is already settled. After the auto-update guide landed in `howto/11`, every sync proposed turning auto-update on, even on machines where it already was.
+
+### Added
+
+- **What's new, first**: `/maestro:maestro-sync` opens with the two versions and a numbered list of the changes you will notice, drawn from the `CHANGELOG` slice, in plain words and in your language.
+- **`maestro-sync autoupdate`**: sets `"autoUpdate": true` on the `maestro` marketplace in `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`), keeping every other key.
+
+### Changed
+
+- **`maestro-sync plan`** reports `AUTOUPDATE on|off`, read from the user settings and from Claude Code's list of known marketplaces. The skill asks about auto-update only when it is off, once per sync, and runs `autoupdate` on a yes.
+
+### Migration
+
+1. **Update the plugin** (automatic with auto-update on; otherwise `claude plugin marketplace update maestro`, then `claude plugin update maestro@maestro`) and restart Claude Code.
+2. **Run `/maestro:maestro-sync`**: `howto/05-backup-and-sync.md` and `howto/11-maestro-net.md` arrive as diffs.
 
 ---
 
