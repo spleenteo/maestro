@@ -20,12 +20,25 @@ claude plugin marketplace add spleenteo/maestro
 claude plugin install maestro@maestro
 ```
 
-`claude plugin install` defaults to user scope, which is what this plugin wants: installed once, reachable from every session on the machine regardless of which folder it opens in. Auto-update is off, and stays off without any setting on the marketplace entry: Claude Code enables auto-update by default only for `claude-plugins-official` and the other Anthropic-run marketplaces, and leaves it disabled by default for a third-party marketplace like this one. A new version published upstream sits there until asked for, in two steps: the marketplace listing and the installed plugin update separately, so refresh what the marketplace knows about before updating to it:
+`claude plugin install` defaults to user scope, which is what this plugin wants: installed once, reachable from every session on the machine regardless of which folder it opens in.
+
+Turn on auto-update for the marketplace. Claude Code enables it by default only for `claude-plugins-official` and the other Anthropic-run marketplaces; for a third-party marketplace like this one it stays off, and a new version sits upstream until asked for. Add `"autoUpdate": true` to the `maestro` entry under `extraKnownMarketplaces` in `~/.claude/settings.json`:
+
+```json
+"maestro": {
+  "source": { "source": "github", "repo": "spleenteo/maestro" },
+  "autoUpdate": true
+}
+```
+
+At every start Claude Code then pulls the marketplace from GitHub and, when `main` has moved, installs the plugin at the new commit. The plugin's version is that commit: `plugin.json` declares no `version`, so any push to `main` counts as a new one. Without auto-update, the update is two commands, the marketplace listing first and the plugin second, then a restart:
 
 ```bash
 claude plugin marketplace update maestro
 claude plugin update maestro@maestro
 ```
+
+`/maestro:maestro-sync` offers the same two commands when it finds the loaded plugin behind the template (`maestro-sync update-plugin`).
 
 From any session, the skill runs as `/maestro:maestro-net` (the `<plugin>:<skill>` form every plugin skill uses), and the Bash tool can call the `maestro-net` command directly, because the plugin puts its `bin/` on the Bash tool's `PATH` while it's enabled:
 

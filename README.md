@@ -79,7 +79,7 @@ claude plugin marketplace add spleenteo/maestro
 claude plugin install maestro@maestro
 ```
 
-The plugin installs at user scope with auto-update off. Then, from any folder:
+The plugin installs at user scope with auto-update off, as for every third-party marketplace. To have it update at every start of Claude Code, add `"autoUpdate": true` to the `maestro` entry under `extraKnownMarketplaces` in `~/.claude/settings.json` ([howto/11](howto/11-maestro-net.md#install)). Then, from any folder:
 
 ```
 /maestro:new-instance
