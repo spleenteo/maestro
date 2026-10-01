@@ -12,6 +12,7 @@ One line per version; the full entry below carries the reasons and the migration
 
 | Version | Theme |
 |---|---|
+| v2026.10.01.2 | A satellite session knows when to write a memory, and two plugin hooks remind it: a short closing message after some work, an hour of work with no memory in its scope |
 | v2026.10.01.1 | The librarian searches by meaning first, tells archived from deprecated, renames with a link sweep and logs every write; the `archive` skill closes a vault folder; HR converges a custom agent onto the upstream one |
 | v2026.09.29.1 | The sync opens with a numbered list of what's new, and asks about auto-update only when it is off |
 | v2026.09.28.3 | `maestro-sync` asks for a plugin update only when the plugin changed, and runs the update itself |
@@ -39,6 +40,32 @@ One line per version; the full entry below carries the reasons and the migration
 | v2026.04.30.2 | Three patterns promoted from a personal instance into the template |
 | v2026.04.30.1 | Available apps moves from `CLAUDE.md` into `preferences.md`; the distribution rule |
 | v2026.04.29.1 | Initial snapshot for changelog tracking |
+
+---
+
+## v2026.10.01.2 — 2026-10-01
+
+**Theme**: satellites that remember what they did. A satellite session worked for hours, shipped several things that mattered, and left no memory in its scope. Its session-start context said how to write a memory but only pointed to the mother's `CLAUDE.md` for when, and a satellite never loads that file. A satellite need not be a git repo, so the reminders cannot hang on push or merge: they hang on time and on how the owner closes an exchange.
+
+### Added
+
+- **Two nudges in the plugin** (`plugins/maestro/hooks/hooks.json`, `satellite-hook`), active only in a satellite session:
+  - `UserPromptSubmit`: a message of at most four words opening with a closing word ("ok", "perfetto", "grazie", "funziona", "thanks", "next"), after at least 10 minutes of work, adds one line asking whether the last exchange deserves a memory. At most once every 10 minutes of work.
+  - `Stop`: after 60 minutes of work, the hook asks the mother's `bin/mem` for the highest row id in the scope. A new row resets the count; no new row blocks the end of the turn once, asking to save the outcome or to say why nothing needs saving. It never blocks twice in a row, and a failing `bin/mem` never blocks.
+  - Work time counts each turn whole and the owner's pause before the next message only when it lasts 15 minutes or less, so a session left open overnight gains nothing. The count survives compaction; `/clear` starts a new one.
+  - The hooks create the moment; what to save stays with the session.
+
+### Changed
+
+- **The satellite context says when to write**: the first paragraph of `### Writing to the log`, read from the mother's `CLAUDE.md` at every session start, the rule that a memory records an outcome and never every step, and examples for the project type (`development`, `ux`, `consulting`).
+- **`vault-guard` becomes `satellite-guard`**, the one shell guard in front of the PreToolUse, UserPromptSubmit and Stop hooks: outside a satellite it exits without starting Python.
+- **`howto/12-satellites.md`** describes the criterion and the two nudges.
+
+### Migration
+
+1. **Update the plugin**: `claude plugin update maestro@maestro` (automatic when the marketplace has auto-update on).
+2. **Restart the open satellite sessions**: hooks load at startup, so `/clear` is not enough.
+3. **Run `/maestro:maestro-sync`** in the instances for `howto/12-satellites.md`. Nothing else in an instance changes, and the mother's `CLAUDE.md` already carries the section the hook reads.
 
 ---
 
