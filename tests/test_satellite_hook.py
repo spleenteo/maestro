@@ -190,6 +190,24 @@ class TestSessionStart(HookCase):
         self.assertNotIn("maestro-net request", ctx)
         self.assertIn("/maestro:listen", ctx)
 
+    def test_memory_criterion_comes_from_the_mother_with_type_examples(self):
+        self.write_registry()
+        self.add_satellite_row()
+        (self.mother / "CLAUDE.md").write_text(
+            "## Memory\n\n### Writing to the log\n\nWrite when the moon is full.\n"
+            "Second line of the same paragraph.\n\nNot this paragraph.\n")
+        ctx = self.context(self.session_start(self.repo))
+        self.assertIn("When to write: Write when the moon is full. Second line of the same paragraph.", ctx)
+        self.assertNotIn("Not this paragraph", ctx)
+        self.assertIn("a merge or push to main", ctx)
+
+    def test_memory_criterion_falls_back_without_the_section(self):
+        self.write_registry()
+        self.add_satellite_row()
+        (self.mother / "CLAUDE.md").write_text("## Memory\n\nNothing here.\n")
+        ctx = self.context(self.session_start(self.repo))
+        self.assertIn("When to write: Write proactively, without being asked", ctx)
+
     def test_identity_extract_keeps_a_fenced_register_block(self):
         self.write_registry()
         self.add_satellite_row()

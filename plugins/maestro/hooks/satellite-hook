@@ -65,6 +65,22 @@ HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 UNDERLINE_RE = re.compile(r"^ {0,3}(?:-+|=+)[ \t]*$")
 
+# When to write a memory. The mother's CLAUDE.md is the source; the fallback
+# covers a mother whose CLAUDE.md lacks the section.
+LOG_HEADING = "### Writing to the log"
+LOG_FALLBACK = (
+    "Write proactively, without being asked, when you detect: completed work (a task finished, "
+    "a feature shipped, a fix, a configuration) → `memory`; the owner telling you something happened "
+    "(a call, a decision, a purchase) → `memory`; a closing signal (\"ok\", \"perfect\", \"thanks\", "
+    "\"next topic\") → check whether the last exchange deserves a `memory`; an idea (\"we could\", "
+    "\"someday\") → `idea`. In doubt, ask briefly rather than pollute the log or miss an entry.")
+TYPE_EXAMPLES = {
+    "development": "a merge or push to main, a deploy, an infrastructure change (DNS, domains, services), "
+                   "a technical decision with its reason",
+    "ux": "a design decision, a handoff delivered, a test validated",
+    "consulting": "a client decision, a deliverable sent, a change of scope",
+}
+
 
 def marker_path(project_dir: str) -> Path | None:
     """Marker for a project; the name escapes `%` and `/` like vault-guard does."""
@@ -128,6 +144,25 @@ def identity_extract(mother: Path) -> str:
     return "\n".join(kept).strip()
 
 
+def log_criterion(mother: Path) -> str:
+    """The first paragraph under `### Writing to the log` in the mother's CLAUDE.md, or the fallback."""
+    try:
+        lines = (mother / "CLAUDE.md").read_text(encoding="utf-8", errors="replace").splitlines()
+        start = [line.strip() for line in lines].index(LOG_HEADING) + 1
+    except (OSError, ValueError):
+        return LOG_FALLBACK
+    para = []
+    for line in lines[start:]:
+        if line.startswith("#"):
+            break
+        if not line.strip():
+            if para:
+                break
+            continue
+        para.append(line.strip())
+    return " ".join(para) or LOG_FALLBACK
+
+
 def translation_enabled(identity: str) -> bool:
     """True when the identity extract's Writing register block sets translation.enabled: true.
 
@@ -179,6 +214,13 @@ def context_text(scope: str, mother_name: str, mother: Path, row: dict, identity
     else:
         lines.append("- Warning: the session environment couldn't be set, so `MEM_SCOPE` is not exported: "
                      "the prefix is the only thing keeping memory in this scope.")
+    lines += [
+        f"- When to write: {log_criterion(mother)}",
+        "- A memory records an outcome, never every step toward it.",
+    ]
+    examples = TYPE_EXAMPLES.get(row.get("project_type") or "")
+    if examples:
+        lines.append(f"- In a {row['project_type']} project, outcomes worth a memory include {examples}.")
     lines += [
         f"- Announce every write in one line. Full rules: `{mother / 'CLAUDE.md'}`, section `## Memory`.",
         "- Never run `bin/mem embed` or the warm task channel garbage collector: they belong to the mother.",
