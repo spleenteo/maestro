@@ -6,12 +6,20 @@ session-start   Reads the hook input on stdin. When the session's folder is
                 saying which version is available (the update check below).
                 When the folder is inside a repo listed under `satellites:`
                 in the Maestro registry, exports MEM_SCOPE through
-                CLAUDE_ENV_FILE, writes a marker for the vault guard, and
+                CLAUDE_ENV_FILE, writes a marker for satellite-guard, and
                 prints the satellite's role, the mother's identity extract
                 and the memory rules as additional context. Anywhere else it
                 prints nothing. One JSON line per run at most.
-pre-tool-use M  Called by vault-guard with the marker M: allows Read, Write,
-                Edit, Grep and Glob on paths under the satellite's vault folder.
+pre-tool-use M  Called by satellite-guard with the marker M: allows Read,
+                Write, Edit, Grep and Glob on paths under the satellite's
+                vault folder.
+user-prompt-submit M
+                Called by satellite-guard: counts active time and, on a short
+                closing prompt ("ok", "grazie") after some work, adds one line
+                asking whether the last exchange deserves a memory.
+stop M          Called by satellite-guard at the end of every turn: after an
+                hour of active time with no new row in the satellite's scope,
+                blocks the stop once and asks for a memory.
 update-fetch    The detached fetcher the update check spawns: reads the
                 template's `.version` from MAESTRO_VERSION_URL (default: the
                 raw GitHub file) and rewrites the update cache. Exits 0 and
@@ -49,7 +57,7 @@ PLUGIN_ROOT = HERE.parent
 sys.dont_write_bytecode = True  # the plugin folder is a checkout: no __pycache__/
 sys.path.insert(0, str(PLUGIN_ROOT / "bin"))
 from maestro_registry import NetError, inside, is_instance_dir, parse_registry, registry_path  # noqa: E402
-from maestro_satellites import MIN_SCHEMA_API, match_satellite, schema_api  # noqa: E402
+from maestro_satellites import MIN_SCHEMA_API, clean_env, match_satellite, schema_api  # noqa: E402
 from maestro_satellites import satellite_row as mother_row  # noqa: E402
 from maestro_versions import is_newer, read_file_version, update_cache_path  # noqa: E402
 
@@ -64,6 +72,21 @@ IDENTITY_RE = re.compile(
 HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 UNDERLINE_RE = re.compile(r"^ {0,3}(?:-+|=+)[ \t]*$")
+
+# The nudges. Active time grows at every stop by the length of the turn (the
+# model working, capped at TURN_CAP) and at every prompt by the owner's pause
+# since the last stop, only when that pause is at most IDLE_CAP: a longer one
+# means the session sat idle and adds nothing.
+IDLE_CAP = 900          # seconds: an owner's pause longer than this counts as zero
+TURN_CAP = 3 * 3600     # seconds: a turn longer than this counts as this
+CLOSING_AFTER = 600     # active seconds before a closing word gets a nudge
+NUDGE_AFTER = 3600      # active seconds with no new row before Stop blocks
+STATE_TTL = 7 * 86400   # session state files older than this are pruned
+CLOSING_WORDS = 4       # a closing prompt is a few words
+CLOSING_RE = re.compile(
+    r"(ok(ay)?|perfett[oaie]|perfect|grazie|thanks|thank you|funziona|it works|works|ottimo|great|"
+    r"top|va bene|fatto|done|next|prossimo|avanti)\b", re.I)
+SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 # When to write a memory. The mother's CLAUDE.md is the source; the fallback
 # covers a mother whose CLAUDE.md lacks the section.
@@ -83,7 +106,7 @@ TYPE_EXAMPLES = {
 
 
 def marker_path(project_dir: str) -> Path | None:
-    """Marker for a project; the name escapes `%` and `/` like vault-guard does."""
+    """Marker for a project; the name escapes `%` and `/` like satellite-guard does."""
     data = os.environ.get("CLAUDE_PLUGIN_DATA")
     if not data or not project_dir:
         return None
@@ -406,18 +429,19 @@ def export_scope(scope: str) -> bool:
     return True
 
 
-def write_marker(marker: Path | None, scope: str, vault: str | None) -> bool:
+def write_marker(marker: Path | None, scope: str, vault: str | None, mem: Path) -> bool:
     if not marker:
         return False
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(json.dumps({"scope": scope, "vault": vault}), encoding="utf-8")
+        marker.write_text(json.dumps({"scope": scope, "vault": vault, "mem": str(mem)}), encoding="utf-8")
     except OSError:
         return False
     return True
 
 
-def start_satellite(scope: str, entry: dict, registry: dict, marker: Path | None) -> str:
+def start_satellite(scope: str, entry: dict, registry: dict, marker: Path | None,
+                    session_id: str | None) -> str:
     """The satellite's context text, or the one line saying why satellite mode is off."""
     mother_name = entry["mother"]
     mother_entry = registry["instances"].get(mother_name)
@@ -435,13 +459,15 @@ def start_satellite(scope: str, entry: dict, registry: dict, marker: Path | None
         return (f"Maestro: this repo is satellite `{scope}` of `{mother_name}`, but {exc}. "
                 "Satellite mode is off.")
     identity = identity_extract(mother)
-    vault_open = write_marker(marker, scope, row.get("vault_folder"))
+    mem = mother / "bin" / "mem"
+    vault_open = write_marker(marker, scope, row.get("vault_folder"), mem)
+    init_state(session_id, mem, scope)
     exported = export_scope(scope)
     can_request = "request" in (mother_entry.get("accepts") or [])
     return context_text(scope, mother_name, mother, row, identity, exported, vault_open, can_request)
 
 
-def satellite_context(folder: str, marker: Path | None) -> str | None:
+def satellite_context(folder: str, marker: Path | None, session_id: str | None = None) -> str | None:
     """The satellite context for `folder`; None anywhere outside a registered satellite."""
     reg_file = registry_path()
     try:
@@ -458,7 +484,7 @@ def satellite_context(folder: str, marker: Path | None) -> str | None:
     if scope is None:
         return None
     try:
-        return start_satellite(scope, entry, registry, marker)
+        return start_satellite(scope, entry, registry, marker, session_id)
     except Exception as exc:
         drop_marker(marker)
         return (f"Maestro: satellite `{scope}` failed at session start "
@@ -481,10 +507,154 @@ def session_start() -> int:
         notice = update_check(folder)
     except Exception:
         notice = None
-    context = satellite_context(folder, marker)
+    context = satellite_context(folder, marker, data.get("session_id"))
     parts = [part for part in (notice, context) if part]
     if parts:
         emit_context("\n\n".join(parts))
+    return 0
+
+
+# --------------------------------------------------------------------------
+# the nudges
+# --------------------------------------------------------------------------
+
+def now_seconds() -> int:
+    return int(datetime.now(timezone.utc).timestamp())
+
+
+def state_path(session_id) -> Path | None:
+    """Per-session state; None without plugin data or a plain session id."""
+    data = os.environ.get("CLAUDE_PLUGIN_DATA")
+    if not data or not isinstance(session_id, str) or not SESSION_ID_RE.fullmatch(session_id):
+        return None
+    return Path(data) / "satellites" / "state" / f"{session_id}.json"
+
+
+def read_state(path: Path) -> dict | None:
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return state if isinstance(state, dict) else None
+
+
+def save_state(path: Path, state: dict) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def top_row_id(mem: str | Path, scope: str) -> int | None:
+    """The highest row id in the scope (0 when empty), through bin/mem; None on any failure."""
+    env = clean_env()
+    env["MEM_SCOPE"] = scope
+    try:
+        r = subprocess.run([str(mem), "search", "--limit", "0", "--json"], capture_output=True,
+                           text=True, env=env, timeout=10, stdin=subprocess.DEVNULL)
+        rows = json.loads(r.stdout) if r.returncode == 0 else None
+        return max((int(row["id"]) for row in rows), default=0) if isinstance(rows, list) else None
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError):
+        return None
+
+
+def init_state(session_id, mem: Path, scope: str) -> None:
+    """Create the session's state on its first start only: compaction runs
+    the session start again with the same session id and must not reset the
+    clock (/clear gets a new id, and a fresh count). Prunes
+    stale state files of other sessions."""
+    path = state_path(session_id)
+    if not path:
+        return
+    try:
+        cutoff = now_seconds() - STATE_TTL
+        for old in path.parent.glob("*.json"):
+            if old.stat().st_mtime < cutoff:
+                old.unlink()
+    except OSError:
+        pass
+    if path.exists():
+        return
+    save_state(path, {"last": now_seconds(), "active": 0, "closing_at": 0,
+                      "baseline": top_row_id(mem, scope)})
+
+
+def load_turn(marker: str, event: str):
+    """(scope, mem, state path, state, hook input) with the active time ticked; None when anything is missing."""
+    try:
+        info = json.loads(Path(marker).read_text(encoding="utf-8"))
+        data = json.load(sys.stdin)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(info, dict) or not isinstance(data, dict):
+        return None
+    scope, mem, path = info.get("scope"), info.get("mem"), state_path(data.get("session_id"))
+    if not scope or not mem or not path:
+        return None
+    now = now_seconds()
+    state = read_state(path) or {"last": now, "active": 0, "closing_at": 0, "baseline": None}
+    try:
+        gap = max(0, now - int(state.get("last", now)))
+        if event == "stop":
+            gained = min(gap, TURN_CAP)
+        else:
+            gained = gap if gap <= IDLE_CAP else 0
+        state["active"] = int(state.get("active", 0)) + gained
+    except (TypeError, ValueError):
+        state["active"] = 0
+    state["last"] = now
+    return scope, mem, path, state, data
+
+
+def reset_clock(state: dict) -> None:
+    state["active"] = 0
+    state["closing_at"] = 0
+
+
+def user_prompt_submit(marker: str) -> int:
+    turn = load_turn(marker, "prompt")
+    if not turn:
+        return 0
+    scope, _mem, path, state, data = turn
+    prompt = data.get("prompt")
+    closing = (isinstance(prompt, str) and len(prompt.split()) <= CLOSING_WORDS
+               and CLOSING_RE.match(prompt.strip()) is not None)
+    nudge = closing and state["active"] - int(state.get("closing_at") or 0) >= CLOSING_AFTER
+    if nudge:
+        state["closing_at"] = state["active"]
+    save_state(path, state)
+    if nudge:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": (f"Maestro satellite `{scope}`: the owner's message reads as a closing "
+                                  "signal after some work. Check whether the last exchange produced an "
+                                  "outcome worth a memory in this scope, and save it before moving on."),
+        }}))
+    return 0
+
+
+def stop(marker: str) -> int:
+    turn = load_turn(marker, "stop")
+    if not turn:
+        return 0
+    scope, mem, path, state, data = turn
+    if data.get("stop_hook_active") or state["active"] < NUDGE_AFTER:
+        save_state(path, state)
+        return 0
+    top = top_row_id(mem, scope)
+    baseline = state.get("baseline")
+    block = top is not None and isinstance(baseline, int) and top <= baseline
+    if top is not None:
+        state["baseline"] = top
+    reset_clock(state)
+    save_state(path, state)
+    if block:
+        print(json.dumps({"decision": "block", "reason": (
+            f"Maestro satellite `{scope}`: about an hour of work and no new memory in this scope. "
+            "If that work produced an outcome worth keeping (a decision, a delivery, a shipped change), "
+            f"save it now with `MEM_SCOPE={scope} \"{mem}\" save …` and announce it; otherwise say in one "
+            "line why nothing needs saving. Then stop.")}))
     return 0
 
 
@@ -526,6 +696,10 @@ def main() -> int:
             return session_start()
         if mode == "pre-tool-use" and len(sys.argv) > 2:
             return pre_tool_use(sys.argv[2])
+        if mode == "user-prompt-submit" and len(sys.argv) > 2:
+            return user_prompt_submit(sys.argv[2])
+        if mode == "stop" and len(sys.argv) > 2:
+            return stop(sys.argv[2])
         if mode == "update-fetch":
             return update_fetch()
     except Exception:

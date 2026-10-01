@@ -1,4 +1,4 @@
-"""The plugin's satellite hooks: `hooks/satellite-hook` and `hooks/vault-guard`.
+"""The plugin's satellite hooks: `hooks/satellite-hook` and `hooks/satellite-guard`.
 
 Both run in every Claude Code session on the machine, so the tests pin two
 things: outside a satellite they do nothing (no output, no env write, no
@@ -23,7 +23,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 HOOKS = ROOT / "plugins" / "maestro" / "hooks"
 HOOK = HOOKS / "satellite-hook"
-GUARD = HOOKS / "vault-guard"
+GUARD = HOOKS / "satellite-guard"
+SESSION = "s1"
 BASE_PATH = "/usr/bin:/bin"
 
 PREFERENCES = """---
@@ -142,7 +143,8 @@ class HookCase(unittest.TestCase):
 
     def session_start(self, cwd, **extra):
         r = subprocess.run(["python3", str(HOOK), "session-start"],
-                           input=json.dumps({"cwd": str(cwd), "hook_event_name": "SessionStart"}),
+                           input=json.dumps({"cwd": str(cwd), "hook_event_name": "SessionStart",
+                                             "session_id": SESSION}),
                            capture_output=True, text=True, env=self.env(**extra), timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         return r
@@ -402,7 +404,7 @@ class TestVaultGuard(HookCase):
     def guard(self, target, path=BASE_PATH, tool="Read", **extra):
         key = "file_path" if tool == "Read" else "path"
         payload = {"tool_name": tool, "tool_input": {key: str(target), **extra}}
-        return subprocess.run(["sh", str(GUARD)],
+        return subprocess.run(["sh", str(GUARD), "pre-tool-use"],
                               input=json.dumps(payload),
                               capture_output=True, text=True, env=self.env(PATH=path), timeout=30)
 
@@ -428,6 +430,65 @@ class TestVaultGuard(HookCase):
             self.assertEqual((r.returncode, r.stdout), (0, ""), outside)
         r = self.guard(self.vault, tool="Glob", pattern="../../**")
         self.assertEqual(r.stdout, "")
+
+
+
+class TestNudges(HookCase):
+    """UserPromptSubmit and Stop, through the guard, with the session's active
+    time set by writing its state file."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_registry()
+        self.add_satellite_row()
+        self.session_start(self.repo)
+        self.state = self.plugin_data / "satellites" / "state" / f"{SESSION}.json"
+
+    def set_active(self, seconds):
+        state = json.loads(self.state.read_text())
+        state.update(active=seconds, last=int(datetime.now(timezone.utc).timestamp()))
+        self.state.write_text(json.dumps(state))
+
+    def turn(self, mode, **payload):
+        r = subprocess.run(["sh", str(GUARD), mode],
+                           input=json.dumps({"session_id": SESSION, **payload}),
+                           capture_output=True, text=True, env=self.env(), timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_closing_word_after_work_adds_context_and_a_long_prompt_does_not(self):
+        self.set_active(700)
+        self.assertEqual(self.turn("user-prompt-submit",
+                                   prompt="ok, now rewrite the hero section with the copy the client sent us this morning"), "")
+        out = json.loads(self.turn("user-prompt-submit", prompt="Perfetto, grazie!"))
+        self.assertIn("closing signal", out["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(self.turn("user-prompt-submit", prompt="ok"), "")
+
+    def test_stop_blocks_once_after_an_hour_without_a_memory(self):
+        self.set_active(3600)
+        out = json.loads(self.turn("stop"))
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("MEM_SCOPE=acme", out["reason"])
+        self.assertEqual(self.turn("stop"), "")
+
+    def test_stop_lets_go_when_a_memory_was_saved(self):
+        self.set_active(3600)
+        r = subprocess.run([str(self.mother / "bin" / "mem"), "save", "Hero shipped", "-t", "acme"],
+                           capture_output=True, text=True, env=self.env(MEM_SCOPE="acme"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.turn("stop"), "")
+        self.assertEqual(json.loads(self.state.read_text())["active"], 0)
+
+    def test_a_long_pause_before_a_prompt_adds_nothing(self):
+        state = json.loads(self.state.read_text())
+        state.update(active=3000, last=int(datetime.now(timezone.utc).timestamp()) - 7200)
+        self.state.write_text(json.dumps(state))
+        self.turn("user-prompt-submit", prompt="back to the form validation now")
+        self.assertEqual(json.loads(self.state.read_text())["active"], 3000)
+
+    def test_stop_never_blocks_a_stop_it_already_blocked(self):
+        self.set_active(3600)
+        self.assertEqual(self.turn("stop", stop_hook_active=True), "")
 
 
 if __name__ == "__main__":
