@@ -26,8 +26,9 @@ update-fetch    The detached fetcher the update check spawns: reads the
                 leaves the cache alone on any error.
 
 The update check compares the cached upstream version (MAESTRO_UPDATE_CACHE
-or ~/.claude/maestro-update-check.json) with the instance's CLAUDE.md
-`maestro_version`; when the cache is missing or older than
+or ~/.claude/maestro-update-check.json) with where the instance stands:
+`private/.version`, written by maestro-sync, or its CLAUDE.md
+`maestro_version` when newer or when the stamp is missing; when the cache is missing or older than
 MAESTRO_UPDATE_INTERVAL seconds (default 12 hours) it stamps `checked_at`
 and spawns the fetcher, without waiting. Outside an instance root it does
 nothing and spawns nothing.
@@ -59,7 +60,7 @@ sys.path.insert(0, str(PLUGIN_ROOT / "bin"))
 from maestro_registry import NetError, inside, is_instance_dir, parse_registry, registry_path  # noqa: E402
 from maestro_satellites import MIN_SCHEMA_API, clean_env, match_satellite, schema_api  # noqa: E402
 from maestro_satellites import satellite_row as mother_row  # noqa: E402
-from maestro_versions import is_newer, read_file_version, update_cache_path  # noqa: E402
+from maestro_versions import instance_version, is_newer, update_cache_path  # noqa: E402
 
 VERSION_URL = "https://raw.githubusercontent.com/spleenteo/maestro/main/.version"
 UPDATE_INTERVAL = 43200  # seconds: twice a day
@@ -376,7 +377,7 @@ def update_check(folder: str) -> str | None:
     notice = None
     if upstream:
         try:
-            local = read_file_version(root / "CLAUDE.md")
+            local = instance_version(root)
             if is_newer(upstream, local):
                 notice = (f"Maestro {upstream} is available (this instance is on {local}): "
                           "run /maestro:maestro-sync.")

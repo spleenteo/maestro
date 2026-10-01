@@ -35,6 +35,11 @@ MARKDOWN_GLOBS = ("CLAUDE.md", ".claude/skills/*/SKILL.md", ".claude/agents/*.md
 # The update cache the session-start hook reads and maestro-sync refreshes:
 # `{"upstream": "v…", "checked_at": "<UTC ISO>"}`, one file per user.
 UPDATE_CACHE_ENV = "MAESTRO_UPDATE_CACHE"
+
+# The version an instance was last synced to, one line: written by
+# maestro-sync and new-instance, read by the session-start update notice.
+# In private/, so the instance's repo never sees it change.
+INSTANCE_VERSION_FILE = "private/.version"
 DEFAULT_UPDATE_CACHE = "~/.claude/maestro-update-check.json"
 
 
@@ -120,6 +125,23 @@ def read_file_version(path: str | Path) -> str:
     uses, so the hook and maestro-sync agree on what an old file is."""
     _marked, version = read_marker(path)
     return version or BASELINE_VERSION
+
+
+def instance_version(root: str | Path) -> str:
+    """Where an instance stands: the newer of `private/.version` and the
+    `maestro_version` of its CLAUDE.md. A missing or malformed stamp falls
+    back to CLAUDE.md alone; raises OSError or ValueError like
+    read_file_version when CLAUDE.md is missing or malformed."""
+    root = Path(root)
+    local = read_file_version(root / "CLAUDE.md")
+    parse_version(local)
+    try:
+        stamp = (root / INSTANCE_VERSION_FILE).read_text(encoding="utf-8").strip()
+        if is_newer(stamp, local):
+            return stamp
+    except (OSError, ValueError):
+        pass
+    return local
 
 
 def update_cache_path() -> Path:

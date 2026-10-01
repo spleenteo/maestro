@@ -140,8 +140,8 @@ sys.dont_write_bytecode = True  # the plugin folder is a checkout: no __pycache_
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from maestro_registry import is_instance_dir  # noqa: E402
 from maestro_versions import (  # noqa: E402
-    BASELINE_VERSION, MARKDOWN_GLOBS, changelog_top_version, parse_version, read_marker,
-    update_cache_path)
+    BASELINE_VERSION, INSTANCE_VERSION_FILE, MARKDOWN_GLOBS, changelog_top_version, parse_version,
+    read_marker, update_cache_path)
 
 OK = 0
 E_USAGE = 2
@@ -1167,7 +1167,33 @@ def cmd_plan(args) -> int:
     else:
         print_summary(plan, plan_file)
     write_update_cache(plan["versions"].get("upstream"))
+    if not any(it["kind"] != "orphan" for it in plan["items"]):
+        write_instance_version(instance, plan["versions"].get("upstream"))
     return OK
+
+
+def read_instance_stamp(root: Path) -> Optional[str]:
+    """The raw content of `private/.version`, or None when it doesn't exist."""
+    try:
+        return (root / INSTANCE_VERSION_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def write_instance_version(root: Path, version: Optional[str]) -> None:
+    """Record in `private/.version` the version the instance was synced to,
+    the one the session-start notice compares with upstream. None removes
+    the file (a rollback to an instance that had none). A failure never
+    fails the sync: one stderr warning."""
+    path = root / INSTANCE_VERSION_FILE
+    try:
+        if version is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(version + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"maestro-sync: warning: cannot write {path}: {exc}", file=sys.stderr)
 
 
 def write_update_cache(upstream: Optional[str]) -> None:
@@ -1333,6 +1359,7 @@ def open_set(root: Path, plan: dict, selected: List[dict]) -> Tuple[Path, dict]:
             "from": plan["versions"].get("floor"), "to": plan["versions"].get("upstream"),
             "mirror_head": plan["mirror_head"], "created_at": utc_now().isoformat(),
             "db": SET_DB_PATH if has_db else None, "items": [],
+            "version_before": read_instance_stamp(root),
         }
     else:
         try:
@@ -1838,6 +1865,7 @@ def cmd_apply(args) -> int:
         prune_sets(root, set_dir_for(root, plan))
         if code in (OK, POSTPONED):
             write_update_cache(plan["versions"].get("upstream"))
+            write_instance_version(root, plan["versions"].get("upstream"))
         return code
     finally:
         release_lock(lock)
@@ -2007,6 +2035,8 @@ def run_rollback(root: Path, set_dir: Path, manifest: dict) -> int:
         print(f"DB restored {DB_FILE} from {set_dir / db}")
     else:
         print("DB none in this set")
+    if "version_before" in manifest:
+        write_instance_version(root, manifest["version_before"])
     stamp = str(manifest.get("stamp") or set_stamp(set_dir))
     append_log(root, f"{log_stamp()}  rollback {stamp} ({restored} items restored)")
     print(f"RESULT restored={restored} skipped={skipped}")

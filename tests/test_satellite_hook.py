@@ -365,6 +365,14 @@ class TestUpdateCheck(HookCase):
         self.assertEqual(self.context(r), f"Maestro {self.NEWER} is available "
                                           f"(this instance is on {self.LOCAL}): run /maestro:maestro-sync.")
 
+    def test_the_instance_stamp_decides_when_newer_than_claude_md(self):
+        self.write_cache(self.NEWER)
+        stamp = self.mother / "private" / ".version"
+        stamp.write_text(self.NEWER + "\n")
+        self.assertEqual(self.session_start(self.mother).stdout, "")
+        stamp.write_text("garbage\n")
+        self.assertIn(f"this instance is on {self.LOCAL}", self.context(self.session_start(self.mother)))
+
     def test_a_missing_cache_is_stamped_and_the_fetcher_writes_it_from_a_file_url(self):
         """The hook stamps `checked_at` alone (no upstream known yet) and
         spawns the fetcher detached. The fetcher is then run synchronously

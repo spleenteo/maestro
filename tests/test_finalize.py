@@ -189,6 +189,7 @@ class TestFinalize(unittest.TestCase):
         self.assertIsNone(scope)
 
         self.assertTrue((instance / "private" / "routines.yaml").exists())
+        self.assertEqual((instance / "private" / ".version").read_text(), (instance / ".version").read_text())
 
         for name in TEMPLATE_ROOT_FILES:
             self.assertFalse((instance / name).exists(), name)

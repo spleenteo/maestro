@@ -2106,6 +2106,16 @@ class TestRollback(SyncFixture):
         self.assertRegex(self.log_lines()[-1], LOG_LINE + re.escape(
             f"rollback {plan['stamp']} ({len(MARKED_PATHS)} items restored)") + "$")
 
+    def test_apply_records_the_instance_version_and_rollback_takes_it_back(self):
+        stamp = self.instance / "private" / ".version"
+        self.assertFalse(stamp.exists())
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--kind", "update").returncode, OK)
+        self.assertEqual(stamp.read_text(), plan["versions"]["upstream"] + "\n")
+        r = self.rollback(plan["stamp"])
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertFalse(stamp.exists())
+
     def test_items_are_restored_in_reverse_manifest_order(self):
         plan = self.plan_json()
         self.assertEqual(self.apply("--items", "u1,u2").returncode, OK)

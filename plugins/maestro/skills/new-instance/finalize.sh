@@ -7,7 +7,8 @@
 # folder. Runs the deterministic filesystem ops that don't need the LLM:
 #   1. Write private/preferences.md from collected answers.
 #   2. Copy memories.db.template → private/memories.db.
-#   3. Copy routines.example.yaml → private/routines.yaml.
+#   3. Copy routines.example.yaml → private/routines.yaml, and .version
+#      → private/.version when the clone has one.
 #   4. Insert the first memory log record, through the instance's own
 #      bin/mem save.
 #   5. Remove the three root templates.
@@ -238,6 +239,12 @@ echo "OK: private/memories.db initialized"
 
 cp routines.example.yaml private/routines.yaml
 echo "OK: private/routines.yaml initialized"
+
+# The version the instance starts at, for the session-start update notice.
+if [[ -f .version ]]; then
+  cp .version private/.version
+  echo "OK: private/.version recorded ($(cat private/.version))"
+fi
 
 # --- 4) First memory log -------------------------------------------------
 
