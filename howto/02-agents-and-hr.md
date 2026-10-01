@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.28.1
+maestro_version: v2026.10.01.1
 tags: [howto, agents, hr, roster, claude-code, orchestrator, delegation]
 description: How to hire, use, and retire craft agents via the HR agent. Agents are subagents with their own identity and isolated context, registered in `.claude/roster.yaml`.
 ---
@@ -128,6 +128,17 @@ Tell the orchestrator you want to retire an agent. It invokes HR; HR:
 4. Reports back.
 
 **Retirement never deletes.** History is preserved. You can un-retire by moving files and roster entries back.
+
+## Converging a custom agent onto the upstream one
+
+An agent you wrote yourself, or copied from another instance, carries no `origin: maestro` marker, so `/maestro:maestro-sync` leaves it alone and upstream improvements never reach it. When Maestro ships an agent for the same role, the CHANGELOG migration says so, and HR converges the two on your yes:
+
+1. HR compares the files and reports what your version has that upstream lacks: values that move into `private/preferences.md` (paths, off-limits folders), behaviour upstream already covers, behaviour it lacks. You decide on the last group.
+2. Your file moves to `.claude/agents/.retired/`, the upstream file takes its place unchanged.
+3. The roster entry keeps your alias and `hired_at`, takes the upstream description and version, and gains `converged_from` and `converged_at`.
+4. Data the agent kept (a log, a registry) is renamed to the path the upstream file uses, with its history.
+
+From then on the agent carries the marker and every sync updates it. Customize it through preferences, or extend its `tools:` line, which the sync ignores.
 
 ## Common patterns
 

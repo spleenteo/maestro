@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.28.1
+maestro_version: v2026.10.01.1
 tags: [howto, index, orchestrator, documentation]
 description: Index of how-to guides for working with your orchestrator beyond the first setup. Read these when you want to extend or customize deeper than the default behavior.
 ---
@@ -23,5 +23,6 @@ Practical guides for extending and customizing your orchestrator after setup. Re
 | 10 | [Writing register](10-writing-register.md) | The seven prose prohibitions, the domains and their tones, the per-instance values, the post-pass and `bin/register-check` |
 | 11 | [maestro-net](11-maestro-net.md) | The channel between several instances: `recap`, `ask`, the machine registry |
 | 12 | [Satellites](12-satellites.md) | Attach a project repo to an instance: the `satellite` skill, session hooks, vault folder, removal |
+| 13 | [Archive](13-archive.md) | Close a vault folder: the interview, the closing document, the archive root and its index, how the librarian reads the archive |
 
 Each guide stands on its own. Frontmatter on each file includes tags and a one-line description, consistent with the orchestrator's own frontmatter discipline.

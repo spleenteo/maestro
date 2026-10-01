@@ -101,10 +101,10 @@ Files distributed by Maestro carry `origin: maestro` and a `maestro_version` in 
 
 In every instance:
 
-- **Agents**, in `.claude/agents/` and `.claude/roster.yaml`: `librarian` (vault research and frontmatter hygiene), `scheduler` (tasks, events and routines from the declared channels), `steward` (a weekly backlog review that proposes closures, groupings and moves, and never writes), `hr` (searches, proposes, hires and retires the others on your approval). You talk to them through the orchestrator, by alias.
-- **Skills**, in `.claude/skills/`: `logbook` (the daily note), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (seven prose prohibitions, three domains with a tone each, your voice and sign-off, and a post-pass on every document or message before it goes out), `translate` (two versions of a draft in your target language, where preferences enable it).
+- **Agents**, in `.claude/agents/` and `.claude/roster.yaml`: `librarian` (vault research by meaning and by keyword, frontmatter hygiene, the analysis behind an archiving), `scheduler` (tasks, events and routines from the declared channels), `steward` (a weekly backlog review that proposes closures, groupings and moves, and never writes), `hr` (searches, proposes, hires and retires the others on your approval). You talk to them through the orchestrator, by alias.
+- **Skills**, in `.claude/skills/`: `logbook` (the daily note), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (seven prose prohibitions, three domains with a tone each, your voice and sign-off, and a post-pass on every document or message before it goes out), `translate` (two versions of a draft in your target language, where preferences enable it), `archive` (closes a vault folder: asks why, writes a closing document, moves the folder into one archive where it stays searchable).
 - **Tools**, in `bin/`: `mem` and `mem-vec` (the memory CLI and its semantic layer), `session-digest` (your messages from the day's parallel sessions), `register-check` (the mechanical check of the writing register).
-- `CLAUDE.md`, the orchestrator's rules; `howto/`, twelve guides.
+- `CLAUDE.md`, the orchestrator's rules; `howto/`, thirteen guides.
 
 In the plugin, once per machine:
 

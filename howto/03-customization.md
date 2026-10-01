@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.28.1
+maestro_version: v2026.10.01.1
 tags: [howto, customization, preferences, identity, orchestrator]
 description: How to customize your orchestrator — identity, owner profile, context, file territories, integrations, communication style. All through `private/preferences.md`.
 ---
@@ -104,6 +104,15 @@ Where the orchestrator is authorized to write. The library is organized around a
 ```
 
 `vault_path` is the single source of truth for the vault location: every other file (CLAUDE.md, agents, skills) references the key, never the value. Subfolder keys default to subfolders of `vault_path` but can point anywhere if you want a non-standard layout. Remove a subfolder line to disable that territory.
+
+Two optional keys complete the block:
+
+```markdown
+- archive_path: /Users/you/vault/Work/_Archive
+- off_limits: [Journal/, Private/]
+```
+
+`archive_path` is the archive root the `archive` skill moves closed folders into; without the line it is `<vault_path>/_Archive` (see [Archive](13-archive.md)). `off_limits` lists vault folders, relative to `vault_path`, that no agent reads or writes: the orchestrator passes them to the librarian, which excludes them from every search. The semantic index reads its own exclusions, so list the same folders in `<vault_path>/.mem-ignore` (see [Semantic memory](09-semantic-memory.md)).
 
 **Internal vs external.** At setup time you chose between three modes:
 

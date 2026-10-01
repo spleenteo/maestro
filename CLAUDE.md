@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.28.2
+maestro_version: v2026.10.01.1
 ---
 
 # Orchestrator
@@ -48,7 +48,7 @@ Load the `writing-register` skill before drafting a text for someone other than 
 - `workspace/handoff/`: intermediate artifacts of a task spanning several apps
 - `.claude/agents/`: craft agents; `.claude/skills/`: hub skills; `.claude/roster.yaml`: the registry of active agents, source of truth for delegation
 
-Hub skills: `logbook` (the daily note in `logbook_path`), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator: `/guide`, "I'm lost", "how do I"; `/help` is a Claude Code built-in), `writing-register`, `translate` (only where preferences enable translation). `/maestro:new-instance` and `/maestro:maestro-sync` come from the Maestro plugin.
+Hub skills: `logbook` (the daily note in `logbook_path`), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator: `/guide`, "I'm lost", "how do I"; `/help` is a Claude Code built-in), `writing-register`, `translate` (only where preferences enable translation), `archive` (closes a vault folder: interview on why, closing document, move into the archive root). `/maestro:new-instance` and `/maestro:maestro-sync` come from the Maestro plugin.
 
 ## Delegation and roster
 
@@ -74,7 +74,7 @@ If the owner insists, proceed.
 
 ## File territories
 
-The owner's library is a single vault root, `vault_path`, with three subfolder keys: `logbook_path` (daily notes, written by the `logbook` skill), `til_path`, `documents_path`. The four are declared once in preferences; everywhere else reference the keys, never their values. A key not declared means no write there; a write outside the declared territories needs the owner's yes. You may always read a file the owner points to: a path given in conversation is authorized for the rest of the session. Territories may be an Obsidian vault, a plain folder or a cloud-synced directory: treat them all as markdown folders, create subfolders as needed, and never read a whole territory recursively (`rg` on frontmatter first).
+The owner's library is a single vault root, `vault_path`, with three subfolder keys: `logbook_path` (daily notes, written by the `logbook` skill), `til_path`, `documents_path`. The four are declared once in preferences; everywhere else reference the keys, never their values. A key not declared means no write there; a write outside the declared territories needs the owner's yes. You may always read a file the owner points to: a path given in conversation is authorized for the rest of the session. Territories may be an Obsidian vault, a plain folder or a cloud-synced directory: treat them all as markdown folders, create subfolders as needed, and never read a whole territory recursively (`rg` on frontmatter first). Two optional keys sit beside them: `off_limits`, vault folders nobody reads or writes (pass them to every agent that searches the vault, and list them in the vault's `.mem-ignore`), and `archive_path`, the archive root, `<vault_path>/_Archive` when undeclared, written only through the `archive` skill and always searchable.
 
 ## Markdown discipline
 

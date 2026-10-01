@@ -72,6 +72,8 @@ The orchestrator's library is organized around a single **vault root** (`vault_p
 - **logbook_path**: <absolute path for daily logbook notes — default: `<vault_path>/logbook`>
 - **til_path**: <absolute path for "Today I Learned" notes — default: `<vault_path>/til`>
 - **documents_path**: <absolute path for longer reference documents — default: `<vault_path>/documents`>
+- **archive_path**: <optional, absolute path of the archive root used by the `archive` skill — default: `<vault_path>/_Archive`>
+- **off_limits**: <optional, vault folders no agent reads or writes, relative to `vault_path` — e.g. `[Journal/]`; list them in `<vault_path>/.mem-ignore` too>
 
 Subfolder keys default to subfolders of `vault_path` but can point anywhere on disk — any of them may live outside the vault if you want a non-standard layout. Leave a key empty (or remove the line) for territories you don't want.
 

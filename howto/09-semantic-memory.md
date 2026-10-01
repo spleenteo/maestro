@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.09.28.1
+maestro_version: v2026.10.01.1
 tags: [maestro, memory, semantic-search, sqlite-vec, ollama, vault, chunking, scope, satellites, exit-codes, pattern]
 description: "Optional semantic layer for memories.db and the chunked markdown vault: setup (Ollama + uv), commands, vault index, scope rules for satellites and exit codes, graceful degradation, rebuild, machine-change notes, and the markers that signal when to evolve the architecture."
 ---
@@ -46,7 +46,7 @@ bin/mem search "…" --semantic                   # one ranking, memories + vaul
 bin/mem search "…" --semantic --only vault      # the vault only
 ```
 
-- **Exclusions:** `<vault_root>/.mem-ignore`, `.gitignore` style (one pattern per line; `Journal/`, `*.excalidraw`, `!exception`). Dot-folders are always skipped, and symlinks are never followed. The file belongs to the instance, never to the template.
+- **Exclusions:** `<vault_root>/.mem-ignore`, `.gitignore` style (one pattern per line; `Journal/`, `*.excalidraw`, `!exception`). Dot-folders are always skipped, and symlinks are never followed. The file belongs to the instance, never to the template. Every folder in File territories → `off_limits` belongs in it too; the archive root never does, since archived notes stay searchable.
 - **Several roots:** `--root` repeats; each chunk is keyed by its root, so two vaults holding a note at the same relative path don't collide.
 - **Output columns:** `source` (`memory`/`vault`), `ref` (`#id` or `path#section`), `title`/heading, `score`, `snippet`.
 - **Flood control:** `--vault-frac` (default 0.6) caps the share of vault hits; `--min-score` drops the weak neighbours.

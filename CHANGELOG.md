@@ -12,6 +12,7 @@ One line per version; the full entry below carries the reasons and the migration
 
 | Version | Theme |
 |---|---|
+| v2026.10.01.1 | The librarian searches by meaning first, tells archived from deprecated, renames with a link sweep and logs every write; the `archive` skill closes a vault folder; HR converges a custom agent onto the upstream one |
 | v2026.09.29.1 | The sync opens with a numbered list of what's new, and asks about auto-update only when it is off |
 | v2026.09.28.3 | `maestro-sync` asks for a plugin update only when the plugin changed, and runs the update itself |
 | v2026.09.28.2 | `### Task creation thresholds` is a heading again in `CLAUDE.md`; a test catches references to missing headings |
@@ -38,6 +39,43 @@ One line per version; the full entry below carries the reasons and the migration
 | v2026.04.30.2 | Three patterns promoted from a personal instance into the template |
 | v2026.04.30.1 | Available apps moves from `CLAUDE.md` into `preferences.md`; the distribution rule |
 | v2026.04.29.1 | Initial snapshot for changelog tracking |
+
+---
+
+## v2026.10.01.1 — 2026-10-01
+
+**Theme**: a librarian that finds notes by meaning and a way to close a project without losing why it ended. One instance had grown its own librarian to about 400 lines, with semantic recall, a `deprecated` convention, typo renames and an archive workflow tested on real folders. The sync never touched it because it carried no `origin: maestro` marker, so every upstream change had to be grafted by hand. The generic parts now ship upstream, and HR has a procedure to replace a custom agent with the upstream one.
+
+### Added
+
+- **The `archive` skill** (`.claude/skills/archive/SKILL.md`): closes a vault folder in ten steps. The librarian analyses the folder without writing; the orchestrator asks at most four questions, the first always "why are you archiving it?"; a closing document `00 Archived — <Name>.md` (`type: closure`, `archive_reason` in the owner's words) opens the folder; the folder moves with `mv` into one archive root, with `.canvas` paths and path-qualified wikilinks repaired; every note gets four archive fields and a reading callout; an Obsidian Bases index (`00 Archive index.base`) lists the archive and updates itself. A plain markdown folder gets a markdown index and a quoted line instead of the callout.
+- **`howto/13-archive.md`**: the flow, the closing document, archived against deprecated, the vault without Obsidian.
+- **Two optional keys in File territories**: `archive_path` (default `<vault_path>/_Archive`) and `off_limits`, the vault folders no agent reads or writes. `CLAUDE.md`, `preferences.example.md`, `howto/03` and `howto/09` describe them; `off_limits` folders belong in `.mem-ignore` too.
+- **Convergence in HR** (`.claude/agents/hr.md`, `howto/02`): HR compares a custom agent with the upstream one, retires the custom file to `.claude/agents/.retired/`, installs the upstream file, keeps the alias and `hired_at`, and records `converged_from` and `converged_at` in the roster.
+
+### Changed
+
+- **The librarian** (`.claude/agents/librarian.md`, roster version 2.0.0):
+  - Semantic recall first: `bin/mem search --semantic --only vault` frames the documents by meaning, then `rg` pinpoints exact terms; exit code 3 falls back to `rg` silently.
+  - Two signals: `deprecated: "true"` (superseded or wrong) is hidden from searches unless asked and never linked; `status: archived` (a snapshot) is always searched, after the living notes, closing documents first. Setting `deprecated` needs the owner's yes.
+  - The catalog mandate grows to `related:`, `date:` from the filename, YAML quoting, and trivial renames (typos, double extensions, generic basenames prefixed with their project) followed by a sweep of every wikilink to the old name. Other renames stay suggestions.
+  - Every write and every suggestion is one JSON line in `private/librarian.log.jsonl`: timestamp, file, operation, before, after, reason.
+  - Two archive tasks: `archive-analysis`, read-only, and `archive-fields`, which writes `status`, `archived`, `archived_from`, `archive_note` inside the archive flow only.
+  - `off_limits` folders are excluded from `rg` and from semantic hits.
+
+### Migration
+
+1. **Run `/maestro:maestro-sync`**. `librarian.md`, `hr.md`, `CLAUDE.md`, `howto/02`, `howto/03`, `howto/09` and `howto/README` arrive as diffs; `.claude/skills/archive/SKILL.md` and `howto/13-archive.md` arrive as new files. The roster is instance data: update the `librarian` entry's `description` and `version` (2.0.0) from the template's `.claude/roster.yaml`, keeping your alias.
+2. **An instance with its own archive skill** (a `.claude/skills/archive/SKILL.md` without the marker): the sync skips a path that already exists, so the upstream skill never arrives. Compare the two, move yours to `.claude/skills/.disabled/archive/`, and run the sync again. Folders you already archived stay valid when they carry `type: closure` and the four archive fields.
+3. **An instance with a custom librarian** (`.claude/agents/librarian.md` without `origin: maestro`): ask the orchestrator to converge it. HR follows `## Convergence` in `hr.md`:
+   - retires the custom file to `.claude/agents/.retired/librarian.md`;
+   - installs the upstream file from the mirror (`maestro_mirror_path` in preferences, `~/.maestro` by default), extending only its `tools:` line if you use instance tools;
+   - keeps the roster `alias` (your librarian's name) and `hired_at`, takes the upstream `description` and `version`, adds `converged_from: librarian` and `converged_at`;
+   - renames the old intervention log to `private/librarian.log.jsonl` with its history (the schema is the same: `timestamp`, `file`, `operation`, `before`, `after`, `reason`);
+   - lists the instance specifics for preferences: the vault path stays in `vault_path`, forbidden folders go to `off_limits`, a non-default archive root to `archive_path`, a legacy archive location to a line in `## Notes`.
+   Then update the files of your own that named the old log or the old librarian rules (a vault skill, notes in preferences).
+4. **Add the keys you need** to `private/preferences.md` → `## File territories`: `off_limits: [<folder>/, …]` and, only when the archive is not `<vault_path>/_Archive`, `archive_path`. Check that every `off_limits` folder is listed in `<vault_path>/.mem-ignore`, and that the archive root is not.
+5. **Re-index**: `bin/mem embed` (with `MEM_VAULT_ROOTS` set to every root you index), so semantic recall covers what the librarian now searches first.
 
 ---
 
