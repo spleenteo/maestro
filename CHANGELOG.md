@@ -12,6 +12,7 @@ One line per version; the full entry below carries the reasons and the migration
 
 | Version | Theme |
 |---|---|
+| v2026.10.01.3 | The update notice reads the version an instance was synced to from `private/.version`, so a release that leaves `CLAUDE.md` alone no longer keeps it up |
 | v2026.10.01.2 | A satellite session knows when to write a memory, and two plugin hooks remind it: a short closing message after some work, an hour of work with no memory in its scope |
 | v2026.10.01.1 | The librarian searches by meaning first, tells archived from deprecated, renames with a link sweep and logs every write; the `archive` skill closes a vault folder; HR converges a custom agent onto the upstream one |
 | v2026.09.29.1 | The sync opens with a numbered list of what's new, and asks about auto-update only when it is off |
@@ -40,6 +41,24 @@ One line per version; the full entry below carries the reasons and the migration
 | v2026.04.30.2 | Three patterns promoted from a personal instance into the template |
 | v2026.04.30.1 | Available apps moves from `CLAUDE.md` into `preferences.md`; the distribution rule |
 | v2026.04.29.1 | Initial snapshot for changelog tracking |
+
+---
+
+## v2026.10.01.3 — 2026-10-01
+
+**Theme**: an update notice that knows when an instance is up to date. The session-start notice compared upstream with the `maestro_version` of `CLAUDE.md`. A release that left `CLAUDE.md` alone, like v2026.10.01.2, kept the notice up on an instance that had just synced, until a later release touched that file. An instance reported it after its first sync to v2026.10.01.2.
+
+### Changed
+
+- **`private/.version`**: one line with the version the instance was synced to. `maestro-sync apply` writes it after a successful run, and so does a `plan` with nothing to do; `rollback` puts back what the file held before; `/maestro:new-instance` writes it at creation from the top heading of `CHANGELOG.md`. It sits in `private/`, so the instance's repo never shows it changing.
+- **The update notice** reads the newer of `private/.version` and the `maestro_version` of `CLAUDE.md`. A missing or malformed stamp falls back to `CLAUDE.md`, as before.
+- **`CLAUDE.md`** moves to `maestro_version: v2026.10.01.3` with no other change, so an instance syncing with a plugin older than this release also loses the stale notice.
+- **`howto/05-backup-and-sync.md`** describes the stamp.
+
+### Migration
+
+1. **Update the plugin**: `claude plugin update maestro@maestro` (automatic when the marketplace has auto-update on).
+2. **Run `/maestro:maestro-sync`**: `CLAUDE.md` and `howto/05` arrive as diffs, and the sync writes `private/.version`. From then on the notice follows the stamp.
 
 ---
 
