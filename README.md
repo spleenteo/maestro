@@ -5,6 +5,8 @@ description: "What Maestro is and how its pieces fit: one orchestrator instance 
 
 # Maestro
 
+<img src="site/assets/maestro-icon.svg" width="96" alt="Maestro: a pixel conductor raising the baton">
+
 A one-page tour of the project: [spleenteo.github.io/maestro](https://spleenteo.github.io/maestro/).
 
 - [What Maestro is](#what-maestro-is)
