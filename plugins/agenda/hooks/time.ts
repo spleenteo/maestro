@@ -20,7 +20,7 @@ export function localParts(nowMs: number, offsetMin: number): { date: string; ti
   }
 }
 
-/** `gio 29 ott` for a `YYYY-MM-DD` date. */
+/** `Thu 29 Oct` with the English table, for a `YYYY-MM-DD` date. */
 export function dayLabel(date: string, labels: Labels): string {
   const [y = 0, m = 1, d = 1] = date.split('-').map(Number)
   const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay()
