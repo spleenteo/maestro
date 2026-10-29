@@ -430,8 +430,9 @@ def refresh_mirror(mirror: Path, repo_url: str, instance: Path, worktree: Option
     return git(mirror, "rev-parse", "HEAD").strip()
 
 
-def installed_plugin() -> dict:
-    """The user-scope maestro@maestro row of `claude plugin list --json`."""
+def plugin_list() -> list:
+    """The rows of `claude plugin list --json`. E_PLUGIN when claude isn't
+    on PATH, fails or prints no JSON."""
     exe = shutil.which("claude")
     if not exe:
         raise SyncError(E_PLUGIN,
@@ -447,19 +448,22 @@ def installed_plugin() -> dict:
         rows = json.loads(r.stdout)
     except ValueError as exc:
         raise SyncError(E_PLUGIN, f"claude plugin list --json returned no JSON: {exc}")
-    if not isinstance(rows, list):
-        rows = []
+    return rows if isinstance(rows, list) else []
+
+
+def installed_plugin(rows: list) -> dict:
+    """The user-scope maestro@maestro row of `claude plugin list --json`."""
     matches = [row for row in rows
                if isinstance(row, dict) and row.get("id") == PLUGIN_ID and row.get("scope") == "user"]
     return matches[0] if matches else {}
 
 
-def check_plugin(mirror: Path, plugin_root: Optional[Path]) -> str:
+def check_plugin(mirror: Path, plugin_root: Optional[Path], rows: list) -> str:
     """The installed plugin's commit, once it is a commit of the mirror that
     has origin/main among its ancestors or ships the same plugin files as
     origin/main and, when --plugin-root is given, the loaded plugin is the
     installed one. E_PLUGIN otherwise."""
-    row = installed_plugin()
+    row = installed_plugin(rows)
     version = str(row.get("version", ""))
     if not SHA_RE.fullmatch(version):
         raise SyncError(
@@ -1154,7 +1158,8 @@ def cmd_plan(args) -> int:
         print(f"maestro-sync: warning: {NO_PLUGIN_ROOT_WARNING}", file=sys.stderr)
     repo_url = plugin_repo_url(plugin_root or SCRIPT_PLUGIN_ROOT)
     mirror_head = refresh_mirror(mirror, repo_url, instance, worktree)
-    plugin_sha = check_plugin(mirror, plugin_root)
+    rows = plugin_list()
+    plugin_sha = check_plugin(mirror, plugin_root, rows)
 
     plan = build_plan(instance, mirror, mirror_head, plugin_sha, repo_url, tree, warnings)
     plan_file = instance / PLAN_FILE
