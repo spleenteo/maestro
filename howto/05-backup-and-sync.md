@@ -95,13 +95,13 @@ The agenda pane is its own plugin, `agenda@maestro`, installed at project scope 
 - `missing`: no agenda is installed for this instance. `apply` copies `.claude/settings.json` into the backup set, runs `claude plugin marketplace update maestro`, then `claude plugin install agenda@maestro --scope project` from the instance root.
 - `behind`: the installed agenda differs from the template's. `apply` refreshes the marketplace and runs `claude plugin update agenda@maestro` for the scope it was installed at.
 
-This is the one item that writes outside the instance: Claude Code keeps its own records under `~/.claude/plugins/`. So it sits outside the rollback. The settings copy in the set is never put back; `rollback` prints the command instead, `cd "<instance>" && claude plugin uninstall agenda@maestro --scope project`, and after an update it says the update stays. If `claude` fails, nothing in the instance was touched and there is nothing to roll back. Installs on this machine run one instance at a time. The pane loads at the next start of Claude Code.
+This is the one item that writes outside the instance: Claude Code keeps its own records under `~/.claude/plugins/`. So it sits outside the rollback. The settings copy in the set is never put back; `rollback` prints the command instead, `cd "<instance>" && claude plugin uninstall agenda@maestro --scope project`, and after an update it says the update stays. If `claude` fails, nothing else in the instance is touched; when an install may have gone through, `rollback` prints the same uninstall command. Installs on this machine run one instance at a time. The pane loads at the next start of Claude Code.
 
-Answering no to a `missing` item records the decline in `private/maestro-sync.declined`, one line `agenda@maestro  declined <date>`. The agenda is not offered again until you delete that line. A `behind` item cannot be declined for good: skipping it only waits for the next sync.
+Answering no to a `missing` item records the decline in `private/maestro-sync.declined`, one line `agenda@maestro  declined <timestamp>`, the time in UTC (for example `2026-04-30T18:42:13Z`). The agenda is not offered again until you delete that line. A `behind` item cannot be declined for good: skipping it only waits for the next sync.
 
-When the instance already runs an agenda from another marketplace (an `agenda@<other>` key in `.claude/settings.json` or `.claude/settings.local.json`), the plan prints one line, `AGENDA migrate <keys>`, and offers no item: move it to `agenda@maestro` with the migration runbook first.
+When no `agenda@maestro` is installed for the instance and an agenda from another marketplace is (an installed `agenda@<other>`, or an `agenda@<other>` key in `.claude/settings.json` or `.claude/settings.local.json`), the plan prints one line, `AGENDA migrate <keys>`, and offers no item: move it to `agenda@maestro` with the migration runbook first.
 
-The pane's language is one value per machine, not per instance: Claude Code keeps it in your user settings, so a later install keeps the value you already set, and English applies when none is set.
+The pane's language is one value per machine, shared by every instance, not set per instance: Claude Code keeps it in your user settings, so a later install keeps the value you already set, and English applies when none is set.
 
 ### Loose backups from earlier syncs
 
