@@ -5,7 +5,7 @@ description: "Rules plans and code follow in the Maestro template repo: tests, n
 
 # Development guidelines
 
-Rules the plans and the code must follow. Devflow passes this file to every plan, review and execution. This repo is the origin of the Maestro template: it has no `private/`, and tests never touch a real instance.
+Rules the plans and the code must follow. `/flow:dev` passes this file to every plan, review and execution. This repo is the origin of the Maestro template: it has no `private/`, and tests never touch a real instance.
 
 ## Tests
 
