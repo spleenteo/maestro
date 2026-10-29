@@ -197,20 +197,31 @@ def make_plugin_root(root: Path, repo_url: str, name: str = "plugin root") -> Pa
     return plugin
 
 
-def recorder_claude(bindir: Path, version: str, install_path: Path | str) -> Path:
+def recorder_claude(bindir: Path, version: str, install_path: Path | str,
+                    extra_rows=(), install_outcome: str = "ok") -> Path:
     """A `claude` on PATH answering `plugin list --json` with a project-scope
-    row to ignore and the user-scope maestro row, and logging its argv."""
+    row to ignore, the user-scope maestro row and `extra_rows`, and
+    `{"outcome": ...}` to every other call. It logs argv to `claude.log`,
+    the working directory to `claude.cwd` and the environment to
+    `claude.env`, one entry per call."""
     bindir.mkdir(parents=True, exist_ok=True)
     rows = [
         {"id": "maestro@maestro", "scope": "project", "version": "0000000"},
         {"id": "maestro@maestro", "scope": "user", "version": version[:12],
          "installPath": str(install_path)},
+        *extra_rows,
     ]
     script = bindir / "claude"
     script.write_text(
         "#!/bin/sh\n"
         f"printf '%s\\n' \"$*\" >> \"{bindir / 'claude.log'}\"\n"
-        "cat <<'EOF'\n" + json.dumps(rows) + "\nEOF\n"
+        f"pwd -P >> \"{bindir / 'claude.cwd'}\"\n"
+        f"env >> \"{bindir / 'claude.env'}\"\n"
+        "case \"$1 $2\" in\n"
+        "  'plugin list') cat <<'EOF'\n" + json.dumps(rows) + "\nEOF\n  ;;\n"
+        "  'plugin install') printf '%s\\n' 'Installing...' '{\"outcome\": \"" + install_outcome + "\"}' ;;\n"
+        "  *) printf '%s\\n' '{\"outcome\": \"ok\"}' ;;\n"
+        "esac\n"
     )
     script.chmod(0o755)
     return script
@@ -1156,14 +1167,15 @@ class TestPlanOutput(SyncFixture):
 
     def test_every_item_kind_appears_on_the_fixtures(self):
         recorder_procs(self.bindir)
-        self.push_main({"howto/07-new.md": marked_md(NEW_VERSION, description="new")})
+        self.push_main({"howto/07-new.md": marked_md(NEW_VERSION, description="new"),
+                        "plugins/agenda/.claude-plugin/plugin.json": '{"name": "agenda"}\n'})
         write(self.instance / "bin" / "mem", "#!/bin/sh\necho old\n", mode=0o755)
         seed_listen(self.instance)
         write(self.instance / "howto" / "99-mine.md", marked_md(OLD_VERSION))
         kinds = {it["kind"] for it in self.items()}
-        self.assertEqual(kinds, {"update", "new", "bin", "retired", "register", "orphan"})
+        self.assertEqual(kinds, {"update", "new", "bin", "retired", "register", "plugin", "orphan"})
         r = self.plan()
-        for prefix in ("u1 ", "n1 ", "b1 ", "r1 ", "g1 ", "o1 "):
+        for prefix in ("u1 ", "n1 ", "b1 ", "r1 ", "g1 ", "p1 ", "o1 "):
             self.assertIn(f"\n{prefix}", "\n" + r.stdout)
 
 
@@ -2405,6 +2417,177 @@ class TestSliceDone(SyncFixture):
         for rel in MARKED_PATHS:
             self.assertEqual((self.instance / rel).read_bytes(), before[rel])
         self.assertEqual(sqlite_dump(db), db_dump)
+
+
+# ---------------------------------------------------------------------------
+# Phase 6d — the agenda plugin
+# ---------------------------------------------------------------------------
+
+AGENDA = "agenda@maestro"
+DECLINED_FILE = "private/maestro-sync.declined"
+
+
+class TestAgendaPlugin(SyncFixture):
+    def setUp(self):
+        super().setUp()
+        self.tip = self.push_main({"plugins/agenda/.claude-plugin/plugin.json": '{"name": "agenda"}\n'})
+        self.agenda_v1 = self.tip
+
+    def row(self, agenda_id=AGENDA, scope="project", version=None, project=None) -> dict:
+        return {"id": agenda_id, "scope": scope, "version": (version or self.agenda_v1)[:12],
+                "projectPath": str(project if project is not None else self.instance)}
+
+    def record(self, *rows, **kw) -> None:
+        """Re-record claude at the maestro tip with these extra rows."""
+        recorder_claude(self.bindir, self.tip, self.plugin, rows, **kw)
+
+    def plugin_items(self) -> list:
+        return self.items("plugin")
+
+    def claude_lines(self) -> list[str]:
+        return (self.bindir / "claude.log").read_text().splitlines()
+
+    def claude_cwds(self) -> list[str]:
+        return (self.bindir / "claude.cwd").read_text().splitlines()
+
+    def test_missing_agenda_is_one_item_outside_rollback(self):
+        self.record(self.row(project=self.root / "elsewhere"),
+                    self.row(scope="user"))
+        plan = self.plan_json()
+        item = next(it for it in plan["items"] if it["kind"] == "plugin")
+        self.assertEqual((item["id"], item["path"], item["state"]), ("p1", AGENDA, "missing"))
+        self.assertEqual(plan["agenda_migrate"], [])
+        line = next(ln for ln in self.plan().stdout.splitlines() if ln.startswith("p1 "))
+        self.assertIn("outside rollback", line)
+        self.assertIn("one instance at a time", line)
+
+    def test_an_agenda_installed_for_this_instance_is_no_item(self):
+        link = self.root / "instance link"
+        link.symlink_to(self.instance)
+        self.record(self.row(project=link))
+        self.assertEqual(self.plugin_items(), [])
+
+    def test_a_declined_agenda_comes_back_when_its_line_is_deleted(self):
+        self.plan_json()
+        r = self.note("p1", "--outcome", "kept")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        declined = (self.instance / DECLINED_FILE).read_text().splitlines()
+        self.assertEqual(declined[:2], ["# Plugins the owner declined in /maestro:maestro-sync.",
+                                        "# Delete a line to be offered that plugin again."])
+        self.assertRegex(declined[2], r"^agenda@maestro  declined \d{4}-\d{2}-\d{2}T")
+        self.assertIn("(plugin, kept by owner)", self.log_lines()[-1])
+        self.assertEqual(self.plugin_items(), [])
+        write(self.instance / DECLINED_FILE, "\n".join(declined[:2]) + "\n")
+        self.assertEqual([it["state"] for it in self.plugin_items()], ["missing"])
+
+    def test_an_unreadable_declined_file_reads_as_not_declined(self):
+        (self.instance / DECLINED_FILE).mkdir()
+        self.assertEqual([it["state"] for it in self.plugin_items()], ["missing"])
+
+    def test_another_agenda_key_shows_the_migrate_line_and_no_item(self):
+        other = "agenda@instance-mods"
+        cases = {
+            "enabled in settings.json": (".claude/settings.json", {other: True}, True),
+            "false in settings.local.json": (".claude/settings.local.json", {other: False}, False),
+            "key and project row": (".claude/settings.json", {other: True}, True),
+            "row without any key": (None, None, True),
+        }
+        for name, (rel, enabled, with_row) in cases.items():
+            with self.subTest(name):
+                for stale in (".claude/settings.json", ".claude/settings.local.json"):
+                    (self.instance / stale).unlink(missing_ok=True)
+                if rel:
+                    write(self.instance / rel, json.dumps({"enabledPlugins": enabled}))
+                self.record(*([self.row(other)] if with_row and name != "enabled in settings.json" else []))
+                plan = self.plan_json()
+                self.assertEqual(plan["agenda_migrate"], [other])
+                self.assertEqual([it for it in plan["items"] if it["kind"] == "plugin"], [])
+                self.assertIn(f"\nAGENDA migrate {other}:", "\n" + self.plan().stdout)
+
+    def test_a_foreign_key_is_ignored_once_agenda_maestro_is_installed(self):
+        write(self.instance / ".claude/settings.json",
+              json.dumps({"enabledPlugins": {"agenda@instance-mods": True}}))
+        self.record(self.row())
+        plan = self.plan_json()
+        self.assertEqual(plan["agenda_migrate"], [])
+        self.assertEqual([it for it in plan["items"] if it["kind"] == "plugin"], [])
+
+    def test_an_agenda_behind_is_an_item_never_e_plugin(self):
+        self.tip = self.push_main({"plugins/agenda/hooks/new.ts": "// v2\n"})
+        self.record(self.row(version=self.agenda_v1))
+        r = self.plan("--json")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        item = next(it for it in json.loads(r.stdout)["items"] if it["kind"] == "plugin")
+        self.assertEqual((item["state"], item["installed"][:7], item["scope"]),
+                         ("behind", self.agenda_v1[:7], "project"))
+
+    def test_an_agenda_whose_version_is_no_commit_is_left_alone_with_a_warning(self):
+        self.record(self.row(version="not-a-sha"))
+        plan = self.plan_json()
+        self.assertEqual([it for it in plan["items"] if it["kind"] == "plugin"], [])
+        self.assertTrue(any("not-a-sha" in w for w in plan["warnings"]), plan["warnings"])
+
+    def test_apply_installs_from_the_instance_root(self):
+        write(self.instance / ".claude/settings.json", '{"mine": true}\n')
+        self.plan_json()
+        r = self.apply("--items", "p1")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual(self.claude_lines()[-2:], ["plugin marketplace update maestro",
+                                                    f"plugin install {AGENDA} --scope project --json"])
+        here = os.path.realpath(self.instance)
+        self.assertEqual(self.claude_cwds()[-2:], [here, here])
+        self.assertTrue((self.bindir / "claude.env").read_text().strip())
+        entry = self.manifest()["items"][0]
+        self.assertEqual((entry["outcome"], entry["state"], entry["backups"]), ("applied", "missing", []))
+        self.assertEqual(entry["outside_rollback"], [".claude/settings.json"])
+        self.assertEqual((self.sets()[0] / "files/.claude/settings.json").read_text(), '{"mine": true}\n')
+        self.assertIn("(plugin, installed)", self.log_lines()[-1])
+
+    def test_an_install_that_exits_zero_without_outcome_ok_is_partial(self):
+        self.record(install_outcome="error")
+        self.plan_json()
+        r = self.apply("--items", "p1")
+        self.assertEqual(r.returncode, E_PARTIAL)
+        self.assertIn("outcome", r.stderr)
+        self.assertEqual(self.manifest()["items"][0]["outcome"], "failed")
+
+    def test_apply_updates_a_behind_agenda_from_the_instance_root(self):
+        self.tip = self.push_main({"plugins/agenda/hooks/new.ts": "// v2\n"})
+        self.record(self.row(version=self.agenda_v1))
+        self.plan_json()
+        r = self.apply("--items", "p1")
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual(self.claude_lines()[-2:], ["plugin marketplace update maestro",
+                                                    f"plugin update {AGENDA} --scope project --json"])
+        here = os.path.realpath(self.instance)
+        self.assertEqual(self.claude_cwds()[-2:], [here, here])
+        entry = self.manifest()["items"][0]
+        self.assertEqual((entry["state"], entry["backups"]), ("behind", []))
+        self.assertNotIn("outside_rollback", entry)
+        self.assertIn("(plugin, updated)", self.log_lines()[-1])
+
+    def test_an_edited_plan_never_reaches_claude_with_another_id(self):
+        self.plan_json()
+        plan_file = self.instance / PLAN_FILE
+        edited = json.loads(plan_file.read_text())
+        next(it for it in edited["items"] if it["kind"] == "plugin")["path"] = "evil@maestro"
+        plan_file.write_text(json.dumps(edited))
+        calls = len(self.claude_lines())
+        r = self.apply("--items", "p1")
+        self.assertEqual(r.returncode, E_ITEM)
+        self.assertEqual(len(self.claude_lines()), calls)
+
+    def test_rollback_leaves_the_settings_and_prints_the_uninstall_command(self):
+        write(self.instance / ".claude/settings.json", '{"mine": true}\n')
+        plan = self.plan_json()
+        self.assertEqual(self.apply("--items", "p1").returncode, OK)
+        write(self.instance / ".claude/settings.json", '{"rewritten": true}\n')
+        r = run_sync("rollback", plan["stamp"], "--instance", str(self.instance),
+                     env=self.env, cwd=self.root)
+        self.assertEqual(r.returncode, OK, r.stderr)
+        self.assertEqual((self.instance / ".claude/settings.json").read_text(), '{"rewritten": true}\n')
+        skipped = next(ln for ln in r.stdout.splitlines() if ln.startswith("skipped"))
+        self.assertIn(f"claude plugin uninstall {AGENDA} --scope project", skipped)
 
 
 if __name__ == "__main__":
