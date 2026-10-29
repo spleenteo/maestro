@@ -1,7 +1,10 @@
 """tests/test_plugin_layout.py — structure of the `maestro` Claude Code
-plugin, the `agenda` plugin and the marketplace (V3 slice, Task 2): `.claude-plugin/marketplace.json`
+plugin and marketplace (V3 slice, Task 2): `.claude-plugin/marketplace.json`
 at the repo root, `plugins/maestro/.claude-plugin/plugin.json`, and
 `maestro-net` moved in from `user-skills/maestro-net/`.
+
+The marketplace entry and the manifest of the `agenda` plugin are checked
+too (agenda-port V1, T3).
 
 Static, file-content checks only. `claude plugin validate` is a separate
 gate step, run outside this file — no `claude` binary assumed in a test
