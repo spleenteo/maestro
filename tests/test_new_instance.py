@@ -7,16 +7,19 @@ the placeholders the model fills (`<destination>`, `<sha>`, ...) and the
 variables Claude Code substitutes in plugin skill content
 (`${CLAUDE_SKILL_DIR}`, `${CLAUDE_PLUGIN_ROOT}`), and runs them in order
 the way a session would: destination, plugin commit, template mirror,
-extract, the internal-vault commands of the interview, finalize, register.
+extract, the internal-vault commands of the interview, finalize, the agenda
+plugin install, register.
 A block with a placeholder this file doesn't know fails the run.
 
 Stand-ins, never the real thing:
 - GitHub is a temp bare repo cloned from this repo, reached through a
   `file://` URL written as `repository` in a stub plugin root's
   `plugin.json`.
-- `claude` is a stub script printing a `plugin list --json` with an
-  unrelated plugin, a `maestro@maestro` row at `project` scope with a wrong
-  SHA, and the `user` row with the real one.
+- `claude` is a stub script that appends one line per call (its cwd and
+  argv) to a file, prints a `plugin list --json` with an unrelated plugin,
+  a `maestro@maestro` row at `project` scope with a wrong SHA and the
+  `user` row with the real one, and prints `{"outcome":"ok"}` on
+  `plugin install`.
 - `HOME` is a temp dir (the mirror lands in its `.maestro`), and
   `MAESTRO_INSTANCES` a temp registry. `maestro-net` resolves from this
   repo's plugin `bin/`.
@@ -60,6 +63,7 @@ QUESTION_TERRITORIES = "### Question 10/10"
 TERRITORY_FOLDERS = "## Territory folders"
 FINALIZE = "## Finalize"
 REGISTER = "## Register"
+AGENDA_PLUGIN = "## Agenda plugin"
 LOGBOOK = "## Day-zero logbook"
 TIL = "## Day-zero TIL"
 
@@ -253,12 +257,15 @@ class _Session:
         self.stub_bin.mkdir()
         self.plugin_list = self.tmp / "plugin-list.json"
         self.plugin_list.write_text(json.dumps(rows), encoding="utf-8")
-        self.claude_argv = self.tmp / "claude-argv"
+        self.claude_calls = self.tmp / "claude-calls"
         stub = self.stub_bin / "claude"
         stub.write_text(
             "#!/bin/sh\n"
-            f"printf '%s\\n' \"$*\" > '{self.claude_argv}'\n"
-            f"cat '{self.plugin_list}'\n",
+            f"printf '%s\\t%s\\n' \"$(pwd -P)\" \"$*\" >> '{self.claude_calls}'\n"
+            'case "$1 $2" in\n'
+            f"  'plugin list') cat '{self.plugin_list}' ;;\n"
+            "  'plugin install') echo '{\"outcome\":\"ok\"}' ;;\n"
+            "esac\n",
             encoding="utf-8",
         )
         stub.chmod(0o755)
@@ -267,13 +274,21 @@ class _Session:
     def mirror(self) -> Path:
         return self.home / ".maestro"
 
-    def env(self, plugin_bin_on_path: bool = True) -> dict:
+    def calls(self) -> list:
+        """The claude calls so far, as (cwd, argv) tuples."""
+        if not self.claude_calls.exists():
+            return []
+        return [tuple(line.split("\t", 1))
+                for line in self.claude_calls.read_text(encoding="utf-8").splitlines()]
+
+    def env(self, plugin_bin_on_path: bool = True, extra_env: dict | None = None) -> dict:
         path = f"{self.stub_bin}:{PLUGIN_BIN}:{BASE_PATH}" if plugin_bin_on_path \
             else f"{self.stub_bin}:{BASE_PATH}"
         return {
             "PATH": path,
             "HOME": str(self.home),
             "MAESTRO_INSTANCES": str(self.registry),
+            **(extra_env or {}),
         }
 
     def values(self, destination: str = "", sha: str = "") -> dict:
@@ -283,15 +298,17 @@ class _Session:
             "<project_slug>": PROJECT_SLUG,
             "<orchestrator-slug>": ORCHESTRATOR_SLUG,
             "<domain>": DOMAIN,
+            "<code>": "en",
             "${CLAUDE_SKILL_DIR}": str(SKILL_DIR),
             "${CLAUDE_PLUGIN_ROOT}": str(self.plugin_root),
         }
 
     def run(self, shell: tuple, block: str, values: dict, *, prelude: str = "",
-            plugin_bin_on_path: bool = True) -> subprocess.CompletedProcess:
+            plugin_bin_on_path: bool = True,
+            extra_env: dict | None = None) -> subprocess.CompletedProcess:
         return subprocess.run(
             [*shell, prelude + _fill(block, values)], cwd=str(self.cwd),
-            env=self.env(plugin_bin_on_path), capture_output=True, text=True, timeout=120,
+            env=self.env(plugin_bin_on_path, extra_env), capture_output=True, text=True, timeout=120,
         )
 
 
@@ -336,11 +353,21 @@ class _FlowBase:
         _require_ok("gitignore append, again", s.run(cls.SHELL, gitignore_block, values))
 
         _require_ok("finalize", s.run(cls.SHELL, _only_bash_block(FINALIZE), values))
+        _require_ok("agenda plugin", s.run(cls.SHELL, _only_bash_block(AGENDA_PLUGIN), values))
         _require_ok("register", s.run(cls.SHELL, _only_bash_block(REGISTER), values))
 
     def test_step_3_resolves_the_user_scope_sha(self):
         self.assertEqual(self.resolved_sha, self.short_sha)
-        self.assertEqual(self.session.claude_argv.read_text().strip(), "plugin list --json")
+        self.assertEqual(self.session.calls()[0][1], "plugin list --json")
+
+    def test_agenda_plugin_is_installed_in_the_destination(self):
+        calls = self.session.calls()
+        self.assertEqual(
+            [argv for _, argv in calls],
+            ["plugin list --json",
+             "plugin install agenda@maestro --scope project --config language=en --json"],
+        )
+        self.assertEqual(calls[-1][0], os.path.realpath(self.destination))
 
     def test_mirror_is_cloned_from_the_plugin_repository(self):
         origin = _git("-C", str(self.session.mirror), "remote", "get-url", "origin")
@@ -527,6 +554,58 @@ class TestRefusals(unittest.TestCase):
                 r = s.run(shell, block, s.values(sha=new_sha))
 
                 self.assertEqual(r.returncode, 0, r.stderr)
+
+
+# ---------------------------------------------------------------------------
+# The agenda plugin and the language already set on the machine
+# ---------------------------------------------------------------------------
+
+class TestAgendaPlugin(unittest.TestCase):
+    """The language is one value per machine, in the user settings: a
+    value already there is kept, so the install passes no `--config`."""
+
+    KEPT = "plugin install agenda@maestro --scope project --json"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="maestro-new-instance-agenda-"))
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, True)
+
+    def _settings(self, folder: Path) -> None:
+        folder.mkdir(parents=True)
+        (folder / "settings.json").write_text(json.dumps(
+            {"pluginConfigs": {"agenda@maestro": {"options": {"language": "it"}}}}
+        ), encoding="utf-8")
+
+    def _install(self, s: _Session, shell: tuple, extra_env: dict | None = None):
+        dest = s.tmp / "instance"
+        dest.mkdir()
+        r = s.run(shell, _only_bash_block(AGENDA_PLUGIN), s.values(str(dest)),
+                  extra_env=extra_env)
+        _require_ok("agenda plugin", r)
+        return s.calls()[-1][1]
+
+    def test_keeps_the_language_already_set_on_this_machine(self):
+        for name, shell in SHELLS:
+            with self.subTest(shell=name):
+                class _NoRemote:
+                    url = "file:///nonexistent"
+                s = _Session(self.tmp, _NoRemote(), [])
+                self._settings(s.home / ".claude")
+
+                self.assertEqual(self._install(s, shell), self.KEPT)
+
+    def test_reads_the_language_under_claude_config_dir(self):
+        for name, shell in SHELLS:
+            with self.subTest(shell=name):
+                class _NoRemote:
+                    url = "file:///nonexistent"
+                s = _Session(self.tmp, _NoRemote(), [])
+                self._settings(s.tmp / "config")
+
+                argv = self._install(s, shell, {"CLAUDE_CONFIG_DIR": str(s.tmp / "config")})
+
+                self.assertEqual(argv, self.KEPT)
 
 
 # ---------------------------------------------------------------------------

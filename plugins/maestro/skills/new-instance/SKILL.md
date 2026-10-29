@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # New instance
 
-This skill creates a Maestro instance in a new or empty folder. It takes the template at the commit the Maestro plugin was installed from, runs the first-launch interview in the current session, finalizes the new folder and registers it in the machine registry. Outside the destination it writes only the template mirror at `$HOME/.maestro` and the registry.
+This skill creates a Maestro instance in a new or empty folder. It takes the template at the commit the Maestro plugin was installed from, runs the first-launch interview in the current session, finalizes the new folder and registers it in the machine registry. Outside the destination it writes only the template mirror at `$HOME/.maestro`, the registry, and Claude Code's own plugin records (plus, on a machine where it is not set yet, the language of the agenda plugin) in the user settings.
 
 The interview collects only the essentials, plus an optional block on how the orchestrator writes for the owner. Richer context (team, objectives, work rhythms, integrations) is added later by editing `private/preferences.md` in the new instance.
 
@@ -14,7 +14,7 @@ The interview collects only the essentials, plus an optional block on how the or
 
 Only when the owner types `/maestro:new-instance`. `disable-model-invocation: true` keeps the model from running this skill on its own reading of the conversation, in any folder, including one with no `private/preferences.md`: asked to create a new instance, the model tells the owner to type the command instead of starting the flow itself.
 
-Once invoked, **stop all other work** and drive the flow to the end, in order: steps 1 to 5 prepare the folder, then the interview, the day-zero notes, finalize, register and the hand-off. The mechanical steps come first so that a failure there never wastes the owner's answers.
+Once invoked, **stop all other work** and drive the flow to the end, in order: steps 1 to 5 prepare the folder, then the interview, the day-zero notes, finalize, the agenda plugin, register and the hand-off. The mechanical steps come first so that a failure there never wastes the owner's answers.
 
 Until Question 1 settles the language, talk in the language the owner is already using in this session (English when they only typed the command).
 
@@ -26,10 +26,11 @@ Each fenced `bash` block below runs as one Bash call, exactly as written except 
 - `<sha>`: the commit printed by step 3.
 - `<project_slug>`: the slug derived from Question 2.
 - `<orchestrator-slug>` and `<domain>`: see Register.
+- `<code>`: the agenda language, from the answer to Question 1: `it` when it names Italian in any wording (`Italian`, `italian`, `italiano`, `ita`), `en` for every other language.
 
 Paths into the plugin's own folder are already absolute in the blocks: leave them as they are.
 
-If a block exits non-zero, show its stderr to the owner and stop, unless its section says what to do on that failure (Destination, Register). Never complete a step by hand.
+If a block exits non-zero, show its stderr to the owner and stop, unless its section says what to do on that failure (Destination, Agenda plugin, Register). Never complete a step by hand.
 
 ## 1. Kind
 
@@ -394,6 +395,28 @@ Read the script's stdout to confirm each step. Announce the first memory write t
 ```
 
 If the script exits non-zero, surface its stderr to the owner and stop: don't patch partial state by hand. The script refuses to run when `private/preferences.md` or `private/memories.db` already exists, so a run that failed halfway is retried from step 2 with a new empty folder. The answers are still in this conversation, so the interview doesn't need repeating; the day-zero notes are written again if they lived inside the abandoned folder.
+
+## Agenda plugin
+
+After Finalize, install the `agenda` plugin in the new instance at project scope. It runs after Finalize because step 5 extracted the template's tracked `.claude/settings.json`, which would overwrite an earlier install. The language of the plugin is one value per machine, kept in the user settings: the block passes `--config language=<code>` only when no value is set there yet, so a second instance never overwrites the language of the first.
+
+```bash
+set -o pipefail
+if python3 -c '
+import json, sys
+try:
+    options = json.load(open(sys.argv[1]))["pluginConfigs"]["agenda@maestro"]["options"]
+    sys.exit(0 if isinstance(options["language"], str) and options["language"] else 1)
+except (OSError, ValueError, KeyError, TypeError):
+    sys.exit(1)
+' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"; then
+  cd "<destination>" && claude plugin install agenda@maestro --scope project --json
+else
+  cd "<destination>" && claude plugin install agenda@maestro --scope project --config language=<code> --json
+fi
+```
+
+The install is complete when the block exits 0 and prints a JSON line with `"outcome":"ok"`. On a non-zero exit, or a JSON line without it, show the output to the owner, say that the instance is complete without the agenda pane, and go on to Register. A failed install doesn't undo the instance. Still give the hand-off, and add one line telling the owner how to install it later, with `<destination>` filled in: `claude plugin marketplace update maestro`, then `cd "<destination>" && claude plugin install agenda@maestro --scope project --json` (without `--config`: a language set on the machine in the meantime is kept).
 
 ## Register
 
