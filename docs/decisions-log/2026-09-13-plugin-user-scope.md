@@ -31,3 +31,7 @@ The plugin is installed at `user` scope, with `autoUpdate` off on the marketplac
 ## References
 
 The satellites-plugin design work (kept outside the repository): the decisions taken at slicing, V3.
+
+## Amendment (2026-10-29)
+
+The record still holds for `maestro`. The agenda goes at project scope in each instance, as its own plugin `agenda@maestro`. See `2026-10-29-agenda-plugin-project-scope.md`.
