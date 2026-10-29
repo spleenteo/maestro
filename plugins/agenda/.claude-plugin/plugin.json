@@ -1,0 +1,27 @@
+{
+  "name": "agenda",
+  "description": "A pane that shows what is left to do today: appointments with their time and open tasks, written by the orchestrator through the agenda_set tool.",
+  "author": {
+    "name": "Matteo Papadopoulos"
+  },
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "dayStart": {
+      "type": "string",
+      "title": "Day start",
+      "description": "Local time (HH:MM) when a new day begins; before it the previous day's recap still counts as today.",
+      "default": "06:00"
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the pane and of the transcript row.",
+      "options": [
+        "en",
+        "it"
+      ],
+      "default": "en"
+    }
+  }
+}
