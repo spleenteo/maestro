@@ -9,6 +9,9 @@ Rules the plans and the code must follow. `/flow:dev` passes this file to every 
 
 ## Tests
 
+Level: essential
+Sensitive areas: `bin/mem` and the `memories.db` schema, `plugins/maestro/bin/maestro-sync`
+
 - `unittest`, stdlib only. One file per tool: `tests/test_<tool>.py`, with classes named by behaviour (`TestRecap`, `TestDayBoundary`).
 - Scripts are tested as black boxes through `subprocess`, against a temporary db or directory created by the test. Never `private/`, never a real instance, never the network. External commands (`claude`, another instance's `bin/mem`) are replaced by recorder scripts that capture argv, cwd and environment.
 - Tests that need optional machine dependencies (sqlite-vec, Ollama) skip themselves when missing.

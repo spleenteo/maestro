@@ -1,3 +1,4 @@
 # Devflow overrides. The changelog stays at the root: maestro-sync reads it from the mirror.
 stacks: [generic]
 changelog: CHANGELOG.md
+merge: local
