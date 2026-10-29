@@ -76,9 +76,9 @@ The mirror can be neither the instance nor the working tree, and a mirror with l
 
 ### The seven verbs
 
-- `plan`: refreshes the mirror, checks that the loaded plugin is not behind it (only the plugin's own files count: a release that leaves `plugins/maestro/` and `.claude-plugin/` alone doesn't ask for a plugin update), and writes `private/maestro-sync.plan.json`: the changelog slice from the instance's oldest `maestro_version` to upstream, and one item per thing to do, of kind `update`, `new`, `bin`, `retired`, `register` or `orphan`.
+- `plan`: refreshes the mirror, checks that the loaded plugin is not behind it (only the plugin's own files count: a release that leaves `plugins/maestro/` and `.claude-plugin/` alone doesn't ask for a plugin update), and writes `private/maestro-sync.plan.json`: the changelog slice from the instance's oldest `maestro_version` to upstream, and one item per thing to do, of kind `update`, `new`, `bin`, `retired`, `register`, `plugin` or `orphan`.
 - `apply`: applies items of the last plan, by id (`--items u1,u2`) or by kind (`--kind update`), after the backup set is open; `--from FILE` writes a merged text for one update, `--register KEY=VALUE` answers a missing register key.
-- `note`: records in `private/maestro-sync.log` an outcome the conversation decided: skipped, aborted or kept.
+- `note`: records in `private/maestro-sync.log` an outcome the conversation decided: skipped, aborted or kept. Keeping the agenda plugin also writes `private/maestro-sync.declined`.
 - `rollback STAMP`: restores a set, its items in reverse order, then the memory db.
 - `autoupdate`: sets `"autoUpdate": true` on the `maestro` marketplace in `~/.claude/settings.json`, keeping every other key. `plan` reports the setting as `AUTOUPDATE on|off`, and the conversation asks about it only when it is off.
 - `update-plugin`: runs `claude plugin marketplace update maestro` then `claude plugin update maestro@maestro`, the way out when `plan` stops with exit 5 for a plugin behind upstream. The conversation offers it; the new plugin loads after a restart of Claude Code, and the sync runs again from the new session.
@@ -87,6 +87,21 @@ The mirror can be neither the instance nor the working tree, and a mirror with l
 ### Backup sets and rollback
 
 The first `apply` on a plan creates `private/backups/<stamp>-sync/`, and every later `apply` on the same plan appends to it. The set holds `manifest.json` (written before the first write, rewritten after every item with its outcome), a checked copy of `private/memories.db` under `db/`, and under `files/` every file the run replaces or removes, at its path in the instance. `maestro-sync rollback <stamp>` reads the manifest, puts every file back, removes the files the sync added and copies the db back; the conversation names the command once at the end of a sync. Retention runs after each `apply`: the five newest sets stay whatever their age, older ones go once they are past seven days, and at most twenty stay in any case.
+
+### The agenda plugin
+
+The agenda pane is its own plugin, `agenda@maestro`, installed at project scope in each instance while `maestro` stays at user scope. `plan` offers it as one item of kind `plugin` (id `p1`) in two cases:
+
+- `missing`: no agenda is installed for this instance. `apply` copies `.claude/settings.json` into the backup set, runs `claude plugin marketplace update maestro`, then `claude plugin install agenda@maestro --scope project` from the instance root.
+- `behind`: the installed agenda differs from the template's. `apply` refreshes the marketplace and runs `claude plugin update agenda@maestro` for the scope it was installed at.
+
+This is the one item that writes outside the instance: Claude Code keeps its own records under `~/.claude/plugins/`. So it sits outside the rollback. The settings copy in the set is never put back; `rollback` prints the command instead, `cd "<instance>" && claude plugin uninstall agenda@maestro --scope project`, and after an update it says the update stays. If `claude` fails, nothing in the instance was touched and there is nothing to roll back. Installs on this machine run one instance at a time. The pane loads at the next start of Claude Code.
+
+Answering no to a `missing` item records the decline in `private/maestro-sync.declined`, one line `agenda@maestro  declined <date>`. The agenda is not offered again until you delete that line. A `behind` item cannot be declined for good: skipping it only waits for the next sync.
+
+When the instance already runs an agenda from another marketplace (an `agenda@<other>` key in `.claude/settings.json` or `.claude/settings.local.json`), the plan prints one line, `AGENDA migrate <keys>`, and offers no item: move it to `agenda@maestro` with the migration runbook first.
+
+The pane's language is one value per machine, not per instance: Claude Code keeps it in your user settings, so a later install keeps the value you already set, and English applies when none is set.
 
 ### Loose backups from earlier syncs
 
