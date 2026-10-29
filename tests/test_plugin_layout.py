@@ -1,5 +1,5 @@
 """tests/test_plugin_layout.py — structure of the `maestro` Claude Code
-plugin and marketplace (V3 slice, Task 2): `.claude-plugin/marketplace.json`
+plugin, the `agenda` plugin and the marketplace (V3 slice, Task 2): `.claude-plugin/marketplace.json`
 at the repo root, `plugins/maestro/.claude-plugin/plugin.json`, and
 `maestro-net` moved in from `user-skills/maestro-net/`.
 
@@ -26,6 +26,7 @@ from maestro_versions import changelog_top_version  # noqa: E402
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 PLUGIN_DIR = ROOT / "plugins" / "maestro"
 PLUGIN_MANIFEST = PLUGIN_DIR / ".claude-plugin" / "plugin.json"
+AGENDA_MANIFEST = ROOT / "plugins" / "agenda" / ".claude-plugin" / "plugin.json"
 SCRIPT = PLUGIN_DIR / "bin" / "maestro-net"
 SKILL = PLUGIN_DIR / "skills" / "maestro-net" / "SKILL.md"
 NEW_INSTANCE_SKILL = PLUGIN_DIR / "skills" / "new-instance" / "SKILL.md"
@@ -60,6 +61,14 @@ class TestMarketplaceJson(unittest.TestCase):
         self.assertIsInstance(entry.get("description"), str)
         self.assertTrue(entry["description"].strip())
 
+    def test_lists_the_agenda_plugin_entry(self):
+        entries = {e["name"]: e for e in self.data["plugins"]}
+        self.assertIn("agenda", entries)
+        entry = entries["agenda"]
+        self.assertEqual(entry["source"], "./plugins/agenda")
+        self.assertIsInstance(entry.get("description"), str)
+        self.assertTrue(entry["description"].strip())
+
     def test_declares_no_version(self):
         self.assertNotIn("version", self.data)
 
@@ -78,6 +87,14 @@ class TestPluginJson(unittest.TestCase):
         self.assertIsInstance(self.data.get("author"), dict)
         self.assertTrue(self.data["author"].get("name"))
         self.assertEqual(self.data["repository"], "https://github.com/spleenteo/maestro")
+
+    def test_declares_no_version(self):
+        self.assertNotIn("version", self.data)
+
+
+class TestAgendaPluginJson(unittest.TestCase):
+    def setUp(self):
+        self.data = json.loads(AGENDA_MANIFEST.read_text(encoding="utf-8"))
 
     def test_declares_no_version(self):
         self.assertNotIn("version", self.data)

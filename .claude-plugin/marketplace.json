@@ -4,12 +4,17 @@
     "name": "Matteo Papadopoulos",
     "url": "https://github.com/spleenteo"
   },
-  "description": "Marketplace for the Maestro orchestrator template's own Claude Code plugin.",
+  "description": "Marketplace for the Maestro orchestrator template's own Claude Code plugins.",
   "plugins": [
     {
       "name": "maestro",
       "source": "./plugins/maestro",
       "description": "Skills and hooks for the Maestro orchestrator template: new-instance, maestro-sync, maestro-net between instances, satellites (project repos that borrow an instance's identity and memory), and listen (live capture of a call from any session)."
+    },
+    {
+      "name": "agenda",
+      "source": "./plugins/agenda",
+      "description": "A pane that shows what is left to do today: appointments with their time and open tasks, written by the orchestrator through the agenda_set tool."
     }
   ]
 }
