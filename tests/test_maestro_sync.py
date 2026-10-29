@@ -2487,7 +2487,7 @@ class TestAgendaPlugin(SyncFixture):
     def test_another_agenda_key_shows_the_migrate_line_and_no_item(self):
         other = "agenda@instance-mods"
         cases = {
-            "enabled in settings.json": (".claude/settings.json", {other: True}, True),
+            "enabled in settings.json": (".claude/settings.json", {other: True}, False),
             "false in settings.local.json": (".claude/settings.local.json", {other: False}, False),
             "key and project row": (".claude/settings.json", {other: True}, True),
             "row without any key": (None, None, True),
@@ -2498,7 +2498,7 @@ class TestAgendaPlugin(SyncFixture):
                     (self.instance / stale).unlink(missing_ok=True)
                 if rel:
                     write(self.instance / rel, json.dumps({"enabledPlugins": enabled}))
-                self.record(*([self.row(other)] if with_row and name != "enabled in settings.json" else []))
+                self.record(*([self.row(other)] if with_row else []))
                 plan = self.plan_json()
                 self.assertEqual(plan["agenda_migrate"], [other])
                 self.assertEqual([it for it in plan["items"] if it["kind"] == "plugin"], [])
@@ -2550,6 +2550,14 @@ class TestAgendaPlugin(SyncFixture):
         self.assertEqual(r.returncode, E_PARTIAL)
         self.assertIn("outcome", r.stderr)
         self.assertEqual(self.manifest()["items"][0]["outcome"], "failed")
+
+    def test_an_agenda_installed_after_the_plan_is_stale(self):
+        self.plan_json()
+        self.record(self.row())
+        calls = len(self.claude_lines())
+        r = self.apply("--items", "p1")
+        self.assertEqual(r.returncode, E_STALE)
+        self.assertFalse([ln for ln in self.claude_lines()[calls:] if ln.startswith("plugin install")])
 
     def test_apply_updates_a_behind_agenda_from_the_instance_root(self):
         self.tip = self.push_main({"plugins/agenda/hooks/new.ts": "// v2\n"})

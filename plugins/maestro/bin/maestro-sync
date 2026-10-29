@@ -1059,7 +1059,8 @@ def agenda_rows(rows: list, root: Path) -> List[dict]:
     resolves to the instance root (real("") would be the cwd)."""
     found = []
     for row in rows:
-        if not isinstance(row, dict) or not str(row.get("id") or "").startswith(AGENDA_PREFIX):
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str) \
+                or not row["id"].startswith(AGENDA_PREFIX):
             continue
         project = row.get("projectPath")
         if row.get("scope") in AGENDA_SCOPES and isinstance(project, str) and project \
@@ -1098,11 +1099,13 @@ def agenda_declined(root: Path) -> bool:
 def agenda_state(root: Path, mirror: Path, rows: list) -> dict:
     """What the sync does about the agenda for this instance:
     {"state": "missing" | "behind" | None, "installed": version or None,
-    "scope": the scope to act on, "migrate": [keys], "warning": text or None}.
+    "scope": the scope to act on, "to": the mirror's last commit under
+    plugins/agenda (set by build_plan), "migrate": [keys], "warning": text or None}.
     Nothing when the mirror ships no plugins/agenda/. An agenda@maestro row
     for the instance decides alone (behind or current); without one, another
     agenda@* key or row means migrate, and a declined line means no offer."""
-    result = {"state": None, "installed": None, "scope": "project", "migrate": [], "warning": None}
+    result = {"state": None, "installed": None, "scope": "project", "to": None, "migrate": [],
+              "warning": None}
     if not (mirror / "plugins" / "agenda").is_dir():
         return result
     mine = [row for row in agenda_rows(rows, root) if row.get("id") == AGENDA_ID]
@@ -1124,11 +1127,21 @@ def agenda_state(root: Path, mirror: Path, rows: list) -> dict:
     return result
 
 
+def agenda_target(mirror: Path) -> Optional[str]:
+    """The short commit of the mirror's last change under plugins/agenda: the
+    version an install or an update brings."""
+    try:
+        sha = git(mirror, "log", "-1", "--format=%H", "origin/main", "--", *AGENDA_PATHS).strip()
+    except SyncError:
+        return None
+    return sha[:12] or None
+
+
 def agenda_item(status: dict) -> Optional[dict]:
     if status["state"] is None:
         return None
     installed = status["installed"]
-    return _item("plugin", AGENDA_ID, **{"from": installed[:12] if installed else None},
+    return _item("plugin", AGENDA_ID, **{"from": installed[:12] if installed else None}, to=status["to"],
                  state=status["state"], installed=installed, scope=status["scope"])
 
 
@@ -1213,6 +1226,8 @@ def build_plan(instance: Path, mirror: Path, mirror_head: str, plugin_sha: str, 
     if upstream is None:
         warnings.append(f"no version heading found in {changelog_file}: the changelog slice is empty")
     agenda = agenda_state(instance, mirror, rows)
+    if agenda["state"]:
+        agenda["to"] = agenda_target(mirror)
     if agenda["warning"]:
         warnings.append(agenda["warning"])
     item = agenda_item(agenda)
@@ -1871,7 +1886,7 @@ def run_claude(root: Path, *argv: str) -> subprocess.CompletedProcess:
     claude can't run or exits non-zero, with its own detail."""
     exe = shutil.which("claude")
     if not exe:
-        raise SyncError(E_PARTIAL, "The claude command isn't on PATH, so the agenda can't be installed.")
+        raise SyncError(E_PARTIAL, "The claude command isn't on PATH, so the agenda can't be installed or updated.")
     try:
         r = subprocess.run([exe, *argv], capture_output=True, text=True, cwd=str(root),
                            stdin=subprocess.DEVNULL)
@@ -2131,8 +2146,9 @@ def cmd_note(args) -> int:
                                      f"{item['id']} is {item['kind']}")
         if item["kind"] == "plugin":
             if item.get("state") != "missing" or item.get("path") != AGENDA_ID:
-                raise SyncError(E_USAGE, f"--outcome kept applies to a plugin that is missing; "
-                                         f"{item['id']} is an update: skip it and it is offered again")
+                why = ("is an update, not a missing plugin: skip it and it is offered again"
+                       if item.get("state") == "behind" else f"is not the {AGENDA_ID} plugin item")
+                raise SyncError(E_USAGE, f"--outcome kept applies to a missing {AGENDA_ID}; {item['id']} {why}")
             record_declined(root, item["path"])
         line = item_log_line(item, f"{item['kind']}, kept by owner", upstream)
     append_log(root, line)
@@ -2194,7 +2210,8 @@ def rollback_actions(root: Path, entry: dict) -> Tuple[List[Tuple[str, str]], Op
     if entry.get("kind") == "plugin":
         if entry.get("state") == "missing":
             scope = entry.get("scope") or "project"
-            return [], (f'outside rollback: remove it with cd "{root}" && claude plugin uninstall '
+            lead = "if it was installed, remove it" if outcome == "failed" else "remove it"
+            return [], (f'outside rollback: {lead} with cd "{root}" && claude plugin uninstall '
                         f'{AGENDA_ID} --scope {scope}')
         return [], "outside rollback: the update stays"
     actions: List[Tuple[str, str]] = [("copy", rel) for rel in entry.get("backups") or []]
