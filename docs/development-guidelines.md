@@ -33,13 +33,22 @@ Sensitive areas: `bin/mem` and the `memories.db` schema, `plugins/maestro/bin/ma
 
 - `bin/` executables distributed to instances. `.claude/skills/`, `.claude/agents/`, `CLAUDE.md`, `howto/` behaviour distributed to instances, marked `origin: maestro`.
 - `plugins/maestro/` replaces `user-skills/`: skills and executables distributed by the Claude Code plugin, versioned by commit SHA, outside `maestro-sync`. A command a plugin skill runs goes in `plugins/maestro/bin/` under a prefixed name (`maestro-listen`), so one user-level allow rule covers it; the skill's other resources (sources, templates) live in its own folder under `plugins/maestro/skills/<name>/`.
+- `plugins/agenda/` a mod: TypeScript run by Claude Code, see `## Mods`.
 - `tests/` tests. `docs/` shaping and devflow material for the template itself, kept out of distribution.
 - Every read or write on `memories.db` from a skill or an agent goes through `bin/mem`.
 
 ## Dependencies
 
 - Python 3 stdlib for every distributed script. Heavier dependencies (sqlite-vec, Ollama, uv, yap) stay optional, run through `uv run --with`, and degrade gracefully.
-- No Node, no packages to publish.
+- No Node, no packages to publish. A mod's TypeScript runs inside Claude Code, see `## Mods`.
+
+## Mods
+
+- TypeScript is allowed in `plugins/agenda/`. Claude Code loads and runs it: no npm, no `package.json`, no build.
+- Tests are `plugins/agenda/tests/*.test.ts(x)`, run by `claude plugin test` and outside `unittest`. Options per test go through `test(name, { options }, body)`.
+- The manifest carries no `version`: the mod is versioned by commit, like `maestro`.
+- No file of a mod carries the `origin: maestro` marker.
+- `plugins/agenda/hooks/labels.ts` holds the localization tables, the one place with non-English text.
 
 ## Commits
 
@@ -49,7 +58,7 @@ Sensitive areas: `bin/mem` and the `memories.db` schema, `plugins/maestro/bin/ma
 
 ## Prose
 
-- Every file in the repo is in English.
+- Every file in the repo is in English, except the localization tables of `## Mods`.
 - The writing register (`howto/10-writing-register.md`) follows the reader: it applies to README, CHANGELOG, the howto guides, decision records and devflow documents, in the documentation domain. Skills, agents and `CLAUDE.md` are read by a model and stay outside it (decision of 2026-09-17, `docs/decisions-log/2026-09-17-register-perimeter-follows-reader.md`, which supersedes the correction of 2026-09-14 for howto): emphasis and contrasts that carry an instruction stay there, and rule zero protects them in a howto guide. A skill or agent that produces prose for a reader states the register and its domain in its own instructions.
 - Markdown files carry `tags:` and `description:` frontmatter (`howto/08-markdown-discipline.md`).
 
@@ -57,6 +66,9 @@ Sensitive areas: `bin/mem` and the `memories.db` schema, `plugins/maestro/bin/ma
 
 ```bash
 python3 -m unittest discover -s tests -t .
+claude plugin validate plugins/maestro
+claude plugin validate plugins/agenda
+claude plugin test plugins/agenda
 bin/register-check <every README, CHANGELOG, howto guide, decision record or devflow document touched by the slice>
 ```
 
