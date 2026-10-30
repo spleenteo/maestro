@@ -29,6 +29,8 @@ Priority order:
    - `10-writing-register.md`: the prose register, domains, tones, `bin/register-check`
    - `11-maestro-net.md`: the channel between instances
    - `12-satellites.md`: project repos attached to an instance
+   - `13-archive.md`: closing a vault folder into the archive
+   - `14-agenda.md`: the agenda pane, its two plugin scopes, language, migration from another marketplace
 3. `private/preferences.md`, only for questions about the owner's own setup ("what's my current language", "which territories do I have").
 4. The hub skills (`.claude/skills/*/SKILL.md`), when the question is about one skill's behaviour.
 

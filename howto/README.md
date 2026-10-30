@@ -24,5 +24,6 @@ Practical guides for extending and customizing your orchestrator after setup. Re
 | 11 | [maestro-net](11-maestro-net.md) | The channel between several instances: `recap`, `ask`, the machine registry |
 | 12 | [Satellites](12-satellites.md) | Attach a project repo to an instance: the `satellite` skill, session hooks, vault folder, removal |
 | 13 | [Archive](13-archive.md) | Close a vault folder: the interview, the closing document, the archive root and its index, how the librarian reads the archive |
+| 14 | [Agenda](14-agenda.md) | The agenda pane and skill: the two plugin scopes, install, language, migration from another marketplace |
 
 Each guide stands on its own. Frontmatter on each file includes tags and a one-line description, consistent with the orchestrator's own frontmatter discipline.

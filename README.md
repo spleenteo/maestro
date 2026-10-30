@@ -1,6 +1,6 @@
 ---
 tags: [maestro, template, orchestrator, claude-code, plugin, memory, satellites]
-description: "What Maestro is and how its pieces fit: one orchestrator instance per context, the three layers of its long-term memory, sub-apps versus satellites, preferences, install, sync, and what ships in an instance and in the plugin. Read first, then the howto guides."
+description: "What Maestro is and how its pieces fit: one orchestrator instance per context, the three layers of its long-term memory, sub-apps versus satellites, preferences, install, sync, the agenda pane plugin, and what ships in an instance and in the plugins. Read first, then the howto guides."
 ---
 
 # Maestro
@@ -15,6 +15,7 @@ A one-page tour of the project: [spleenteo.github.io/maestro](https://spleenteo.
 - [Preferences](#preferences)
 - [Install and setup](#install-and-setup)
 - [Keeping an instance up to date](#keeping-an-instance-up-to-date)
+- [The agenda pane](#the-agenda-pane)
 - [What's included](#whats-included)
 - [Requirements](#requirements)
 - [Going deeper](#going-deeper)
@@ -99,16 +100,24 @@ To attach a project as a satellite, open a session in its repo and ask to make i
 
 Files distributed by Maestro carry `origin: maestro` and a `maestro_version` in their frontmatter, and are never edited in place: a change is made in this repository and reaches every instance through `/maestro:maestro-sync`. The skill is a conversation over the plugin's `maestro-sync` command, which does the mechanics and asks nothing itself. `plan` mirrors the template into `~/.maestro/`, checks that the loaded plugin is not behind it, shows the changelog slice between the instance's version and upstream, and lists one item per thing to do: a changed file, a new upstream file, a drifted `bin/` script, a retired path, a preference key the instance lacks, the agenda plugin when the instance lacks it or runs an older one. That last item sits outside the rollback, since Claude Code keeps the plugin's records on the machine. Each kind is applied on your yes. Before its first write, `apply` opens a backup set under `private/backups/<stamp>-sync/` with a manifest, a checked copy of the memory db and every file it replaces or removes, so `maestro-sync rollback <stamp>` brings the instance back byte for byte; `maestro-sync backups` lists the sets. The one field you may customize on a distributed file is `tools:`, for instance-specific MCP tools, and an update carries it over; your own skills, agents and `private/` are never touched. Versions follow the date-based `vYYYY.MM.DD.N` scheme, in `CHANGELOG.md`. An instance behind the template gets a one-line notice at session start, naming the version available and the command to run; the check reads the template's `.version` in the background, at most once every 12 hours (`howto/05-backup-and-sync.md`).
 
+## The agenda pane
+
+The agenda is a second plugin, `agenda@maestro`, that adds a pane with today's appointments and open tasks. The two plugins sit at different scopes: `maestro@maestro` at user scope, once per machine; `agenda@maestro` at project scope, in each instance that should have the pane, so satellites and plain folders get none. A new instance gets it from `/maestro:new-instance`; an existing one is offered it by `/maestro:maestro-sync`. The pane's language and the hour a day starts are one value per machine, set in your user settings; the pane follows the language you gave at setup. An instance that ran the agenda from another marketplace moves with the migration runbook. All of it is in [`howto/14-agenda.md`](howto/14-agenda.md).
+
 ## What's included
 
 In every instance:
 
 - **Agents**, in `.claude/agents/` and `.claude/roster.yaml`: `librarian` (vault research by meaning and by keyword, frontmatter hygiene, the analysis behind an archiving), `scheduler` (tasks, events and routines from the declared channels), `steward` (a weekly backlog review that proposes closures, groupings and moves, and never writes), `hr` (searches, proposes, hires and retires the others on your approval). You talk to them through the orchestrator, by alias.
-- **Skills**, in `.claude/skills/`: `logbook` (the daily note), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (seven prose prohibitions, three domains with a tone each, your voice and sign-off, and a post-pass on every document or message before it goes out), `translate` (two versions of a draft in your target language, where preferences enable it), `archive` (closes a vault folder: asks why, writes a closing document, moves the folder into one archive where it stays searchable).
+- **Skills**, in `.claude/skills/`: `logbook` (the daily note), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator), `writing-register` (seven prose prohibitions, three domains with a tone each, your voice and sign-off, and a post-pass on every document or message before it goes out), `translate` (two versions of a draft in your target language, where preferences enable it), `archive` (closes a vault folder: asks why, writes a closing document, moves the folder into one archive where it stays searchable), `agenda` (today's plan from `scheduler`, written to the pane when the agenda plugin is installed).
 - **Tools**, in `bin/`: `mem` and `mem-vec` (the memory CLI and its semantic layer), `session-digest` (your messages from the day's parallel sessions), `register-check` (the mechanical check of the writing register).
-- `CLAUDE.md`, the orchestrator's rules; `howto/`, thirteen guides.
+- `CLAUDE.md`, the orchestrator's rules; `howto/`, fourteen guides.
 
-In the plugin, once per machine:
+In the agenda plugin, per instance:
+
+- The pane, with today's appointments and open tasks; the `agenda_set` tool the `agenda` skill saves them through; the `/agenda` command, which shows or hides the pane (`/agenda update` refreshes it).
+
+In the Maestro plugin, once per machine:
 
 - **Skills**: `new-instance`, `maestro-sync`, `maestro-net` (`recap`, `ask`, `request`, and the registry commands), `satellite` (attaches a repo to a mother), `listen` (captures a call in progress through `yap`, answers questions about it while it runs, files a note and the transcript where you confirm).
 - **Commands** on the Bash tool's PATH: `maestro-net`, `maestro-sync` (`plan`, `apply`, `note`, `rollback`, `backups`), `maestro-listen`, `maestro-register-keys`.
@@ -124,6 +133,8 @@ In the plugin, once per machine:
 
 Claude Code, git and Python 3 (standard library only, no packages to install). Optional: [Ollama](https://ollama.com) and [uv](https://docs.astral.sh/uv/) for the semantic index; macOS 26 with [yap](https://github.com/finnvoor/yap) (`brew install yap`) for call capture, and the Swift toolchain for input-device rotation during a call.
 
+The agenda plugin needs Claude Code 2.1.293 or later, tested with 2.1.314.
+
 ## Going deeper
 
 - [`howto/01-skills.md`](howto/01-skills.md): add, invoke, write, retire skills
@@ -138,6 +149,8 @@ Claude Code, git and Python 3 (standard library only, no packages to install). O
 - [`howto/10-writing-register.md`](howto/10-writing-register.md): the prose register, domains, tones, `bin/register-check`
 - [`howto/11-maestro-net.md`](howto/11-maestro-net.md): the channel between instances and the registry
 - [`howto/12-satellites.md`](howto/12-satellites.md): project repos attached to an instance
+- [`howto/13-archive.md`](howto/13-archive.md): closing a vault folder into the archive
+- [`howto/14-agenda.md`](howto/14-agenda.md): the agenda pane, its scopes, language, migration from another marketplace
 
 ## Development
 

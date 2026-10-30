@@ -99,9 +99,9 @@ This is the one item that writes outside the instance: Claude Code keeps its own
 
 Answering no to a `missing` item records the decline in `private/maestro-sync.declined`, one line `agenda@maestro  declined <timestamp>`, the time in UTC (for example `2026-04-30T18:42:13Z`). The agenda is not offered again until you delete that line. A `behind` item cannot be declined for good: skipping it only waits for the next sync.
 
-When no `agenda@maestro` is installed for the instance and an agenda from another marketplace is (an installed `agenda@<other>`, or an `agenda@<other>` key in `.claude/settings.json` or `.claude/settings.local.json`), the plan prints one line, `AGENDA migrate <keys>`, and offers no item: move it to `agenda@maestro` with the migration runbook first.
+When no `agenda@maestro` is installed for the instance and an agenda from another marketplace is (an installed `agenda@<other>`, or an `agenda@<other>` key in `.claude/settings.json` or `.claude/settings.local.json`), the plan prints one line, `AGENDA migrate <keys>`, and offers no item: move it to `agenda@maestro` with [the migration runbook](14-agenda.md#the-migration-runbook) first.
 
-The pane's language is one value per machine, shared by every instance, not set per instance: Claude Code keeps it in your user settings, so a later install keeps the value you already set, and English applies when none is set.
+The pane's language is one value per machine, see [language and day start](14-agenda.md#language-and-day-start).
 
 ### Loose backups from earlier syncs
 

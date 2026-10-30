@@ -48,7 +48,7 @@ Load the `writing-register` skill before drafting a text for someone other than 
 - `workspace/handoff/`: intermediate artifacts of a task spanning several apps
 - `.claude/agents/`: craft agents; `.claude/skills/`: hub skills; `.claude/roster.yaml`: the registry of active agents, source of truth for delegation
 
-Hub skills: `logbook` (the daily note in `logbook_path`), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator: `/guide`, "I'm lost", "how do I"; `/help` is a Claude Code built-in), `writing-register`, `translate` (only where preferences enable translation), `archive` (closes a vault folder: interview on why, closing document, move into the archive root). `/maestro:new-instance` and `/maestro:maestro-sync` come from the Maestro plugin.
+Hub skills: `logbook` (the daily note in `logbook_path`), `add-external-app` (registers a sub-app), `guide` (answers questions about the orchestrator: `/guide`, "I'm lost", "how do I"; `/help` is a Claude Code built-in), `writing-register`, `translate` (only where preferences enable translation), `archive` (closes a vault folder: interview on why, closing document, move into the archive root), `agenda` (today's plan from `scheduler`; fills the pane when the agenda plugin is installed). `/maestro:new-instance` and `/maestro:maestro-sync` come from the Maestro plugin.
 
 ## Delegation and roster
 
