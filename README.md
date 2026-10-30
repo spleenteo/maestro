@@ -102,7 +102,7 @@ Files distributed by Maestro carry `origin: maestro` and a `maestro_version` in 
 
 ## The agenda pane
 
-The agenda is a second plugin, `agenda@maestro`, that adds a pane with today's appointments and open tasks. The two plugins sit at different scopes: `maestro@maestro` at user scope, once per machine; `agenda@maestro` at project scope, in each instance that should have the pane, so satellites and plain folders get none. A new instance gets it from `/maestro:new-instance`; an existing one is offered it by `/maestro:maestro-sync`. The pane's language and the hour a day starts are one value per machine, set in your user settings; the pane follows the language you gave at setup. An instance that ran the agenda from another marketplace moves with the migration runbook. All of it is in [`howto/14-agenda.md`](howto/14-agenda.md).
+The agenda is a second plugin, `agenda@maestro`, that adds a pane with today's appointments and open tasks. The two plugins sit at different scopes: `maestro@maestro` at user scope, once per machine; `agenda@maestro` at project scope, in each instance that should have the pane, so satellites and plain folders get none. A new instance gets it from `/maestro:new-instance`; an existing one is offered it by `/maestro:maestro-sync`. The pane's language and the hour a day starts are one value per machine, set in your user settings; see [language and day start](howto/14-agenda.md#language-and-day-start). An instance that ran the agenda from another marketplace moves with the migration runbook. All of it is in [`howto/14-agenda.md`](howto/14-agenda.md).
 
 ## What's included
 

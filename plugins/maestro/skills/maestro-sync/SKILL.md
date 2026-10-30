@@ -26,7 +26,7 @@ Every later call uses the same `SYNC` resolution, so repeat those two lines in e
 
 Open with the two versions, then "This update brings:" and a numbered list drawn from the `CHANGELOG` block: one plain line per change the owner will notice (a new command, a question the sync no longer asks, a fixed bug), in the owner's language, newest version first, at most seven lines, no file lists, no internal names where a plain word works. Migration steps the plan already covers (running the sync, the plugin update) stay out. No question yet.
 
-`AGENDA migrate <keys>:` line in the summary (after `AUTOUPDATE`, before `ITEMS`): say one plain line, "The agenda pane here comes from `<keys>`; it moves to `agenda@maestro` with the migration runbook (`## The migration runbook` in `howto/14-agenda.md`, a new file that arrives in this same sync and is readable in the mirror at `~/.maestro/howto/14-agenda.md`). Nothing to install in this sync." Nothing to ask, and no `plugin` item exists for this instance.
+`AGENDA migrate <keys>:` line in the summary (after `AUTOUPDATE`, before `ITEMS`): say one plain line, "The agenda pane here comes from `<keys>`; it moves to `agenda@maestro` with the migration runbook (`## The migration runbook` in `howto/14-agenda.md`, a new file that arrives in this same sync and is readable in the mirror, `~/.maestro` unless preferences set `maestro_mirror_path`). Nothing to install in this sync." Nothing to ask, and no `plugin` item exists for this instance.
 
 `AUTOUPDATE off`: ask once "Turn on auto-update for the Maestro plugin? Claude Code would then update it at every start."; yes: `"$SYNC" autoupdate`; no: go on. `AUTOUPDATE on`: say nothing about it, even when an item's diff recommends it.
 

@@ -11,7 +11,7 @@ Claude Code can show a pane beside the conversation. The agenda plugin uses it f
 
 ## What the pane shows
 
-Today's appointments with their time, then the open tasks planned for today. The `agenda` skill fills it: it asks the `scheduler` agent for the day, maps the answer and saves it through the plugin's `agenda_set` tool. When you create, close, move or cancel a task or an appointment of today, the skill saves the whole list again, without asking `scheduler`.
+Today's appointments with their time, then the open tasks planned for today. The `agenda` skill fills it: it asks the `scheduler` agent for the day, maps the answer and saves it through the plugin's `agenda_set` tool. When you create, close, move or cancel a task or an appointment of today, the skill saves the whole list again, without asking `scheduler`, when the list is still in the conversation.
 
 - `/agenda` shows or hides the pane; `/agenda update` refreshes it.
 - The pane is empty until the first agenda request of the day. Asking "what is on today" is enough.
@@ -43,11 +43,11 @@ Claude Code keeps them in your user settings, `~/.claude/settings.json`, under `
 
 An instance that ran the agenda from another marketplace has an `agenda@<other>` plugin. The sync prints `AGENDA migrate` for it and offers no `plugin` item until the instance moves to `agenda@maestro`. The move is one instance at a time, because an early removal of the old marketplace breaks the old agenda in every instance still waiting.
 
-For each instance, in the order you choose, with no sync before its turn:
+For each instance, in any order. A sync in an instance still on the old agenda is harmless: it shows only the migrate line and keeps the unmarked skill copy.
 
 1. `claude plugin marketplace update maestro`, so the install finds the current plugin.
 2. From the instance root, `claude plugin uninstall agenda@<other> --scope project --keep-data`. The uninstall drops the instance's `agenda@<other>` key by itself and breaks no other instance. `--keep-data` leaves the old data folder alone.
-3. `claude plugin install agenda@maestro --scope project`. Add `--config language=<code>` only when `pluginConfigs` in `~/.claude/settings.json` holds no `agenda@maestro` value. The command's `outcome` tells whether it worked; its message may still say an option is not yet set.
+3. `claude plugin install agenda@maestro --scope project`. Add `--config language=<code>` only when `pluginConfigs["agenda@maestro"].options.language` is unset, with `<code>` as in [language and day start](#language-and-day-start). The command's `outcome` tells whether it worked; its message may still say an option is not yet set.
 4. If the instance keeps its own copy of `.claude/skills/agenda/SKILL.md`, add `origin: maestro` and `maestro_version: <the content of private/.version>` to its frontmatter, since the sync skips a file without the marker.
 5. Run `/maestro:maestro-sync` and take the skill's `update` item through the merge conversation.
 
@@ -55,9 +55,17 @@ The pane starts empty: the plugin keeps its store under its own id, so the old p
 
 After the last instance:
 
-1. `claude plugin marketplace remove <other>` once, without a scope. A removal before this point uninstalls the old agenda in every instance that has not moved yet.
+1. From the last instance's root, `claude plugin marketplace remove <other>` once. If it reports `not_configured`, run it again with `--scope project`. A removal before this point uninstalls the old agenda in every instance that has not moved yet.
 2. In each instance, remove the `<other>` entry from `extraKnownMarketplaces` in `.claude/settings.json` (and in `.claude/settings.local.json` when it has one) by hand: Claude Code leaves it.
 3. Delete the old plugin's store file, `~/.claude/plugins/store/agenda_<other>-*.json`, after checking that it is the only file with that name pattern.
-4. Remove the folder that held the old plugin, wherever it lives.
+4. Delete the old data folder `~/.claude/plugins/data/agenda-<other>` (kept by `--keep-data`) and the cache folder `~/.claude/plugins/cache/<other>/` (marked `.orphaned_at`); both are safe to delete.
+5. Remove the folder that held the old plugin, wherever it lives.
 
-To check an instance: `claude plugin list --json` shows `agenda@maestro` with `scope: project` and the instance's path, `.claude/settings.json` has `"agenda@maestro": true` and no trace of `<other>`, and `/agenda` opens the pane in a new session. If a step fails, stop before the next instance and undo the steps already done in this one, newest first: `claude plugin uninstall agenda@maestro --scope project`, then `claude plugin install agenda@<other> --scope project` while the old marketplace is still there.
+Check each instance as it moves: `claude plugin list --json` shows `agenda@maestro` with `scope: project` and the instance's path, `.claude/settings.json` has `"agenda@maestro": true` and no `agenda@<other>` key in `enabledPlugins`, and `/agenda` opens the pane in a new session. The uninstall keeps the `<other>` entry in `extraKnownMarketplaces` until the cleanup above. After the cleanup, `<other>` appears in neither `.claude/settings.json` nor `.claude/settings.local.json`.
+
+If a step fails, stop before the next instance and undo this instance's steps, newest first:
+
+- After the sync: `maestro-sync rollback <stamp>`.
+- After the marker edit: remove the two marker lines (`origin` and `maestro_version`) from the skill copy.
+- After the install: `claude plugin uninstall agenda@maestro --scope project`.
+- Then reinstall the old agenda: `claude plugin install agenda@<other> --scope project`, possible while the old marketplace is still there.
