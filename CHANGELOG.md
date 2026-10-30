@@ -12,6 +12,7 @@ One line per version; the full entry below carries the reasons and the migration
 
 | Version | Theme |
 |---|---|
+| v2026.10.30.1 | The agenda pane ships as its own plugin, installed per instance; the sync offers it, and new instances get it at setup |
 | v2026.10.01.3 | The update notice reads the version an instance was synced to from `private/.version`, so a release that leaves `CLAUDE.md` alone no longer keeps it up |
 | v2026.10.01.2 | A satellite session knows when to write a memory, and two plugin hooks remind it: a short closing message after some work, an hour of work with no memory in its scope |
 | v2026.10.01.1 | The librarian searches by meaning first, tells archived from deprecated, renames with a link sweep and logs every write; the `archive` skill closes a vault folder; HR converges a custom agent onto the upstream one |
@@ -41,6 +42,35 @@ One line per version; the full entry below carries the reasons and the migration
 | v2026.04.30.2 | Three patterns promoted from a personal instance into the template |
 | v2026.04.30.1 | Available apps moves from `CLAUDE.md` into `preferences.md`; the distribution rule |
 | v2026.04.29.1 | Initial snapshot for changelog tracking |
+
+---
+
+## v2026.10.30.1 — 2026-10-30
+
+**Theme**: the agenda pane as its own plugin. The pane that shows today's appointments and open tasks used to run from a marketplace kept by hand in a single instance. It now ships in this marketplace as `agenda@maestro`, installed at project scope in each instance while `maestro@maestro` stays at user scope, so satellites and plain folders get no pane. New instances get it at setup, existing ones are offered it by the sync.
+
+### Added
+
+- **`plugins/agenda`**: the pane, the `agenda_set` tool that writes it and the `/agenda` command that shows or hides it (`/agenda update` refreshes it). Labels in English or Italian, chosen by the plugin's `language` option; `dayStart` sets the hour a new day begins. Both are one value per machine, in `pluginConfigs` of the user settings. The plugin needs Claude Code 2.1.293 or later.
+- **The `agenda` skill** in `.claude/skills/agenda/`: asks `scheduler` for today's tasks and appointments and saves them to the pane through `agenda_set`.
+- **The `plugin` item of `maestro-sync`** (`p1`): offered when the instance has no agenda (`missing`) or runs an older one (`behind`). Declining a `missing` item writes `private/maestro-sync.declined`, and the agenda is not offered again until that line is deleted. An instance with an agenda from another marketplace gets one `AGENDA migrate` line instead of the item. The item sits outside the rollback, which prints the uninstall command.
+- **The install in `/maestro:new-instance`**: after Finalize, `agenda@maestro` at project scope, with `--config language=<code>` only when the machine has no language set yet.
+- **`howto/14-agenda.md`**: the two scopes, install, language and day start, and the migration runbook for an instance that ran the agenda from another marketplace.
+- **Plugin icons** for `maestro` and `agenda`.
+- **A decision record**, `docs/decisions-log/2026-10-29-agenda-plugin-project-scope.md`.
+
+### Changed
+
+- **`CLAUDE.md`**: `agenda` joins the hub skills.
+- **`howto/05-backup-and-sync.md`**: the `plugin` item, the decline file and the migrate line, under `### The agenda plugin`.
+- **`howto/README.md`** and the `guide` skill list guides 13 and 14.
+- **The README**: a section on the agenda pane, the agenda plugin's contents and its minimum Claude Code version.
+
+### Migration
+
+1. **Update the plugin**: with the marketplace's auto-update off, the first sync stops and offers `update-plugin`; restart Claude Code and run the sync again. With auto-update on, the plugin is already current.
+2. **Run `/maestro:maestro-sync`**: the new and changed files arrive, and `p1` offers the agenda pane. The pane loads at the next start of Claude Code and stays empty until the first agenda request.
+3. **An instance that ran the agenda from another marketplace** sees the `AGENDA migrate` line and no `p1`. Follow `howto/14-agenda.md` → `## The migration runbook`, which arrives in the same sync: one instance at a time, uninstall the old agenda and install `agenda@maestro` at project scope, then sync; remove the old marketplace once, after the last instance.
 
 ---
 

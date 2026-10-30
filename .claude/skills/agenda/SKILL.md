@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.10.01.3
+maestro_version: v2026.10.30.1
 name: agenda
 description: "Today's plan, in any language: use for any question, in any language, about today's plan or what is left to do today, and to refresh today's agenda. The single entry point for that question: asks the scheduler agent for today's tasks and appointments and saves them to the agenda pane with mcp__agenda__agenda_set. Not for other days."
 user-invocable: false
