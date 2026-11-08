@@ -1,5 +1,5 @@
 {
-  "description": "Maestro at session start: in an instance root, one line when a newer template version is available (checked in the background twice a day); in a registered satellite repo, its scope, role and memory criterion, its linked vault folder opened to the file tools, and two nudges to write memories (a closing word after some work, an hour of work with no memory in scope).",
+  "description": "Maestro at session start: in an instance root, one line when a newer template version is available (read from the repo at every start, the cache as fallback); in a registered satellite repo, its scope, role and memory criterion, its linked vault folder opened to the file tools, and two nudges to write memories (a closing word after some work, an hour of work with no memory in scope).",
   "hooks": {
     "SessionStart": [
       {

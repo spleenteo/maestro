@@ -12,6 +12,7 @@ One line per version; the full entry below carries the reasons and the migration
 
 | Version | Theme |
 |---|---|
+| v2026.11.08.2 | The update notice reads the template's `.version` from the repo at every session start instead of a cache refreshed twice a day |
 | v2026.11.08.1 | `agenda_set` works after a `/clear`: the plugin derives its store key again instead of refusing |
 | v2026.10.30.1 | The agenda pane ships as its own plugin, installed per instance; the sync offers it, and new instances get it at setup |
 | v2026.10.01.3 | The update notice reads the version an instance was synced to from `private/.version`, so a release that leaves `CLAUDE.md` alone no longer keeps it up |
@@ -43,6 +44,22 @@ One line per version; the full entry below carries the reasons and the migration
 | v2026.04.30.2 | Three patterns promoted from a personal instance into the template |
 | v2026.04.30.1 | Available apps moves from `CLAUDE.md` into `preferences.md`; the distribution rule |
 | v2026.04.29.1 | Initial snapshot for changelog tracking |
+
+---
+
+## v2026.11.08.2 — 2026-11-08
+
+**Theme**: the update notice sees a release at the first session after it. The `SessionStart` hook used to read a cache refreshed in the background at most twice a day, so a release pushed after the last refresh showed up in the second session after the next refresh, up to half a day late. It now reads the template's `.version` from the repo at every start, with a 2-second timeout, and falls back to the cache when the read fails.
+
+### Changed
+
+- **`plugins/maestro/hooks/satellite-hook`**: `update_check` fetches upstream inline and rewrites the cache with it; offline or slow, it compares against the cached version as before. The detached fetcher and the 12-hour interval are gone; `update-fetch` stays as a manual mode.
+- **`MAESTRO_UPDATE_INTERVAL`** no longer exists. `MAESTRO_VERSION_URL` and `MAESTRO_UPDATE_CACHE` still do.
+- **`howto/05-backup-and-sync.md`**: `### The update notice` describes the new flow.
+
+### Migration
+
+Update the plugin (`claude plugin update maestro@maestro`, then restart Claude Code), or run `/maestro:maestro-sync`. Nothing to change in the instance.
 
 ---
 

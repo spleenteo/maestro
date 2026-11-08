@@ -20,18 +20,18 @@ user-prompt-submit M
 stop M          Called by satellite-guard at the end of every turn: after an
                 hour of active time with no new row in the satellite's scope,
                 blocks the stop once and asks for a memory.
-update-fetch    The detached fetcher the update check spawns: reads the
-                template's `.version` from MAESTRO_VERSION_URL (default: the
-                raw GitHub file) and rewrites the update cache. Exits 0 and
-                leaves the cache alone on any error.
+update-fetch    Reads the template's `.version` from MAESTRO_VERSION_URL
+                (default: the raw GitHub file) and rewrites the update cache.
+                Exits 0 and leaves the cache alone on any error. The update
+                check does the same inline.
 
-The update check compares the cached upstream version (MAESTRO_UPDATE_CACHE
-or ~/.claude/maestro-update-check.json) with where the instance stands:
+The update check reads the template's `.version` at every start, with a
+2-second timeout, and compares it with where the instance stands:
 `private/.version`, written by maestro-sync, or its CLAUDE.md
-`maestro_version` when newer or when the stamp is missing; when the cache is missing or older than
-MAESTRO_UPDATE_INTERVAL seconds (default 12 hours) it stamps `checked_at`
-and spawns the fetcher, without waiting. Outside an instance root it does
-nothing and spawns nothing.
+`maestro_version` when newer or when the stamp is missing. When the fetch
+fails (offline, slow, a bad body) it compares the cached upstream version
+(MAESTRO_UPDATE_CACHE or ~/.claude/maestro-update-check.json) instead. Outside
+an instance root it does nothing and fetches nothing.
 
 The hook runs in every session on the machine: it never fails the session.
 Any error outside a satellite is silent; inside a satellite it becomes one
@@ -63,7 +63,7 @@ from maestro_satellites import satellite_row as mother_row  # noqa: E402
 from maestro_versions import instance_version, is_newer, update_cache_path  # noqa: E402
 
 VERSION_URL = "https://raw.githubusercontent.com/spleenteo/maestro/main/.version"
-UPDATE_INTERVAL = 43200  # seconds: twice a day
+FETCH_TIMEOUT = 2  # seconds the session start may wait on the network
 UPSTREAM_RE = re.compile(r"^v\d{4}\.\d{2}\.\d{2}\.\d+\s*$")
 
 # Sections of the mother's preferences a satellite may see: the exact name,
@@ -334,87 +334,67 @@ def write_update_cache(path: Path, upstream: str | None) -> None:
         raise
 
 
-def cache_is_stale(cache: dict) -> bool:
-    """True when `checked_at` is missing, unparseable or older than the
-    interval (MAESTRO_UPDATE_INTERVAL seconds, default UPDATE_INTERVAL)."""
-    try:
-        interval = int(os.environ.get("MAESTRO_UPDATE_INTERVAL") or UPDATE_INTERVAL)
-    except ValueError:
-        interval = UPDATE_INTERVAL
-    try:
-        checked_at = datetime.fromisoformat(str(cache.get("checked_at")))
-    except ValueError:
-        return True
-    if checked_at.tzinfo is None:
-        checked_at = checked_at.replace(tzinfo=timezone.utc)
-    return utc_now() - checked_at >= timedelta(seconds=interval)
-
-
-def spawn_fetcher(cache_file: Path, upstream: str | None) -> None:
-    """Stamp `checked_at` first, so two sessions starting together don't both
-    fetch, then start `update-fetch` detached: its own session, no inherited
-    stream (the hook's stdout is the JSON line Claude Code reads), no wait."""
-    write_update_cache(cache_file, upstream)
-    subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "update-fetch"],
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True, close_fds=True)
-
-
-def update_check(folder: str) -> str | None:
-    """The one-line notice when the cached upstream version is newer than the
-    instance's CLAUDE.md, else None. Only in an instance root that isn't the
-    template itself (`plugins/maestro/` absent). The notice comes from the
-    cache as it was: a stale cache refreshes in the background, for the next
-    session."""
-    root = Path(folder)
-    if not is_instance_dir(root) or (root / "plugins" / "maestro").is_dir():
-        return None
-    cache_file = update_cache_path()
-    cache = read_update_cache(cache_file)
-    upstream = cache.get("upstream")
-    if not isinstance(upstream, str):
-        upstream = None
-    notice = None
-    if upstream:
-        try:
-            local = instance_version(root)
-            if is_newer(upstream, local):
-                notice = (f"Maestro {upstream} is available (this instance is on {local}): "
-                          "run /maestro:maestro-sync.")
-        except (OSError, ValueError):  # no CLAUDE.md, or a malformed version on either side
-            notice = None
-    if cache_is_stale(cache):
-        try:
-            spawn_fetcher(cache_file, upstream)
-        except OSError:
-            pass
-    return notice
-
-
-def update_fetch() -> int:
-    """Fetch the template's `.version` and rewrite the cache. Any error, a
-    body that isn't a version, or a fetch past the 5-second alarm: exit 0
-    with the cache untouched."""
+def fetch_upstream(timeout: float) -> str | None:
+    """The template's `.version` from MAESTRO_VERSION_URL (default VERSION_URL),
+    or None on any error, a body that isn't a version, or a fetch past the
+    timeout plus one second of alarm."""
     url = os.environ.get("MAESTRO_VERSION_URL") or VERSION_URL
 
     def on_alarm(_signum, _frame):
         raise FetchTimeout()
 
     signal.signal(signal.SIGALRM, on_alarm)
-    signal.alarm(5)
+    signal.alarm(int(timeout) + 1)
     try:
-        with urllib.request.urlopen(url, timeout=3) as resp:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
             body = resp.read(256).decode("utf-8", errors="replace")
     except Exception:  # URLError, socket and http.client errors, FetchTimeout, a bad URL
-        return 0
+        return None
     finally:
         signal.alarm(0)
-    if not UPSTREAM_RE.match(body):
-        return 0
+    return body.strip() if UPSTREAM_RE.match(body) else None
+
+
+def update_check(folder: str) -> str | None:
+    """The one-line notice when the template's `.version` is newer than the
+    instance's, else None. Only in an instance root that isn't the template
+    itself (`plugins/maestro/` absent). The version is read from the repo at
+    every start; the cache is the fallback when that read fails."""
+    root = Path(folder)
+    if not is_instance_dir(root) or (root / "plugins" / "maestro").is_dir():
+        return None
+    cache_file = update_cache_path()
+    upstream = fetch_upstream(FETCH_TIMEOUT)
+    if upstream:
+        try:
+            write_update_cache(cache_file, upstream)
+        except OSError:
+            pass
+    else:
+        cached = read_update_cache(cache_file).get("upstream")
+        upstream = cached if isinstance(cached, str) else None
+    if not upstream:
+        return None
     try:
-        write_update_cache(update_cache_path(), body.strip())
-    except OSError:
+        local = instance_version(root)
+        if is_newer(upstream, local):
+            return (f"Maestro {upstream} is available (this instance is on {local}): "
+                    "run /maestro:maestro-sync.")
+    except (OSError, ValueError):  # no CLAUDE.md, or a malformed version on either side
         pass
+    return None
+
+
+def update_fetch() -> int:
+    """Fetch the template's `.version` and rewrite the cache. Any error, a
+    body that isn't a version, or a fetch past the alarm: exit 0 with the
+    cache untouched."""
+    body = fetch_upstream(3)
+    if body:
+        try:
+            write_update_cache(update_cache_path(), body)
+        except OSError:
+            pass
     return 0
 
 

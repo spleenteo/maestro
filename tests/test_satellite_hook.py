@@ -7,8 +7,7 @@ role and only the whitelisted part of the mother's preferences.
 
 `TestUpdateCheck` covers the hook's other job, the update notice in an
 instance root. Every hook test runs with `MAESTRO_VERSION_URL` pointing at a
-`file://` URL inside the temp dir and a large `MAESTRO_UPDATE_INTERVAL`, so
-no test reaches the network.
+`file://` URL inside the temp dir, so no test reaches the network.
 """
 
 import json
@@ -107,8 +106,8 @@ class HookCase(unittest.TestCase):
         self.env_file = self.tmp / "env"
         self.env_file.write_text("")
         # The update check's files: the cache, and the upstream `.version` the
-        # fetcher reads. The version file doesn't exist until a test writes it,
-        # so a fetcher spawned by any test fails fast and writes nothing.
+        # hook reads at every start. The version file doesn't exist until a test
+        # writes it, so the read fails fast and the hook falls back to the cache.
         self.cache = self.tmp / "cache dir" / "maestro-update-check.json"
         self.version_file = self.tmp / "upstream.version"
 
@@ -136,7 +135,6 @@ class HookCase(unittest.TestCase):
                "CLAUDE_ENV_FILE": str(self.env_file),
                "CLAUDE_PROJECT_DIR": str(self.repo),
                "MAESTRO_UPDATE_CACHE": str(self.cache),
-               "MAESTRO_UPDATE_INTERVAL": "999999",
                "MAESTRO_VERSION_URL": self.version_file.as_uri()}
         env.update(extra)
         return env
@@ -345,9 +343,10 @@ class TestUpdateCheck(HookCase):
         self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
 
     def test_outside_an_instance_nothing_is_printed_and_no_cache_appears(self):
-        # A plain folder, no cache (stale by definition) and a zero interval:
-        # only the instance gate keeps the hook from stamping and spawning.
-        r = self.session_start(self.repo, MAESTRO_UPDATE_INTERVAL="0")
+        # A plain folder with a readable upstream: only the instance gate
+        # keeps the hook from fetching and writing the cache.
+        self.version_file.write_text(f"{self.NEWER}\n")
+        r = self.session_start(self.repo)
         self.assertEqual(r.stdout, "")
         self.assertFalse(self.cache.exists())
 
@@ -373,39 +372,34 @@ class TestUpdateCheck(HookCase):
         stamp.write_text("garbage\n")
         self.assertIn(f"this instance is on {self.LOCAL}", self.context(self.session_start(self.mother)))
 
-    def test_a_missing_cache_is_stamped_and_the_fetcher_writes_it_from_a_file_url(self):
-        """The hook stamps `checked_at` alone (no upstream known yet) and
-        spawns the fetcher detached. The fetcher is then run synchronously
-        here rather than waited for: a detached process can only be observed
-        by polling with sleeps, and the version file appears only after the
-        hook returned, so the spawned copy either failed fast on the missing
-        file or wrote, atomically, the same content the synchronous run
-        asserts below."""
-        start = datetime.now(timezone.utc).replace(microsecond=0)
+    def test_the_repo_version_is_read_at_every_start_whatever_the_cache_says(self):
+        # A recent cache that still says the old version: the file wins and
+        # the notice appears at the first session after a release.
+        self.write_cache(self.LOCAL)
+        self.version_file.write_text(f"{self.NEWER}\n")
         r = self.session_start(self.mother)
-        self.assertEqual(r.stdout, "")
-        stamped = self.read_cache()
-        self.assertNotIn("upstream", stamped)
-        self.assertGreaterEqual(datetime.fromisoformat(stamped["checked_at"]), start)
+        self.assertIn(f"Maestro {self.NEWER} is available", self.context(r))
+        self.assertEqual(self.read_cache()["upstream"], self.NEWER)
+
+    def test_a_missing_cache_is_written_from_the_file_url(self):
+        self.version_file.write_text(f"{self.NEWER}\n")
+        self.session_start(self.mother)
+        self.assertEqual(self.read_cache()["upstream"], self.NEWER)
+
+    def test_an_unreachable_url_falls_back_to_the_cache(self):
+        self.write_cache(self.NEWER)
+        before = self.cache.read_bytes()
+        r = self.session_start(self.mother, MAESTRO_VERSION_URL="http://127.0.0.1:1/")
+        self.assertIn(f"Maestro {self.NEWER} is available", self.context(r))
+        self.assertEqual(self.cache.read_bytes(), before)
+
+    def test_the_fetcher_mode_still_rewrites_the_cache(self):
         self.version_file.write_text(f"{self.NEWER}\n")
         self.fetch()
-        refreshed = self.read_cache()
-        self.assertEqual(refreshed["upstream"], self.NEWER)
-        self.assertGreaterEqual(datetime.fromisoformat(refreshed["checked_at"]), start)
-
-    def test_an_unreachable_url_leaves_the_cache_untouched(self):
-        # A cache older than the (large) test interval: the hook stamps `checked_at`
-        # and keeps `upstream`; the fetcher, spawned and then run synchronously
-        # against a refused port, writes nothing.
-        start = datetime.now(timezone.utc).replace(microsecond=0)
-        self.write_cache(self.LOCAL, age=timedelta(days=30))
-        r = self.session_start(self.mother, MAESTRO_VERSION_URL="http://127.0.0.1:1/")
-        self.assertEqual(r.stdout, "")
-        stamped = self.cache.read_bytes()
-        self.assertEqual(json.loads(stamped)["upstream"], self.LOCAL)
-        self.assertGreaterEqual(datetime.fromisoformat(json.loads(stamped)["checked_at"]), start)
+        self.assertEqual(self.read_cache()["upstream"], self.NEWER)
+        before = self.cache.read_bytes()
         self.fetch(MAESTRO_VERSION_URL="http://127.0.0.1:1/")
-        self.assertEqual(self.cache.read_bytes(), stamped)
+        self.assertEqual(self.cache.read_bytes(), before)
 
 
 class TestVaultGuard(HookCase):
