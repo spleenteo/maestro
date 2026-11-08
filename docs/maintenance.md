@@ -37,4 +37,4 @@ The template is skills, agents, markdown and a few Python scripts, so there is n
 
 ## Baseline
 
-2026-11-08: 845 tests, OK, 8 skipped (Python 3.12 through uv; every script also starts under the system Python 3.9.6); mod tests 65 pass; Actions at checkout v7, configure-pages v6, upload-pages-artifact v5, deploy-pages v5; Dependabot added; 11 merged branches deleted.
+2026-11-08: `unittest` ran 853 tests, OK, 8 skipped, under the system Python 3.9.6 (pytest counts the same run as 845 passed plus 8 skipped); mod tests 65 pass; Actions at checkout v7, configure-pages v6, upload-pages-artifact v5, deploy-pages v5; Dependabot added; 11 merged branches deleted.
