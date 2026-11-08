@@ -72,4 +72,6 @@ claude plugin test plugins/agenda
 bin/register-check <every README, CHANGELOG, howto guide, decision record or devflow document touched by the slice>
 ```
 
-Baseline on 2026-09-28: 811 tests, OK, 8 skipped.
+Baseline on 2026-11-08: 845 tests, OK, 8 skipped.
+
+Routine maintenance (Actions pins, Pages run, Dependabot, merged branches, tools, plugin cache) is `docs/maintenance.md`, run as one report by `.claude/skills/maintenance/check` and applied by the `/maintenance` skill of this repository.

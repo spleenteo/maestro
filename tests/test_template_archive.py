@@ -36,6 +36,7 @@ TEMPLATE_ONLY_PATHS = (
     ".devflow.yml",
     ".gitattributes",
     ".version",
+    ".claude/skills/maintenance",
 )
 
 # Paths every archived instance must carry.

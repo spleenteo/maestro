@@ -41,6 +41,11 @@ tests/test_finalize.py export-ignore
 # the new-instance skill's command blocks out of plugins/.
 tests/test_new_instance.py export-ignore
 
+# The template repo's own maintenance skill and its check script: they
+# inspect plugins/, docs/ and the GitHub repository, none of which an
+# instance has.
+.claude/skills/maintenance/ export-ignore
+
 # Redirect left for instances still running the retired local maestro-sync:
 # old syncs read it from the mirror; new instances never need it.
 .claude/skills/maestro-sync/ export-ignore

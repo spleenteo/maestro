@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+"""check: the read-only maintenance report of the Maestro template repository.
+
+Runs every check that routine maintenance needs and prints one line per
+check with a status: OK, ATTENTION (something to decide or fix), SKIP (the
+check could not run here, with the reason). It never writes to the repo,
+never pushes, never installs. The `maintenance` skill reads this report and
+proposes the remedies listed in docs/maintenance.md.
+
+Usage:
+    .claude/skills/maintenance/check              # full report (the test suite takes minutes)
+    .claude/skills/maintenance/check --no-tests   # skip the Python suite and the mod tests
+    .claude/skills/maintenance/check --json       # machine-readable report
+
+Exit codes: 0 every check OK or SKIP, 1 at least one ATTENTION, 2 usage.
+Python 3 stdlib only. Needs git; gh, claude, brew and the network are each
+optional and their checks SKIP when missing.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import glob
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+from typing import List, Optional, Tuple
+
+ROOT = Path(__file__).resolve().parents[3]
+HOME = Path(os.environ.get("HOME", "~")).expanduser()
+TOOLS = ("yap", "uv", "ollama", "sqlite", "ripgrep")
+PLUGINS = ("plugins/maestro", "plugins/agenda")
+MOD = "plugins/agenda"
+PAGES_WORKFLOW = "pages.yml"
+
+OK, ATTENTION, SKIP = "OK", "ATTENTION", "SKIP"
+
+
+class Report:
+    def __init__(self) -> None:
+        self.rows: List[dict] = []
+
+    def add(self, name: str, status: str, detail: str, lines: Optional[List[str]] = None) -> None:
+        self.rows.append({"check": name, "status": status, "detail": detail, "lines": lines or []})
+
+
+def run(cmd: List[str], timeout: int = 60, cwd: Optional[Path] = None) -> Tuple[int, str]:
+    """(exit code, stdout+stderr) of a command; 127 when the binary is missing,
+    124 on timeout."""
+    if shutil.which(cmd[0]) is None:
+        return 127, f"{cmd[0]}: not found"
+    try:
+        proc = subprocess.run(cmd, cwd=str(cwd or ROOT), capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, f"timeout after {timeout}s"
+    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+# --------------------------------------------------------------------------
+# Checks
+# --------------------------------------------------------------------------
+
+def check_repo_shape(rep: Report) -> bool:
+    if not (ROOT / "plugins" / "maestro").is_dir():
+        rep.add("Repository", SKIP, f"{ROOT} is not the Maestro template repository (no plugins/maestro/)")
+        return False
+    rc, out = run(["git", "status", "--porcelain"])
+    dirty = [line for line in out.splitlines() if line.strip()]
+    if dirty:
+        rep.add("Working tree", ATTENTION, f"{len(dirty)} uncommitted change(s); the report reads the working tree, the archive test reads the last commit", dirty[:10])
+    else:
+        rep.add("Working tree", OK, "clean")
+    return True
+
+
+def check_python_runtime(rep: Report) -> None:
+    rc, out = run([sys.executable, "--version"])
+    version = out.strip() or sys.version.split()[0]
+    failures = []
+    for script in ("bin/mem", "bin/register-check", "bin/session-digest",
+                   "plugins/maestro/bin/maestro-sync", "plugins/maestro/bin/maestro-net",
+                   "plugins/maestro/bin/maestro-listen"):
+        rc, out = run([sys.executable, str(ROOT / script), "--help"], timeout=30)
+        if rc != 0 or "usage" not in out.lower():
+            failures.append(f"{script}: exit {rc}: {out.strip().splitlines()[-1] if out.strip() else ''}")
+    if failures:
+        rep.add("Scripts start", ATTENTION, f"{len(failures)} script(s) do not start under {version}", failures)
+    else:
+        rep.add("Scripts start", OK, f"every distributed script prints its usage under {version}")
+
+
+def check_python_suite(rep: Report) -> None:
+    rc, out = run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."], timeout=1200)
+    ran = re.search(r"Ran (\d+) tests?", out)
+    verdict = re.search(r"^(OK|FAILED)(.*)$", out, re.M)
+    if rc == 124:
+        rep.add("Python suite", SKIP, out)
+        return
+    summary = f"{ran.group(0) if ran else '?'}, {verdict.group(0).strip() if verdict else 'no verdict'}"
+    if rc == 0 and verdict and verdict.group(1) == "OK":
+        rep.add("Python suite", OK, summary)
+    else:
+        tail = [line for line in out.splitlines() if line.startswith(("FAIL:", "ERROR:"))][:15]
+        rep.add("Python suite", ATTENTION, summary, tail)
+
+
+def check_plugin_validate(rep: Report) -> None:
+    if shutil.which("claude") is None:
+        rep.add("Plugin manifests", SKIP, "claude not on PATH")
+        return
+    notes, bad = [], False
+    for plugin in PLUGINS:
+        rc, out = run(["claude", "plugin", "validate", plugin], timeout=120)
+        warnings = re.search(r"Found (\d+) warnings?", out)
+        errors = re.search(r"Found (\d+) errors?", out)
+        if rc != 0 or errors:
+            bad = True
+            notes.append(f"{plugin}: exit {rc}, {errors.group(0) if errors else 'see output'}")
+            notes.extend("  " + line.strip() for line in out.splitlines() if line.strip().startswith("❯"))
+        elif warnings:
+            notes.append(f"{plugin}: {warnings.group(0)}")
+            lines = out.splitlines()
+            start = next(i for i, line in enumerate(lines) if "Found" in line and "warning" in line) + 1
+            collected = 0
+            for line in lines[start:]:
+                if not line.strip():
+                    if collected:
+                        break
+                    continue
+                if line.strip().startswith("❯"):
+                    notes.append("  " + line.strip().lstrip("❯ "))
+                    collected += 1
+        else:
+            notes.append(f"{plugin}: nothing to report")
+    rep.add("Plugin manifests", ATTENTION if bad else OK,
+            "claude plugin validate on both plugins" + ("" if bad else "; warnings are listed, decisions in docs/maintenance.md"), notes)
+
+
+def check_mod_tests(rep: Report) -> None:
+    if shutil.which("claude") is None:
+        rep.add("Mod tests", SKIP, "claude not on PATH")
+        return
+    rc, out = run(["claude", "plugin", "test", MOD], timeout=600)
+    passed = re.search(r"^\s*(\d+) pass", out, re.M)
+    failed = re.search(r"^\s*(\d+) fail", out, re.M)
+    summary = f"{passed.group(1) if passed else '?'} pass, {failed.group(1) if failed else '?'} fail"
+    if rc == 0 and failed and failed.group(1) == "0":
+        rep.add("Mod tests", OK, summary)
+    else:
+        tail = [line for line in out.splitlines() if "(fail)" in line or line.startswith("error")][:15]
+        rep.add("Mod tests", ATTENTION, f"{summary} (exit {rc})", tail)
+
+
+def check_actions(rep: Report) -> None:
+    pins = {}
+    for path in glob.glob(str(ROOT / ".github" / "workflows" / "*.yml")):
+        for m in re.finditer(r"uses:\s*([\w.-]+/[\w.-]+)@v?(\d+)", Path(path).read_text()):
+            pins.setdefault(m.group(1), set()).add(int(m.group(2)))
+    if not pins:
+        rep.add("GitHub Actions", OK, "no workflow pins an action")
+        return
+    if shutil.which("gh") is None:
+        rep.add("GitHub Actions", SKIP, "gh not on PATH; pins: " + ", ".join(f"{a}@v{max(v)}" for a, v in sorted(pins.items())))
+        return
+    behind, notes = [], []
+    for action, majors in sorted(pins.items()):
+        rc, out = run(["gh", "api", f"repos/{action}/releases/latest", "--jq", ".tag_name"], timeout=30)
+        latest = re.match(r"v?(\d+)", out.strip())
+        if rc != 0 or not latest:
+            notes.append(f"{action}: pinned v{max(majors)}, latest unknown ({out.strip()[:60]})")
+            continue
+        if int(latest.group(1)) > max(majors):
+            behind.append(f"{action}: pinned v{max(majors)}, latest {out.strip()}")
+        else:
+            notes.append(f"{action}: v{max(majors)} is current")
+    if behind:
+        rep.add("GitHub Actions", ATTENTION, f"{len(behind)} action(s) behind their latest major", behind + notes)
+    else:
+        rep.add("GitHub Actions", OK, f"{len(pins)} action(s) at their latest major", notes)
+
+
+def check_pages_run(rep: Report) -> None:
+    if shutil.which("gh") is None:
+        rep.add("Pages workflow", SKIP, "gh not on PATH")
+        return
+    rc, out = run(["gh", "run", "list", "--workflow", PAGES_WORKFLOW, "--limit", "1",
+                   "--json", "databaseId,conclusion,createdAt"], timeout=30)
+    try:
+        last = json.loads(out)[0]
+    except (ValueError, IndexError):
+        rep.add("Pages workflow", SKIP, f"no run found ({out.strip()[:80]})")
+        return
+    rc, view = run(["gh", "run", "view", str(last["databaseId"])], timeout=30)
+    deprecations = [line.strip() for line in view.splitlines() if re.search(r"deprecat|Node\.js \d+", line, re.I)]
+    when = last.get("createdAt", "")[:10]
+    if last.get("conclusion") != "success":
+        rep.add("Pages workflow", ATTENTION, f"last run on {when} ended {last.get('conclusion')}")
+    elif deprecations:
+        rep.add("Pages workflow", ATTENTION, f"last run on {when} succeeded with deprecation notices", deprecations)
+    else:
+        rep.add("Pages workflow", OK, f"last run on {when} succeeded, no deprecation notice")
+
+
+def check_dependabot(rep: Report) -> None:
+    if shutil.which("gh") is None:
+        rep.add("Dependabot PRs", SKIP, "gh not on PATH")
+        return
+    rc, out = run(["gh", "pr", "list", "--author", "app/dependabot", "--state", "open",
+                   "--json", "number,title"], timeout=30)
+    try:
+        prs = json.loads(out)
+    except ValueError:
+        rep.add("Dependabot PRs", SKIP, out.strip()[:80])
+        return
+    if prs:
+        rep.add("Dependabot PRs", ATTENTION, f"{len(prs)} open", [f"#{p['number']} {p['title']}" for p in prs])
+    else:
+        rep.add("Dependabot PRs", OK, "none open")
+
+
+def check_branches(rep: Report) -> None:
+    run(["git", "fetch", "--prune", "--quiet", "origin"], timeout=60)
+    rc, out = run(["git", "branch", "--merged", "main", "--format=%(refname:short)"])
+    rc2, current = run(["git", "branch", "--show-current"])
+    local = [b for b in out.split() if b not in ("main", current.strip())]
+    rc, out = run(["git", "branch", "-r", "--merged", "origin/main", "--format=%(refname:short)"])
+    remote = [b for b in out.split() if "/" in b and b not in ("origin/main", "origin/HEAD")]
+    if local or remote:
+        rep.add("Merged branches", ATTENTION, f"{len(local)} local and {len(remote)} remote branch(es) already merged into main",
+                [f"local  {b}" for b in local] + [f"remote {b}" for b in remote])
+    else:
+        rep.add("Merged branches", OK, "none besides main")
+
+
+def check_tools(rep: Report) -> None:
+    if shutil.which("brew") is None:
+        rep.add("Tools (brew)", SKIP, "brew not on PATH")
+        return
+    rc, out = run(["brew", "outdated", "--quiet"], timeout=120)
+    outdated = [line.strip() for line in out.splitlines() if line.strip().split("@")[0] in TOOLS]
+    if outdated:
+        rep.add("Tools (brew)", ATTENTION, "outdated on this machine (the owner upgrades, the repo is unaffected)", outdated)
+    else:
+        rep.add("Tools (brew)", OK, "yap, uv, ollama, sqlite, ripgrep current or not installed via brew")
+
+
+def check_sqlite_vec(rep: Report) -> None:
+    head = (ROOT / "bin" / "mem-vec").read_text().splitlines()[:8]
+    pin = next((line for line in head if "sqlite-vec" in line), "")
+    m = re.search(r"sqlite-vec\s*([<>=!~]+)\s*([\d.]+)", pin)
+    if not m:
+        rep.add("sqlite-vec pin", SKIP, "no pin found in bin/mem-vec header")
+        return
+    try:
+        with urllib.request.urlopen("https://pypi.org/pypi/sqlite-vec/json", timeout=10) as resp:
+            info = json.load(resp)["info"]
+    except Exception as exc:  # network is optional
+        rep.add("sqlite-vec pin", SKIP, f"PyPI unreachable ({exc.__class__.__name__}); pin is {m.group(0)}")
+        return
+    latest = info["version"]
+    rep.add("sqlite-vec pin", OK, f"pin {m.group(0)}, PyPI latest {latest}; an open lower bound takes the latest at run time")
+
+
+def check_plugin_cache(rep: Report) -> None:
+    registry = HOME / ".claude" / "plugins" / "installed_plugins.json"
+    cache = HOME / ".claude" / "plugins" / "cache" / "maestro"
+    if not registry.is_file() or not cache.is_dir():
+        rep.add("Plugin cache", SKIP, "no installed Maestro plugins on this machine")
+        return
+    try:
+        plugins = json.loads(registry.read_text()).get("plugins", {})
+    except ValueError:
+        rep.add("Plugin cache", SKIP, "installed_plugins.json unreadable")
+        return
+    notes, stale_total, behind = [], 0, []
+    for name in ("maestro", "agenda"):
+        entries = plugins.get(f"{name}@maestro", [])
+        if isinstance(entries, dict):
+            entries = [entries]
+        installed = {e.get("version", "") for e in entries}
+        dirs = [d.name for d in (cache / name).iterdir() if d.is_dir()] if (cache / name).is_dir() else []
+        stale_total += sum(1 for d in dirs if d not in installed)
+        for e in entries:
+            scope = e.get("scope", "?")
+            where = Path(e.get("projectPath", "user scope")).name
+            sha = e.get("gitCommitSha") or e.get("version", "")
+            # Commits after the installed one that touched this plugin's folder:
+            # a release that leaves the plugin alone keeps the install current.
+            rc, log = run(["git", "log", "--oneline", f"{sha}..main", "--", f"plugins/{name}"])
+            newer = [line for line in log.splitlines() if line.strip()] if rc == 0 else []
+            label = f"{name} ({scope}, {where}): {sha[:12]}"
+            if rc != 0:
+                notes.append(f"{label}, commit unknown to this clone")
+            elif newer:
+                behind.append(f"{label}, {len(newer)} newer commit(s) touch plugins/{name}")
+            else:
+                notes.append(f"{label}, current")
+    detail_behind = ("user scope: claude plugin update <name>@maestro; project scope: /maestro:maestro-sync "
+                     "in that instance offers the plugin update")
+    if behind:
+        rep.add("Plugin cache", ATTENTION, f"{len(behind)} installed plugin(s) behind the plugin's last change ({detail_behind})",
+                behind + notes + [f"{stale_total} stale cached version(s), harmless"])
+    else:
+        rep.add("Plugin cache", OK, f"every installed plugin is at the plugin's last change; {stale_total} stale cached version(s), harmless", notes)
+
+
+# --------------------------------------------------------------------------
+# Output
+# --------------------------------------------------------------------------
+
+def print_text(rep: Report) -> None:
+    now = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    print(f"Maestro maintenance check, {now}, {ROOT}")
+    print()
+    width = max(len(r["status"]) for r in rep.rows) + 2
+    for r in rep.rows:
+        print(f"[{r['status']}]".ljust(width + 1), f"{r['check']}: {r['detail']}")
+        for line in r["lines"]:
+            print(" " * (width + 2) + line)
+    counts = {s: sum(1 for r in rep.rows if r["status"] == s) for s in (OK, ATTENTION, SKIP)}
+    print()
+    print(f"Summary: {counts[OK]} ok, {counts[ATTENTION]} attention, {counts[SKIP]} skipped. Remedies: docs/maintenance.md")
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(prog="check", description=__doc__.split("\n\n")[0])
+    parser.add_argument("--no-tests", action="store_true", help="skip the Python suite and the mod tests")
+    parser.add_argument("--json", action="store_true", help="print the report as JSON")
+    args = parser.parse_args(argv)
+
+    rep = Report()
+    if check_repo_shape(rep):
+        check_python_runtime(rep)
+        if not args.no_tests:
+            check_python_suite(rep)
+        check_plugin_validate(rep)
+        if not args.no_tests:
+            check_mod_tests(rep)
+        check_actions(rep)
+        check_pages_run(rep)
+        check_dependabot(rep)
+        check_branches(rep)
+        check_tools(rep)
+        check_sqlite_vec(rep)
+        check_plugin_cache(rep)
+
+    if args.json:
+        print(json.dumps({"root": str(ROOT), "checks": rep.rows}, indent=2))
+    else:
+        print_text(rep)
+    return 1 if any(r["status"] == ATTENTION for r in rep.rows) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
