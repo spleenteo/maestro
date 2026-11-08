@@ -19,7 +19,11 @@ Only in the template repository: `plugins/maestro/` present at the root. In an i
 .claude/skills/maintenance/check --no-tests   # when the owner asks for a quick look
 ```
 
-Default is the full report. "veloce", "quick", "solo un'occhiata" means `--no-tests`; say so in the report. Run it in one Bash call with a timeout of at least 600000 ms. Exit 1 means at least one ATTENTION line, exit 0 none.
+Without instructions, run the full report. When the owner asks for a quick look ("veloce", "quick", "solo un'occhiata"), pass `--no-tests` and tell them in the report that the test suites were skipped.
+
+The full report takes about five minutes and the Bash tool stops a command after two: set the tool's `timeout` parameter to 600000 ms or more, and launch the script as it is, in a single call.
+
+The exit code is a signal, never an error of the script: 1 means the report has at least one ATTENTION line to bring to the owner, 0 means every check is OK or SKIP.
 
 ## 2. Read the remedies
 
