@@ -127,3 +127,40 @@ test('a throwing ui.open does not touch the tool answer', async ($, on) => {
   expect(String(r.result ?? r.text)).toContain('Agenda saved')
   expect(w.sets()).toBe(1)
 })
+
+// /clear empties $.state and fires no session.start while the tool stays registered:
+// the next test is that state, a call with no key written.
+test('after a /clear (no key, no session.start) the write derives the key again', async ($, on) => {
+  const writes: string[] = []
+  mock.clock(on, { now: NOW })
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', (_: any, e: any) => {
+    writes.push(e.key)
+    return { value: undefined }
+  })
+  on('session.root', () => ({ value: '/a' }))
+  on('fs.stat', () => ({ value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: true, realPath: '/real/a' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  const r = await $.tool.call({ tool: TOOL, ...list('Karate') })
+  expect(r.deny).toBeUndefined()
+  expect(writes).toEqual(['agenda:/real/a'])
+})
+
+test('an unlocatable store is a clear refusal, not a crash', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  on('session.root', () => {
+    throw new Error('no root')
+  })
+  const r = await $.tool.call({ tool: TOOL, ...list('Karate') })
+  expect(String(r.deny)).toContain('could not be located')
+})
+
+test('a failing fs.stat is a clear refusal too', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  on('session.root', () => ({ value: '/a' }))
+  on('fs.stat', () => {
+    throw new Error('gone')
+  })
+  const r = await $.tool.call({ tool: TOOL, ...list('Karate') })
+  expect(String(r.deny)).toContain('could not be located')
+})

@@ -1,6 +1,6 @@
 ---
 origin: maestro
-maestro_version: v2026.10.30.1
+maestro_version: v2026.11.08.1
 tags: [howto, agenda, pane, plugin, scheduler, migration, language]
 description: "The agenda pane and its skill: what the pane shows, the two plugin scopes, how it is installed, the language and day-start settings, and the runbook for an instance that ran the agenda from another marketplace. Reference when the pane is missing, in the wrong language, or an instance still carries an older agenda."
 ---
@@ -16,6 +16,7 @@ Today's appointments with their time, then the open tasks planned for today. The
 - `/agenda` shows or hides the pane; `/agenda update` refreshes it.
 - The pane is empty until the first agenda request of the day. Asking "what is on today" is enough.
 - Without the plugin the skill still answers in chat and does not touch a pane.
+- `/clear` leaves the pane and `agenda_set` working: the tool finds the agenda's store again on its own, from the instance root, so no new agenda request is needed to save.
 
 ## Two plugins, two scopes
 

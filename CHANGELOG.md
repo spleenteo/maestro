@@ -12,6 +12,7 @@ One line per version; the full entry below carries the reasons and the migration
 
 | Version | Theme |
 |---|---|
+| v2026.11.08.1 | `agenda_set` works after a `/clear`: the plugin derives its store key again instead of refusing |
 | v2026.10.30.1 | The agenda pane ships as its own plugin, installed per instance; the sync offers it, and new instances get it at setup |
 | v2026.10.01.3 | The update notice reads the version an instance was synced to from `private/.version`, so a release that leaves `CLAUDE.md` alone no longer keeps it up |
 | v2026.10.01.2 | A satellite session knows when to write a memory, and two plugin hooks remind it: a short closing message after some work, an hour of work with no memory in its scope |
@@ -42,6 +43,21 @@ One line per version; the full entry below carries the reasons and the migration
 | v2026.04.30.2 | Three patterns promoted from a personal instance into the template |
 | v2026.04.30.1 | Available apps moves from `CLAUDE.md` into `preferences.md`; the distribution rule |
 | v2026.04.29.1 | Initial snapshot for changelog tracking |
+
+---
+
+## v2026.11.08.1 — 2026-11-08
+
+**Theme**: `agenda_set` after a `/clear`. A `/clear` starts a new session with an empty plugin state and fires no `session.start`, so the store key that hook wrote was gone while the tool stayed registered, and every save was refused with "The agenda store is not ready yet". The tool now derives the key again from the session root when the state lacks it.
+
+### Fixed
+
+- **`plugins/agenda/hooks/register.tsx`**: one helper derives the store key from the real root, used by `session.start` and by `agenda_set`, so both give the same key. When the root cannot be resolved the tool refuses with "The agenda store could not be located." and does not crash. `/agenda` and `session.start` behave as before.
+- **Tests**: the state after a `/clear`, and a root or `fs.stat` that fails.
+
+### Migration
+
+Update the plugin (`claude plugin update agenda@maestro`, then restart Claude Code), or run `/maestro:maestro-sync`. Nothing to change in the instance.
 
 ---
 

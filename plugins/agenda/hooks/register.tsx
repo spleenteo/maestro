@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { Hook, Register } from 'claude-code'
 
 import type { AgendaRecap } from '../types'
 import { labelsFor } from './labels'
@@ -21,6 +21,26 @@ export const recapAtom = atom({ plugin: 'agenda', key: 'recap' } as const, null 
 // The pane's clock, written by the minute tick; 0 until the first write.
 export const nowAtom = atom({ plugin: 'agenda', key: 'now' } as const, 0, { shape: 'now-1' })
 const storeKeyRef = { plugin: 'agenda', key: 'storeKey' } as const
+
+type Api = Parameters<Hook<'session.start'>>[0]
+
+// The one place the key is derived, so session.start and agenda_set agree.
+async function rootStoreKey($: Api): Promise<string> {
+  const root = await $.session.root()
+  const stat = await $.fs.stat(root, { resolve: true })
+  return storeKey(stat.realPath ?? root)
+}
+
+// /clear starts a new session with an empty $.state and fires no session.start,
+// so the key session.start wrote is gone while the tool stays registered:
+// derive it again when the state lacks it.
+async function ensureStoreKey($: Api): Promise<string> {
+  const { value } = await $.state.get(storeKeyRef)
+  if (value !== undefined) return value
+  const key = await rootStoreKey($)
+  await $.state.set(storeKeyRef, key)
+  return key
+}
 
 const DESCRIPTION =
   'Save the recap of the local day shown in the agenda pane. Each call replaces the whole previous list: ' +
@@ -60,9 +80,7 @@ export const register: Register = (on, options) => {
   const labels = labelsFor(options.language)
 
   on('session.start', async ($, e, next) => {
-    const root = await $.session.root()
-    const stat = await $.fs.stat(root, { resolve: true })
-    const key = storeKey(stat.realPath ?? root)
+    const key = await rootStoreKey($)
     await $.state.set(storeKeyRef, key)
 
     const saved = await $.store.get(key)
@@ -173,8 +191,12 @@ export const register: Register = (on, options) => {
     if ('error' in parsed) return { deny: parsed.error }
     const { recap } = parsed
 
-    const { value: key } = await $.state.get(storeKeyRef)
-    if (key === undefined) return { deny: 'The agenda store is not ready yet.' }
+    let key: string
+    try {
+      key = await ensureStoreKey($)
+    } catch {
+      return { deny: 'The agenda store could not be located.' }
+    }
 
     const previous = await read($, recapAtom)
     await $.store.set(key, recap)
